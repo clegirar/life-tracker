@@ -14,7 +14,7 @@ Le POC couvre le compteur de cafés et les écoutes de musique (Last.fm en direc
 | 1 | Socle backend et ingestion | Fait |
 | 2 | Interprètes et rejeu | Fait |
 | 3 | Lecture et web app du café | Fait |
-| 4 | Déploiement sur le NAS | Préparé |
+| 4 | Déploiement sur le NAS | Fait, raccourci iOS reporté |
 | 5 | Musique en direct (Last.fm) | À faire |
 | 6 | Découvertes et « déjà connu » | À faire |
 | 7 | Historique Apple | À faire |
@@ -68,7 +68,7 @@ Fait le 31 oct. 2026. Chaque test d'interprétation a sa propre base sur le Post
 
 ## Étape 3 : lecture et web app du café
 
-Fait le 31 oct. 2026. Tout se vérifie par `web/test.sh` et `backend/test.sh`, sur un PostgreSQL 18.6 jetable. L'affichage est contrôlé à 390 px sous Chromium ; il reste à l'essayer sur un vrai iPhone, en HTTPS, à l'étape 4.
+Fait le 31 oct. 2026. Tout se vérifie par `web/test.sh` et `backend/test.sh`, sur un PostgreSQL 18.6 jetable. L'affichage est contrôlé à 390 px sous Chromium ; essayé ensuite sur un vrai iPhone, en HTTPS, à l'étape 4, annulation et thèmes clair et sombre compris.
 
 **Prérequis :** l'esquisse de la page du jour, validée le 31 oct. 2026 comme base provisoire : `docs/maquettes/page-du-jour.dc.html` ([maquette en ligne](https://claude.ai/artifact/NcMWypZr5N9VXw9dk4J6w6)). Elle sera reprise à l'étape 10.
 
@@ -90,7 +90,7 @@ Fait le 31 oct. 2026. Tout se vérifie par `web/test.sh` et `backend/test.sh`, s
 
 ## Étape 4 : déploiement sur le NAS
 
-Préparé le 31 oct. 2026 : Dockerfiles, `compose.yaml`, workflow et [runbook](deploiement.md), essayés en local sur le compose de production avec des secrets jetables. Pas encore fait : ses critères demandent le vrai NAS, le dépôt GitHub et l'iPhone.
+Fait le 31 oct. 2026 sur le vrai NAS, en suivant le [runbook](deploiement.md), sauf le raccourci iOS, reporté à ma demande : son critère reste ouvert, la source `ios` et son token sont prêts, et les cafés se saisissent dans la web app en attendant.
 
 **Contenu**
 

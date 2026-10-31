@@ -140,9 +140,11 @@ Se connecter au registre. La saisie attendue est le token, sans écho :
 read -rs CR_PAT; printf '%s' "$CR_PAT" | sudo docker login ghcr.io -u OWNER --password-stdin; unset CR_PAT
 ```
 
-Puis, depuis `/volume1/docker/life-tracker` :
+Puis, en root, car le dossier en `700` est fermé à mon compte (de même pour toutes les commandes `docker compose` de la suite) :
 
 ```sh
+sudo -i
+cd /volume1/docker/life-tracker
 sudo docker compose config -q      # sinon : sudo docker-compose config -q, et de même partout
 sudo docker compose pull
 sudo docker compose up -d
@@ -168,7 +170,7 @@ sudo tailscale serve status
 
 L'adresse est `https://<nas>.<tailnet>.ts.net`. Le nom apparaît dans les journaux publics de certificats. `sudo tailscale serve --https=443 off` retire la règle.
 
-**Prise en charge sur Synology : non confirmée.** La [page Synology de Tailscale](https://tailscale.com/kb/1131/synology) et son [suivi](https://github.com/tailscale/tailscale/issues/1995) ne parlent pas de `serve`, ni pour, ni contre. Un éditeur tiers [annonce des adresses HTTPS `ts.net` sur un NAS](https://github.com/MLT-solutions/bibliofuse-nas-distribution/releases/tag/v0.1.9). C'est donc le premier point à essayer. Si le port 443 entre en conflit avec DSM : `--https=8443`, et l'adresse porte ce port. Si `serve` ne marche pas : un conteneur Tailscale dans le projet, à décider alors, sans jamais retirer `Secure`.
+**Prise en charge sur Synology : essayée le 31 oct. 2026, `serve` fonctionne sur mon NAS.** La documentation de Tailscale n'en parle pas, ni pour, ni contre. Si le port 443 entre en conflit avec DSM : `--https=8443`, et l'adresse porte ce port. Si `serve` ne marche pas : un conteneur Tailscale dans le projet, à décider alors, sans jamais retirer `Secure`.
 
 Après un redémarrage du NAS, revérifier `sudo tailscale serve status`.
 
@@ -284,14 +286,13 @@ Le POC tourne sans sauvegarde : c'est décidé (voir [l'architecture](architectu
 
 ## Ce qui reste à vérifier
 
-Seul le vrai NAS ou GitHub peut confirmer :
+Confirmé le 31 oct. 2026 : le workflow et la publication sur ghcr.io, le démarrage sur le NAS, `tailscale serve` et son certificat, la web app en HTTPS sur l'iPhone, un café conservé après `down` puis `up`, `migrate` sans effet une fois relancé, et la base injoignable depuis les réseaux `bridge` et `host` (`inhibit_ipv4` agit bien sur ce noyau).
 
-- le workflow lui-même, jamais exécuté (seulement passé à `actionlint`), et la publication sur ghcr.io ;
-- la version de Compose et de Docker du NAS. `compose.yaml` a tourné sur Compose 2.2.1 et Docker 20.10.11 ; celles de Container Manager ne sont pas connues : `sudo docker version` et `sudo docker compose version` ;
-- l'import du projet dans l'interface de Container Manager (nom du fichier, dossier en `700`, service `migrate` arrêté) ;
-- `inhibit_ipv4`, le noyau du NAS, et un vrai démarrage en amd64 : le test local émule les images backend et web, et PostgreSQL y tourne en arm64 ;
-- `tailscale serve`, son certificat, et sa persistance après redémarrage ;
-- la lecture de `db/init` sous un dossier parent en `700`, et les ACL de DSM ;
-- le raccourci sur un vrai iPhone, et la web app en HTTPS sur Safari. Les essais TLS locaux utilisent Chromium, un certificat auto-signé et un proxy nginx à la place de Tailscale.
+Reste à confirmer :
+
+- le raccourci sur un vrai iPhone (étape 10), reporté ;
+- la persistance de `tailscale serve` après un redémarrage du NAS ;
+- l'import du projet dans l'interface de Container Manager, facultatif ;
+- l'accès refusé depuis un autre compte du NAS, si un compte non administrateur existe.
 
 `cpus` n'est pas utilisé dans `compose.yaml` : de mémoire, le noyau de Synology refuse cette limite, sans que j'aie pu le vérifier. Seule la mémoire est limitée.
