@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE core.sources SET revoked_at = now() WHERE name = $1 AND revoked_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "acbc45e6c6d44428a3bbd551d1b6efd647410bbf0d8e37f9639da42acb3b6d84"
+}

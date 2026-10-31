@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://life-tracker.invalid/contract/ingestion-v1.schema.json",
+  "title": "Corps de POST /v1/records (API d'ingestion v1)",
+  "description": "Racine : la requête d'envoi d'un lot. Réponses dans $defs. Le corps fait 1 000 000 octets au plus. Le serveur ignore les champs inconnus, et ne lit jamais la source dans le corps.",
+  "$ref": "#/$defs/records_request",
+  "$defs": {
+    "records_request": {
+      "type": "object",
+      "required": ["records"],
+      "properties": {
+        "records": {
+          "type": "array",
+          "maxItems": 500,
+          "items": { "$ref": "#/$defs/record" }
+        }
+      }
+    },
+    "record": {
+      "type": "object",
+      "required": ["key", "kind", "schema_version", "occurred_at", "payload"],
+      "properties": {
+        "key": {
+          "description": "Clé d'idempotence, unique pour la source.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^\\u0000]*$"
+        },
+        "kind": {
+          "description": "Type de donnée, déclaré pour cette source dans le registre.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        },
+        "schema_version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32767
+        },
+        "occurred_at": {
+          "description": "RFC 3339. Z (ou -00:00) : décalage inconnu. +00:00 : décalage nul. Décalage de 15 h au plus ; pas plus d'un jour dans le futur.",
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-](0[0-9]|1[0-5]):[0-5][0-9])$"
+        },
+        "payload": {
+          "description": "Charge utile telle que la source la produit, de n'importe quel type JSON. Seule limite : ce que jsonb ne peut pas stocker (\\u0000, nombre hors bornes) est rejeté."
+        }
+      }
+    },
+    "records_response": {
+      "description": "Statut 200 : un résultat par enregistrement, dans l'ordre du lot.",
+      "type": "object",
+      "required": ["request_id", "results"],
+      "additionalProperties": false,
+      "properties": {
+        "request_id": { "type": "string", "format": "uuid" },
+        "results": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/record_result" }
+        }
+      }
+    },
+    "record_result": {
+      "type": "object",
+      "required": ["key", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "description": "La clé envoyée, ou null si ce n'était pas une chaîne.",
+          "type": ["string", "null"]
+        },
+        "status": { "enum": ["accepted", "duplicate", "rejected"] },
+        "reason": {
+          "enum": ["kind_not_declared", "missing_field", "invalid_field", "occurred_at_too_far_in_future"]
+        },
+        "field": {
+          "description": "Le champ en cause ; « record » si l'enregistrement n'est pas un objet.",
+          "enum": ["record", "key", "kind", "schema_version", "occurred_at", "payload"]
+        }
+      },
+      "if": { "properties": { "status": { "const": "rejected" } } },
+      "then": { "required": ["reason", "field"] },
+      "else": { "properties": { "reason": false, "field": false } }
+    },
+    "heartbeat_response": {
+      "description": "POST /v1/heartbeat, statut 200. Le corps de la requête est ignoré.",
+      "type": "object",
+      "required": ["request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "request_id": { "type": "string", "format": "uuid" }
+      }
+    },
+    "error_response": {
+      "description": "401 unauthorized, 400 invalid_json, 413 batch_too_large, 500 internal (à renvoyer plus tard).",
+      "type": "object",
+      "required": ["error"],
+      "additionalProperties": false,
+      "properties": {
+        "error": { "enum": ["unauthorized", "invalid_json", "batch_too_large", "internal"] }
+      }
+    }
+  }
+}

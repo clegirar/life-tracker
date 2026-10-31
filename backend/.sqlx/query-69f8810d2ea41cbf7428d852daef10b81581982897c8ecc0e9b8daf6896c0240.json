@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE core.source_kinds sk SET revoked_at = now()\n         FROM core.sources s\n         WHERE s.id = sk.source_id AND s.name = $1 AND sk.kind = $2 AND sk.revoked_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "69f8810d2ea41cbf7428d852daef10b81581982897c8ecc0e9b8daf6896c0240"
+}

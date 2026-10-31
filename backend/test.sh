@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Tests du backend sur un PostgreSQL 18 jetable : rôles (db/init), migrations par `migrate`, puis cargo test.
+# Le conteneur n'utilise aucun volume de développement et disparaît à la sortie.
+# Usage : backend/test.sh             (Docker requis)
+#         backend/test.sh --prepare   régénère le cache .sqlx/ (Docker et sqlx-cli requis)
+set -euo pipefail
+
+BACKEND="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(dirname "$BACKEND")"
+IMAGE="postgres:18.6"
+C="lt-backend-test-$$"
+
+cleanup() { docker rm -f "$C" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+
+docker run -d --rm --name "$C" \
+  -e POSTGRES_PASSWORD=test \
+  -e TRACKER_OWNER_PASSWORD=owner-test \
+  -e TRACKER_APP_PASSWORD=app-test \
+  -e TRACKER_ADMIN_PASSWORD=admin-test \
+  -v "$ROOT/db/init:/docker-entrypoint-initdb.d:ro" \
+  -p 127.0.0.1:0:5432 \
+  "$IMAGE" >/dev/null
+for _ in $(seq 60); do
+  if docker logs "$C" 2>&1 | grep -q 'PostgreSQL init process complete' \
+     && docker exec "$C" pg_isready -q -U postgres; then
+    ready=1
+    break
+  fi
+  sleep 1
+done
+if [ -z "${ready:-}" ]; then
+  docker logs "$C" >&2
+  echo "ÉCHEC : le conteneur n'a pas démarré" >&2
+  exit 1
+fi
+PORT="$(docker port "$C" 5432/tcp | head -1 | sed 's/.*://')"
+url() { echo "postgres://$1:$2@127.0.0.1:$PORT/tracker"; }
+
+# Noms LT_TEST_* : un .env de développement chargé dans le shell ne peut pas devenir la cible des tests.
+export LT_TEST_APP_URL="$(url tracker_app app-test)"
+export LT_TEST_ADMIN_URL="$(url tracker_admin admin-test)"
+export LT_TEST_OWNER_URL="$(url tracker_owner owner-test)"
+cd "$BACKEND"
+
+if [ "${1:-}" = "--prepare" ]; then
+  # Le propriétaire, car il faut décrire les requêtes de serve et celles d'admin avec un seul rôle.
+  sqlx migrate run --source migrations -D "$LT_TEST_OWNER_URL"
+  DATABASE_URL="$LT_TEST_OWNER_URL" cargo sqlx prepare
+  exit 0
+fi
+
+echo "▶ Première application des migrations par sqlx"
+MIGRATE_DATABASE_URL="$LT_TEST_OWNER_URL" cargo run --quiet -- migrate
+
+if command -v cargo-sqlx >/dev/null; then
+  echo "▶ Le cache .sqlx/ correspond aux requêtes"
+  DATABASE_URL="$LT_TEST_OWNER_URL" cargo sqlx prepare --check
+fi
+
+echo "▶ cargo test"
+cargo test

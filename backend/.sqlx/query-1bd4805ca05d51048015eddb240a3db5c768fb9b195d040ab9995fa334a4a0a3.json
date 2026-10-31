@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pg_input_is_valid(p, 'jsonb') AS \"storable!\"\n               FROM unnest($1::text[]) WITH ORDINALITY AS u(p, ord) ORDER BY ord",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "storable!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "1bd4805ca05d51048015eddb240a3db5c768fb9b195d040ab9995fa334a4a0a3"
+}

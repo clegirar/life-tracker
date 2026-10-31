@@ -1,0 +1,5 @@
+{"records":[
+  {"key":"utc-unknown","kind":"lastfm.scrobble","schema_version":1,"occurred_at":"2026-10-13T07:42:10Z","payload":{"artist":"Daft Punk","track":"One More Time"}},
+  {"key":"utc-zero","kind":"lastfm.scrobble","schema_version":2,"occurred_at":"2026-10-13T07:42:10+00:00","payload":["a format the server never looks at"]},
+  {"key":"fraction-negative","kind":"coffee.cup","schema_version":1,"occurred_at":"2026-10-13T02:12:10.250-05:30","payload":null}
+]}

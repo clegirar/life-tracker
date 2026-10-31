@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO core.source_kinds (source_id, kind)\n         SELECT id, $2 FROM core.sources WHERE name = $1\n         ON CONFLICT (source_id, kind) DO UPDATE SET granted_at = now(), revoked_at = NULL\n         WHERE core.source_kinds.revoked_at IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f15f773585ab6f44fb36bda7c40955ba25364dbeb3b989a2bb3b1fd5e7072316"
+}

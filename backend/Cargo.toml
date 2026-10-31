@@ -1,0 +1,28 @@
+[package]
+name = "life-tracker"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+
+[dependencies]
+anyhow = "=1.0.104"
+axum = "=0.8.9"
+chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
+clap = { version = "=4.6.7", features = ["derive", "env"] }
+getrandom = "=0.4.3"
+hex = "=0.4.3"
+log = "=0.4.35"
+serde = { version = "=1.0.229", features = ["derive"] }
+# arbitrary_precision : les nombres de la charge utile restent exacts jusqu'au jsonb.
+serde_json = { version = "=1.0.154", features = ["arbitrary_precision"] }
+sha2 = "=0.11.1"
+sqlx = { version = "=0.9.0", default-features = false, features = ["chrono", "macros", "migrate", "postgres", "runtime-tokio", "uuid"] }
+tokio = { version = "=1.54.1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json", "tracing-log"] }
+uuid = { version = "=1.29.0", features = ["serde", "v7"] }
+
+[dev-dependencies]
+jsonschema = { version = "=0.60.2", default-features = false }
+reqwest = { version = "=0.13.5", default-features = false, features = ["json"] }

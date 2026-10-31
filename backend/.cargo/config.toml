@@ -1,0 +1,4 @@
+# La compilation lit le cache .sqlx/ et jamais une base : DATABASE_URL peut pointer où elle veut.
+# `cargo sqlx prepare` passe outre (voir test.sh --prepare).
+[env]
+SQLX_OFFLINE = "true"

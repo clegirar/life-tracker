@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT kind FROM core.source_kinds WHERE source_id = $1 AND revoked_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.source_kinds",
+            "name": "kind"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int2"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "8125639721179a3c2e5b6b6762293079d1b0748ead7d99401b0dba60143f1214"
+}

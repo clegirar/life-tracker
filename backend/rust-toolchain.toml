@@ -1,0 +1,5 @@
+# Version figée : sqlx 0.9 demande Rust 1.94 ou plus.
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

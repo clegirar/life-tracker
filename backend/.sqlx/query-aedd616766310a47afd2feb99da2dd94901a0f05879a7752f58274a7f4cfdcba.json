@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE core.sources\n             SET last_seen_at = now(), client_version = COALESCE($2, client_version)\n             WHERE token_hash = $1 AND auth = 'token' AND revoked_at IS NULL\n             RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "core.sources",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "aedd616766310a47afd2feb99da2dd94901a0f05879a7752f58274a7f4cfdcba"
+}

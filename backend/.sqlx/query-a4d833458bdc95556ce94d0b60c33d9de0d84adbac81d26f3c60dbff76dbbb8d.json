@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO core.records (source_id, kind, schema_version, key, occurred_at,\n                                       utc_offset_minutes, client_version, request_id, payload)\n             SELECT $1, r.kind, r.schema_version, r.key, r.occurred_at,\n                    r.utc_offset_minutes, $2, $3, r.payload::jsonb\n             FROM unnest($4::text[], $5::smallint[], $6::text[], $7::timestamptz[],\n                         $8::smallint[], $9::text[])\n                  WITH ORDINALITY AS r(kind, schema_version, key, occurred_at,\n                                       utc_offset_minutes, payload, ord)\n             ORDER BY r.ord\n             ON CONFLICT (source_id, key) DO NOTHING\n             RETURNING key",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.records",
+            "name": "key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int2",
+        "Text",
+        "Uuid",
+        "TextArray",
+        "Int2Array",
+        "TextArray",
+        "TimestamptzArray",
+        "Int2Array",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a4d833458bdc95556ce94d0b60c33d9de0d84adbac81d26f3c60dbff76dbbb8d"
+}
