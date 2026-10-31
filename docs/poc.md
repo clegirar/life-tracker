@@ -14,7 +14,7 @@ Le POC couvre le compteur de cafés et les écoutes de musique (Last.fm en direc
 | 1 | Socle backend et ingestion | Fait |
 | 2 | Interprètes et rejeu | Fait |
 | 3 | Lecture et web app du café | Fait |
-| 4 | Déploiement sur le NAS | À faire |
+| 4 | Déploiement sur le NAS | Préparé |
 | 5 | Musique en direct (Last.fm) | À faire |
 | 6 | Découvertes et « déjà connu » | À faire |
 | 7 | Historique Apple | À faire |
@@ -89,6 +89,8 @@ Fait le 31 oct. 2026. Tout se vérifie par `web/test.sh` et `backend/test.sh`, s
 - L'affichage est vérifié à la largeur d'un iPhone, en clair et en sombre.
 
 ## Étape 4 : déploiement sur le NAS
+
+Préparé le 31 oct. 2026 : Dockerfiles, `compose.yaml`, workflow et [runbook](deploiement.md), essayés en local sur le compose de production avec des secrets jetables. Pas encore fait : ses critères demandent le vrai NAS, le dépôt GitHub et l'iPhone.
 
 **Contenu**
 

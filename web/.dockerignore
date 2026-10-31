@@ -1,0 +1,7 @@
+node_modules
+dist
+e2e
+e2e-artifacts
+playwright-report
+test.sh
+.env

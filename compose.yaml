@@ -1,0 +1,129 @@
+# Production sur le NAS (projet Container Manager). Marche à suivre : docs/deploiement.md.
+# Spécification Compose sans clé `version`, limitée à ce que Compose 2.2 connaît.
+# Chaque service ne lit que son propre fichier de secrets.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:18.6
+    restart: unless-stopped
+    env_file: ./secrets/db.env
+    volumes:
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+      - db-data:/var/lib/postgresql
+    networks: [data]
+    healthcheck:
+      # -h : pendant l'initialisation, le serveur temporaire n'écoute que sur son socket.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "tracker"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    stop_grace_period: 60s
+    mem_limit: 512m
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+
+  migrate:
+    image: ${TRACKER_IMAGE_PREFIX:?}/backend:${TRACKER_TAG:?}
+    command: ["migrate"]
+    restart: "no"
+    env_file: ./secrets/migrate.env
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [data]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+
+  backend:
+    image: ${TRACKER_IMAGE_PREFIX:?}/backend:${TRACKER_TAG:?}
+    command: ["serve"]
+    restart: unless-stopped
+    env_file: ./secrets/backend.env
+    environment:
+      LISTEN_ADDR: 0.0.0.0:8080
+      DEV_INSECURE_COOKIE: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks: [data, front]
+    healthcheck:
+      # Le 503 d'une base en panne rend le conteneur « unhealthy » sans le redémarrer :
+      # `restart` ne réagit qu'à la fin du processus, et le backend attend le retour de la base.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 7s
+      retries: 3
+      start_period: 20s
+    mem_limit: 256m
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+
+  web:
+    image: ${TRACKER_IMAGE_PREFIX:?}/web:${TRACKER_TAG:?}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks: [front, edge]
+    ports:
+      - "${TRACKER_BIND_ADDR:-127.0.0.1}:${TRACKER_HTTP_PORT:-18080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/manifest.webmanifest"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    mem_limit: 64m
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+
+  # À la main : docker compose run --rm admin <commande>
+  admin:
+    profiles: [admin]
+    image: ${TRACKER_IMAGE_PREFIX:?}/backend:${TRACKER_TAG:?}
+    entrypoint: ["life-tracker", "admin"]
+    command: ["--help"]
+    restart: "no"
+    env_file: ./secrets/admin.env
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [data]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+
+networks:
+  # La base et ceux qui ont un rôle : ni sortie, ni web.
+  data:
+    internal: true
+    driver_opts:
+      # Aucune adresse sur le pont côté hôte : un compte du NAS ne joint pas la base par son IP.
+      com.docker.network.bridge.inhibit_ipv4: "true"
+  # Le web et le backend, sans accès direct du web à la base.
+  front:
+    internal: true
+  # Le seul réseau qui porte un port publié.
+  edge:
+
+volumes:
+  db-data:
+    # Nom fixe : les données ne dépendent pas du nom du projet, et jamais du volume de développement.
+    name: life-tracker-prod-db-data
