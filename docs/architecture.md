@@ -133,7 +133,7 @@ Messages : hors POC depuis le 31 oct. 2026, la ligne `message` est gardée pour 
 | --- | --- | --- | --- |
 | Web app, raccourci iOS | `coffee.cup` | UUID généré au clic | Vide : un enregistrement par café |
 | Web app | `music.mark_known` | UUID | Niveau (artiste, album, titre), artiste, album et titre tels qu'affichés |
-| Web app, raccourci iOS | `record.cancel` | UUID | La source et la clé de l'enregistrement annulé |
+| Web app, raccourci iOS | `record.cancel` | UUID | La source (son nom dans le registre) et la clé de l'enregistrement annulé : `{"source": "webapp", "key": "…"}` |
 | Agent Mac | `message` | GUID du message | Sens, service (iMessage, SMS, RCS), pseudonyme du contact ; groupes filtrés par l'agent |
 | Connecteur Last.fm | `lastfm.scrobble` | Horodatage + artiste + titre | Le scrobble tel que renvoyé par l'API |
 | Connecteur Last.fm | `lastfm.track_info` | Artiste + titre normalisés | La fiche du titre renvoyée par l'API, dont sa durée (enrichissement) |
@@ -546,6 +546,9 @@ Les décisions prises, de la plus récente à la plus ancienne.
 
 | Date | Décision |
 | --- | --- |
+| 31 oct. 2026 | Rejeu (voir [la base de données](database.md)) : la reconstruction est faite par la seule commande `rebuild`, le worker ne traite que l'active. Comparaison et bascule dans une même transaction, jusqu'au plus petit des curseurs de chaque type, en ignorant horodatages et version d'interprète. Une construction interrompue est effacée, pas reprise ; l'ancienne génération est supprimée aussitôt après la bascule |
+| 31 oct. 2026 | Annulations : la source visée est désignée par son nom, stable et jamais renommé, et résolue par le moteur. Toute source qui a le droit `record.cancel` peut annuler n'importe quelle source. Annuler une annulation est sans effet : on saisit de nouveau la donnée |
+| 31 oct. 2026 | Interprétation : un interprète ne reçoit que l'enregistrement, et ses messages d'erreur sont des textes fixes, pour ne jamais citer la charge utile. Une sortie refusée par la base (classes 22 et 23) est une erreur d'interprétation ; toute autre erreur est une panne, jamais enregistrée comme erreur. Un format inconnu est une erreur d'interprétation : pas de convertisseur tant que seule la version 1 existe |
 | 31 oct. 2026 | Ingestion : une transaction par lot, une seule instruction d'ajout. Une charge utile que jsonb ne peut pas stocker (`\u0000`, nombre hors bornes) est rejetée seule, sans quoi le lot échouerait à chaque nouvel essai ; c'est la seule limite à la charge utile. `-00:00` vaut « décalage inconnu », comme `Z` (sens de la RFC 3339), et `+00:00` un décalage nul. Un appel authentifié met à jour le dernier contact même s'il finit en 400 ou 413 |
 | 31 oct. 2026 | Accès par Tailscale pendant le POC ; à terme, web app ouverte sur Internet avec authentification |
 | 31 oct. 2026 | Messages sortis du POC (agent à part sur le Mac) ; POC découpé en tranches verticales, déployé sur le NAS juste après le café (voir [le POC](poc.md)) |

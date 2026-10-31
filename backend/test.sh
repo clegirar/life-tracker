@@ -20,7 +20,7 @@ docker run -d --rm --name "$C" \
   -e TRACKER_ADMIN_PASSWORD=admin-test \
   -v "$ROOT/db/init:/docker-entrypoint-initdb.d:ro" \
   -p 127.0.0.1:0:5432 \
-  "$IMAGE" >/dev/null
+  "$IMAGE" -c max_connections=300 >/dev/null
 for _ in $(seq 60); do
   if docker logs "$C" 2>&1 | grep -q 'PostgreSQL init process complete' \
      && docker exec "$C" pg_isready -q -U postgres; then
@@ -41,6 +41,8 @@ url() { echo "postgres://$1:$2@127.0.0.1:$PORT/tracker"; }
 export LT_TEST_APP_URL="$(url tracker_app app-test)"
 export LT_TEST_ADMIN_URL="$(url tracker_admin admin-test)"
 export LT_TEST_OWNER_URL="$(url tracker_owner owner-test)"
+# Seulement pour créer une base par test d'interprétation : ils se partageraient sinon la génération active.
+export LT_TEST_SUPER_URL="$(url postgres test)"
 cd "$BACKEND"
 
 if [ "${1:-}" = "--prepare" ]; then
@@ -59,4 +61,4 @@ if command -v cargo-sqlx >/dev/null; then
 fi
 
 echo "▶ cargo test"
-cargo test
+cargo test "$@"

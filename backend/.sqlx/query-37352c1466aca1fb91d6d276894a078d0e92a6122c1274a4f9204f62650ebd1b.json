@@ -1,0 +1,108 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.seq, r.source_id, r.kind, r.schema_version, r.occurred_at,\n                      r.utc_offset_minutes, r.request_id, r.payload::text AS payload\n               FROM derived.interpretation_errors e\n               JOIN core.records r ON r.seq = e.seq\n               WHERE e.generation = $1 AND e.seq > $2\n               ORDER BY e.seq LIMIT 1\n               FOR UPDATE OF e",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "seq",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.records",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "source_id",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "core.records",
+            "name": "source_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.records",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "schema_version",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "core.records",
+            "name": "schema_version"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "occurred_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.records",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "utc_offset_minutes",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "core.records",
+            "name": "utc_offset_minutes"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "request_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "core.records",
+            "name": "request_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "payload",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "37352c1466aca1fb91d6d276894a078d0e92a6122c1274a4f9204f62650ebd1b"
+}

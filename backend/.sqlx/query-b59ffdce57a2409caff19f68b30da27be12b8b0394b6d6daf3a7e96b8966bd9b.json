@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO derived.interpretation_errors (generation, seq, interpreter_version, error)\n         VALUES ($1, $2, $3, $4)\n         ON CONFLICT (generation, seq) DO UPDATE\n         SET interpreter_version = EXCLUDED.interpreter_version, error = EXCLUDED.error,\n             failed_at = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int8",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b59ffdce57a2409caff19f68b30da27be12b8b0394b6d6daf3a7e96b8966bd9b"
+}

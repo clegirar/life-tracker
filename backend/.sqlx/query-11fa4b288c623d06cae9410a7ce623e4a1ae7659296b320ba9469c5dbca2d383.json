@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM derived.interpretation_errors WHERE generation = $1 AND seq = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "11fa4b288c623d06cae9410a7ce623e4a1ae7659296b320ba9469c5dbca2d383"
+}

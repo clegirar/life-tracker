@@ -1,0 +1,109 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT seq, source_id, kind, schema_version, occurred_at, utc_offset_minutes, request_id,\n                payload::text AS payload\n         FROM core.records WHERE kind = $1 AND seq > $2 AND seq <= $3 ORDER BY seq LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "seq",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.records",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "source_id",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "core.records",
+            "name": "source_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.records",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "schema_version",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "core.records",
+            "name": "schema_version"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "occurred_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.records",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "utc_offset_minutes",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "core.records",
+            "name": "utc_offset_minutes"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "request_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "core.records",
+            "name": "request_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "payload",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      null
+    ]
+  },
+  "hash": "0b0bf0212bb7698e6599d9c21e2897790af620b582d4a5dbede418e6888d9867"
+}

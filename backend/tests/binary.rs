@@ -252,6 +252,13 @@ impl Server {
         panic!("le serveur n'a pas démarré");
     }
 
+    /// SIGKILL, sans laisser au processus la moindre chance de finir proprement.
+    fn kill(mut self) {
+        self.child.kill().unwrap();
+        self.child.wait().unwrap();
+        let _ = std::fs::remove_file(&self.log);
+    }
+
     /// SIGTERM, attend la fin, renvoie les logs. Échoue si l'arrêt n'est pas propre.
     fn stop(mut self) -> String {
         let pid = self.child.id().to_string();
@@ -375,6 +382,268 @@ async fn logs_contain_no_payload_key_or_token() {
             .any(|l| l.contains(&id_failed) && l.contains("database error"))
     );
     assert!(logs_failed.contains("42501"));
+}
+
+fn admin_on(db: &TestDb, args: &[&str]) -> Output {
+    bin()
+        .arg("admin")
+        .args(args)
+        .env("ADMIN_DATABASE_URL", db.admin_url())
+        .output()
+        .unwrap()
+}
+
+async fn post_records(base: &str, token: &str, records: Value) -> Vec<Value> {
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/records"))
+        .bearer_auth(token)
+        .json(&json!({ "records": records }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: Value = response.json().await.unwrap();
+    body["results"].as_array().unwrap().clone()
+}
+
+fn cup(key: &str) -> Value {
+    record(key)
+}
+
+fn cancel(key: &str, source: &str, target: &str) -> Value {
+    json!({"key": key, "kind": "record.cancel", "schema_version": 1,
+           "occurred_at": "2026-10-13T09:50:00+02:00",
+           "payload": {"source": source, "key": target}})
+}
+
+async fn wait_until_count(db: &TestDb, sql: &str, expected: i64) {
+    for _ in 0..1200 {
+        if db.count(sql).await == expected {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("{sql} : {} au lieu de {expected}", db.count(sql).await);
+}
+
+const LIVE: &str = "SELECT count(*) FROM derived.live_events";
+
+/// De l'API au calendrier, avec le vrai binaire sur une base neuve : `serve` établit la génération,
+/// `admin rebuild` et `admin retry-errors` passent par la ligne de commande.
+#[tokio::test]
+async fn ingestion_to_interpretation_end_to_end() {
+    let db = TestDb::new().await;
+    let (_, token) = db.source("ios", &["coffee.cup", "record.cancel"]).await;
+    let server = Server::start(&db.app_url(), "info").await;
+
+    let results = post_records(
+        &server.base,
+        &token,
+        json!([
+            cup("c1"),
+            cup("c2"),
+            cancel("x1", "ios", "c2"),
+            cancel("x2", "ios", "c3"),
+            cup("c3"),
+            cancel("x3", "later", "c1"),
+            {"key": "bad", "kind": "record.cancel", "schema_version": 1,
+             "occurred_at": "2026-10-13T09:50:00Z", "payload": "malformed"},
+        ]),
+    )
+    .await;
+    assert!(
+        results.iter().all(|r| r["status"] == "accepted"),
+        "{results:?}"
+    );
+    wait_until_count(&db, "SELECT count(*) FROM derived.interpretation_errors", 2).await;
+    wait_until_count(&db, LIVE, 1).await;
+    let at: String = sqlx::query_scalar(
+        "SELECT to_char(occurred_at AT TIME ZONE 'UTC', 'HH24:MI:SS') FROM derived.live_events",
+    )
+    .fetch_one(&db.app)
+    .await
+    .unwrap();
+    assert_eq!(at, "07:42:10");
+
+    // Une rebuild, pendant que le serveur tourne.
+    let rebuilt = admin_on(&db, &["rebuild"]);
+    assert!(rebuilt.status.success(), "{rebuilt:?}");
+    let stdout = String::from_utf8(rebuilt.stdout).unwrap();
+    assert!(stdout.contains("0 différence(s), active"), "{stdout}");
+    assert!(
+        stdout.contains("coffee.cup : comparé jusqu'au numéro"),
+        "{stdout}"
+    );
+
+    // Une différence : code de sortie non nul, pas de bascule, rien que des numéros à l'écran.
+    sqlx::query(
+        "UPDATE derived.events SET details = '{\"x\":\"SENTINELfd38a1\"}'
+         WHERE seq = (SELECT min(seq) FROM derived.live_events)
+           AND generation = (SELECT id FROM derived.generations WHERE state = 'active')",
+    )
+    .execute(&db.admin)
+    .await
+    .unwrap();
+    let refused = admin_on(&db, &["rebuild"]);
+    assert!(!refused.status.success());
+    let shown = String::from_utf8_lossy(&refused.stdout);
+    assert!(shown.contains("différence : events numéro"), "{shown}");
+    assert!(!shown.contains(SENTINEL));
+    let forced = admin_on(&db, &["rebuild", "--allow-differences"]);
+    assert!(forced.status.success(), "{forced:?}");
+
+    // La source visée existe maintenant : l'une des deux erreurs se lève.
+    db.source("later", &["coffee.cup"]).await;
+    let retried = admin_on(&db, &["retry-errors"]);
+    assert!(retried.status.success(), "{retried:?}");
+    let shown = String::from_utf8(retried.stdout).unwrap();
+    assert!(
+        shown.starts_with("1 levée(s)") && shown.contains("1 restante(s)"),
+        "{shown}"
+    );
+    assert_eq!(
+        db.count("SELECT count(*) FROM derived.interpretation_errors")
+            .await,
+        1
+    );
+
+    assert_eq!(
+        db.count("SELECT count(*) FROM derived.cancellations").await,
+        3
+    );
+
+    // Un nouveau café passe encore après tout cela.
+    post_records(&server.base, &token, json!([cup("c4")])).await;
+    wait_until_count(&db, LIVE, 2).await;
+    server.stop();
+}
+
+/// SIGKILL en pleine interprétation, sur le vrai binaire : ce qui est validé est complet, et le
+/// redémarrage ne perd ni ne double rien.
+#[tokio::test]
+async fn a_killed_process_resumes_without_loss_or_double_interpretation() {
+    let db = TestDb::new().await;
+    let (source, token) = db.source("ios", &["coffee.cup"]).await;
+    // Le journal d'abord, sans worker : l'API seule.
+    let base = serve(db.app.clone()).await;
+    const BATCHES: usize = 3;
+    for batch in 0..BATCHES {
+        let records: Vec<Value> = (0..500).map(|n| cup(&format!("{batch}-{n}"))).collect();
+        post_records(&base, &token, json!(records)).await;
+    }
+    let total = (BATCHES * 500) as i64;
+
+    let progress = async || -> (i64, i64, i64) {
+        let row = sqlx::query(
+            "SELECT COALESCE((SELECT last_seq FROM derived.cursors WHERE kind = 'coffee.cup'), 0) AS cursor,
+                    (SELECT count(*) FROM derived.events) AS events,
+                    (SELECT count(DISTINCT seq) FROM derived.events) AS seqs",
+        )
+        .fetch_one(&db.app)
+        .await
+        .unwrap();
+        (row.get("cursor"), row.get("events"), row.get("seqs"))
+    };
+
+    let server = Server::start(&db.app_url(), "warn").await;
+    let mut interrupted = false;
+    for _ in 0..2000 {
+        if progress().await.1 >= 100 {
+            server.kill();
+            interrupted = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert!(interrupted, "le worker n'a pas démarré");
+
+    let (cursor, events, seqs) = progress().await;
+    assert!(
+        events < total,
+        "tué trop tard pour prouver quoi que ce soit"
+    );
+    assert_eq!(events, seqs);
+    let covered: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.records WHERE source_id = $1 AND seq <= $2")
+            .bind(source)
+            .bind(cursor)
+            .fetch_one(&db.app)
+            .await
+            .unwrap();
+    assert_eq!(
+        events, covered,
+        "chaque enregistrement sous le curseur, et rien d'autre"
+    );
+
+    let server = Server::start(&db.app_url(), "warn").await;
+    wait_until_count(&db, "SELECT count(*) FROM derived.events", total).await;
+    let logs = server.stop();
+    let (_, events, seqs) = progress().await;
+    assert_eq!((events, seqs), (total, total));
+    assert_eq!(
+        db.count("SELECT count(*) FROM derived.interpretation_errors")
+            .await,
+        0
+    );
+    assert!(!logs.contains(&token));
+}
+
+/// Aucun journal, à aucun niveau, ne cite une charge utile, une clé ou le nom d'une cible, y compris
+/// quand l'interprétation échoue ; ils citent bien les numéros et le suivi de requête.
+#[tokio::test]
+async fn interpretation_logs_contain_only_identifiers() {
+    let db = TestDb::new().await;
+    let (_, token) = db.source("ios", &["coffee.cup", "record.cancel"]).await;
+    let server = Server::start(&db.app_url(), "trace").await;
+    let secret = |what: &str| format!("{SENTINEL}-{what}");
+    let results = post_records(
+        &server.base,
+        &token,
+        json!([
+            {"key": secret("k1"), "kind": "coffee.cup", "schema_version": 1,
+             "occurred_at": "2026-10-13T09:42:10Z", "payload": {"note": secret("p1")}},
+            {"key": secret("k2"), "kind": "coffee.cup", "schema_version": 9,
+             "occurred_at": "2026-10-13T09:42:10Z", "payload": {"note": secret("p2")}},
+            {"key": secret("k3"), "kind": "record.cancel", "schema_version": 1,
+             "occurred_at": "2026-10-13T09:42:10Z", "payload": secret("p3")},
+            {"key": secret("k4"), "kind": "record.cancel", "schema_version": 1,
+             "occurred_at": "2026-10-13T09:42:10Z",
+             "payload": {"source": secret("p4"), "key": secret("p5")}},
+            {"key": secret("k5"), "kind": "record.cancel", "schema_version": 1,
+             "occurred_at": "2026-10-13T09:42:10Z",
+             "payload": {"source": "ios", "key": secret("p6")}},
+        ]),
+    )
+    .await;
+    assert_eq!(results.len(), 5);
+    wait_until_count(&db, "SELECT count(*) FROM derived.interpretation_errors", 3).await;
+    wait_until_count(&db, "SELECT count(*) FROM derived.cancellations", 1).await;
+    let messages: Vec<String> =
+        sqlx::query_scalar("SELECT error FROM derived.interpretation_errors")
+            .fetch_all(&db.app)
+            .await
+            .unwrap();
+    assert!(
+        messages.iter().all(|m| !m.contains(SENTINEL)),
+        "{messages:?}"
+    );
+
+    let request_id: String =
+        sqlx::query_scalar("SELECT request_id::text FROM core.records LIMIT 1")
+            .fetch_one(&db.app)
+            .await
+            .unwrap();
+    let logs = server.stop();
+    assert!(!logs.contains(SENTINEL), "fuite : {}", leak(&logs));
+    assert!(
+        logs.contains("record interpreted"),
+        "les logs racontent l'interprétation"
+    );
+    assert!(
+        logs.lines()
+            .any(|l| l.contains("record in error") && l.contains(&request_id)),
+        "le suivi de requête va jusqu'à l'interprétation"
+    );
 }
 
 fn leak(logs: &str) -> &str {

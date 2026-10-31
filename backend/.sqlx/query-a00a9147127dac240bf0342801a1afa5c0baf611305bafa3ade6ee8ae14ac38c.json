@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH horizon AS (\n             SELECT COALESCE(x.kind, y.kind) AS kind, LEAST(x.last_seq, y.last_seq) AS last_seq\n             FROM (SELECT * FROM derived.cursors WHERE generation = $1) x\n             FULL JOIN (SELECT * FROM derived.cursors WHERE generation = $2) y USING (kind)\n           ), content AS (\n             SELECT 'events' AS tbl, generation, seq,\n                    jsonb_build_array(ordinal, metric, source_id, occurred_at, utc_offset_minutes,\n                                      value, details) AS row\n             FROM derived.events WHERE generation IN ($1, $2)\n             UNION ALL\n             SELECT 'event_items', generation, seq,\n                    jsonb_build_array(ordinal, level, item_key, display, metric, occurred_at)\n             FROM derived.event_items WHERE generation IN ($1, $2)\n             UNION ALL\n             SELECT 'cancellations', generation, cancel_seq,\n                    jsonb_build_array(target_source_id, target_key)\n             FROM derived.cancellations WHERE generation IN ($1, $2)\n             UNION ALL\n             SELECT 'interpretation_errors', generation, seq, jsonb_build_array(error)\n             FROM derived.interpretation_errors WHERE generation IN ($1, $2)\n           )\n           SELECT DISTINCT c.tbl AS \"table!\", c.seq AS \"seq!\"\n           FROM content c\n           JOIN core.records r ON r.seq = c.seq\n           JOIN horizon h ON h.kind = r.kind AND c.seq <= h.last_seq\n           GROUP BY c.tbl, c.seq, c.row\n           HAVING count(*) FILTER (WHERE c.generation = $1)\n                  <> count(*) FILTER (WHERE c.generation = $2)\n           ORDER BY 1, 2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "table!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "seq!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "a00a9147127dac240bf0342801a1afa5c0baf611305bafa3ade6ee8ae14ac38c"
+}

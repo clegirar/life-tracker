@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE derived.cursors SET last_seq = $3 WHERE generation = $1 AND kind = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c7b4fcedb57d296e92ffe9294c90e93f843f7768d1206498dd1c52d11ea85b6c"
+}

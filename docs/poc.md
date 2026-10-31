@@ -12,7 +12,7 @@ Le POC couvre le compteur de cafés et les écoutes de musique (Last.fm en direc
 | --- | --- | --- |
 | 0 | Schéma de la base et `CLAUDE.md` | Fait |
 | 1 | Socle backend et ingestion | Fait |
-| 2 | Interprètes et rejeu | À faire |
+| 2 | Interprètes et rejeu | Fait |
 | 3 | Lecture et web app du café | À faire |
 | 4 | Déploiement sur le NAS | À faire |
 | 5 | Musique en direct (Last.fm) | À faire |
@@ -48,6 +48,8 @@ Fait le 31 oct. 2026. Les tests d'intégration tournent sur un PostgreSQL 18.6 j
 - Les logs ne contiennent aucune charge utile.
 
 ## Étape 2 : interprètes et rejeu
+
+Fait le 31 oct. 2026. Chaque test d'interprétation a sa propre base sur le PostgreSQL 18.6 jetable : la génération active et les curseurs sont globaux.
 
 **Contenu**
 

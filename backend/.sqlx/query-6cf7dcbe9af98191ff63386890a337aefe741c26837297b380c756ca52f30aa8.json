@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM derived.generations WHERE state IN ('building', 'retired')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "6cf7dcbe9af98191ff63386890a337aefe741c26837297b380c756ca52f30aa8"
+}

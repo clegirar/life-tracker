@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO derived.cancellations\n                       (generation, cancel_seq, target_source_id, target_key)\n                     SELECT $1, $2, s.id, $4 FROM core.sources s WHERE s.name = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "20508fb2a76524f8e778353cb5e52bf0258e82a9827d27d153e3e377ba8183ce"
+}

@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n             SELECT 1 FROM derived.cursors a\n             LEFT JOIN derived.cursors b ON b.generation = $2 AND b.kind = a.kind\n             WHERE a.generation = $1 AND a.kind = ANY($3::text[])\n               AND a.last_seq > COALESCE(b.last_seq, 0)\n           ) AS \"lagging!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "lagging!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int4",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "ef34ea40834e82bdb6cecfe4d9180e2a5c761dc25e97bf9f22e52f5a4cdaa907"
+}

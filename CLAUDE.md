@@ -18,15 +18,15 @@ Seul ce qui existe aujourd'hui est listé ; ajouter ici les commandes de chaque 
 
 - Tests de la base : `db/test/run.sh` (conteneurs jetables, Docker requis).
 - Base de développement : `cp .env.example .env && docker compose -f compose.dev.yaml up -d` (port 54329).
-- Tests du backend : `backend/test.sh` (conteneur jetable, Docker requis ; Rust figé par `backend/rust-toolchain.toml`).
+- Tests du backend : `backend/test.sh [arguments de cargo test]` (conteneur jetable, Docker requis ; Rust figé par `backend/rust-toolchain.toml`).
 - Après un changement de requête SQL : `backend/test.sh --prepare` régénère le cache `backend/.sqlx/` (sqlx-cli 0.9 requis), à versionner.
 - Qualité : dans `backend/`, `cargo fmt --check` et `cargo clippy --all-targets -- -D warnings`.
 
 Depuis `backend/`, après `set -a && . ../.env && set +a` (chaque commande lit sa propre URL) :
 
 - Migrations : `cargo run -- migrate` (`MIGRATE_DATABASE_URL`, `tracker_owner`).
-- API : `cargo run -- serve` (`DATABASE_URL`, `tracker_app` ; `LISTEN_ADDR`, `RUST_LOG`).
-- Administration (`ADMIN_DATABASE_URL`, `tracker_admin`) : `cargo run -- admin create-source <nom> [--silence-threshold "6 hours"]` (affiche le token une seule fois), `admin revoke-source <nom>`, `admin grant-kind <source> <type>`, `admin revoke-kind <source> <type>`.
+- API et interprètes : `cargo run -- serve` (`DATABASE_URL`, `tracker_app` ; `LISTEN_ADDR`, `RUST_LOG`).
+- Administration (`ADMIN_DATABASE_URL`, `tracker_admin`) : `cargo run -- admin create-source <nom> [--silence-threshold "6 hours"]` (affiche le token une seule fois), `admin revoke-source <nom>`, `admin grant-kind <source> <type>`, `admin revoke-kind <source> <type>`, `admin rebuild [--allow-differences]` (génération à côté, comparaison, bascule), `admin retry-errors`.
 
 ## Règles à ne jamais casser
 

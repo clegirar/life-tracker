@@ -4,7 +4,7 @@
 use life_tracker::{admin, api, db};
 use reqwest::Client;
 use serde_json::{Value, json};
-use sqlx::PgPool;
+use sqlx::{AssertSqlSafe, PgPool};
 use uuid::Uuid;
 
 pub fn env_url(name: &str) -> String {
@@ -18,6 +18,142 @@ pub fn admin_url() -> String {
 }
 pub fn owner_url() -> String {
     env_url("LT_TEST_OWNER_URL")
+}
+
+pub fn super_url() -> String {
+    env_url("LT_TEST_SUPER_URL")
+}
+
+fn with_database(url: &str, database: &str) -> String {
+    let (server, _) = url.rsplit_once('/').unwrap();
+    format!("{server}/{database}")
+}
+
+/// Une base neuve par test, avec les vraies migrations et les vrais rôles : la génération active
+/// et les curseurs sont globaux, deux tests dans la même base se gêneraient.
+pub struct TestDb {
+    pub name: String,
+    pub app: PgPool,
+    pub admin: PgPool,
+    pub owner: PgPool,
+}
+
+impl TestDb {
+    pub async fn new() -> Self {
+        let name = unique_name().replace('-', "_");
+        let root = db::pool(&super_url()).unwrap();
+        sqlx::query(AssertSqlSafe(format!(
+            "CREATE DATABASE {name} OWNER tracker_owner"
+        )))
+        .execute(&root)
+        .await
+        .unwrap();
+        root.close().await;
+        let owner = db::pool(&with_database(&owner_url(), &name)).unwrap();
+        db::MIGRATOR.run(&owner).await.unwrap();
+        Self {
+            app: db::pool(&with_database(&app_url(), &name)).unwrap(),
+            admin: db::pool(&with_database(&admin_url(), &name)).unwrap(),
+            owner,
+            name,
+        }
+    }
+
+    pub fn app_url(&self) -> String {
+        with_database(&app_url(), &self.name)
+    }
+
+    pub fn admin_url(&self) -> String {
+        with_database(&admin_url(), &self.name)
+    }
+
+    /// Une source à token ; renvoie son id et son token.
+    pub async fn source(&self, name: &str, kinds: &[&str]) -> (i16, String) {
+        let token = admin::create_source(&self.admin, name, None).await.unwrap();
+        for kind in kinds {
+            admin::grant_kind(&self.admin, name, kind).await.unwrap();
+        }
+        let id = sqlx::query_scalar("SELECT id FROM core.sources WHERE name = $1")
+            .bind(name)
+            .fetch_one(&self.app)
+            .await
+            .unwrap();
+        (id, token)
+    }
+
+    /// Ajoute au journal avec les droits de l'ingestion ; renvoie le numéro.
+    pub async fn insert(&self, source_id: i16, kind: &str, key: &str, payload: Value) -> i64 {
+        self.insert_version(source_id, kind, key, payload, 1).await
+    }
+
+    pub async fn insert_version(
+        &self,
+        source_id: i16,
+        kind: &str,
+        key: &str,
+        payload: Value,
+        schema_version: i16,
+    ) -> i64 {
+        sqlx::query_scalar(
+            "INSERT INTO core.records (source_id, kind, schema_version, key, occurred_at,
+                                       utc_offset_minutes, payload)
+             VALUES ($1, $2, $3, $4, '2026-10-13T07:42:10Z', 120, $5::text::jsonb)
+             RETURNING seq",
+        )
+        .bind(source_id)
+        .bind(kind)
+        .bind(schema_version)
+        .bind(key)
+        .bind(payload.to_string())
+        .fetch_one(&self.app)
+        .await
+        .unwrap()
+    }
+
+    /// La purge telle que la décrit l'architecture : rédaction et dérivés, en une transaction.
+    pub async fn purge(&self, seq: i64) {
+        let mut tx = self.admin.begin().await.unwrap();
+        let purge: i64 = sqlx::query_scalar(
+            "INSERT INTO core.purges (selector, reason, record_count)
+             VALUES ('{}', 'test', 1) RETURNING id",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE core.records SET payload = NULL, purge_id = $1 WHERE seq = $2")
+            .bind(purge)
+            .bind(seq)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        for table in [
+            "DELETE FROM derived.events WHERE seq = $1",
+            "DELETE FROM derived.cancellations WHERE cancel_seq = $1",
+            "DELETE FROM derived.interpretation_errors WHERE seq = $1",
+        ] {
+            sqlx::query(table)
+                .bind(seq)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        }
+        tx.commit().await.unwrap();
+    }
+
+    /// SQL de test, écrit dans les tests eux-mêmes.
+    pub async fn exec(pool: &PgPool, sql: &str) {
+        sqlx::raw_sql(AssertSqlSafe(sql.to_owned()))
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    pub async fn count(&self, sql: &str) -> i64 {
+        sqlx::query_scalar(AssertSqlSafe(sql.to_owned()))
+            .fetch_one(&self.app)
+            .await
+            .unwrap()
+    }
 }
 
 pub fn unique_name() -> String {

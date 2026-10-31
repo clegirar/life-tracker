@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE derived.generations SET state = 'active', activated_at = now() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f47a6a0a134205ffe6328282a444efd048bce5977ef3caaa1d1dbd0b31c01648"
+}

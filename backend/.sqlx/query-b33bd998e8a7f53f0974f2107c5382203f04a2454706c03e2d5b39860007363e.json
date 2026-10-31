@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO derived.generations (state, activated_at, interpreter_versions)\n         VALUES ('active', now(), $1::text::jsonb)\n         ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b33bd998e8a7f53f0974f2107c5382203f04a2454706c03e2d5b39860007363e"
+}

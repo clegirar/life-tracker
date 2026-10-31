@@ -1,9 +1,15 @@
-use anyhow::{Context, Result};
+use std::time::Duration;
+
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use life_tracker::{admin, api, db};
+use life_tracker::interpreters::INTERPRETERS;
+use life_tracker::{admin, api, db, engine, replay};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::watch;
 use tracing_subscriber::EnvFilter;
+
+const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Parser)]
 #[command(
@@ -18,7 +24,7 @@ struct Cli {
 // Chaque commande lit sa propre URL : `serve` ne voit jamais celle du propriétaire.
 #[derive(Subcommand)]
 enum Command {
-    /// Lance l'API, avec le rôle tracker_app
+    /// Lance l'API et les interprètes, avec le rôle tracker_app
     Serve {
         #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
         database_url: String,
@@ -54,6 +60,14 @@ enum AdminCommand {
     GrantKind { source: String, kind: String },
     /// Retire un type de donnée à une source
     RevokeKind { source: String, kind: String },
+    /// Construit une génération à côté de l'active, la compare, puis bascule
+    Rebuild {
+        /// Bascule malgré les différences (une nouvelle version d'interprète, par exemple)
+        #[arg(long)]
+        allow_differences: bool,
+    },
+    /// Réinterprète les enregistrements en erreur de la génération active
+    RetryErrors,
 }
 
 #[tokio::main]
@@ -86,10 +100,21 @@ async fn serve(database_url: &str, listen: &str) -> Result<()> {
     let pool = db::pool(database_url)?;
     let listener = TcpListener::bind(listen).await.context("écoute")?;
     tracing::info!(addr = %listener.local_addr()?, "listening");
-    axum::serve(listener, api::router(pool.clone()))
+    let (stop, stopped) = watch::channel(false);
+    let worker = tokio::spawn(engine::run(
+        pool.clone(),
+        INTERPRETERS,
+        POLL_INTERVAL,
+        stopped,
+    ));
+    let served = axum::serve(listener, api::router(pool.clone()))
         .with_graceful_shutdown(shutdown_signal())
-        .await?;
+        .await;
+    // Le worker finit l'enregistrement en cours ; le suivant attendra le prochain démarrage.
+    stop.send_replace(true);
+    worker.await?;
     pool.close().await;
+    served?;
     tracing::info!("stopped");
     Ok(())
 }
@@ -126,6 +151,51 @@ async fn run_admin(database_url: &str, command: AdminCommand) -> Result<()> {
             admin::revoke_kind(&pool, &source, &kind).await?;
             eprintln!("{kind} révoqué pour {source}");
         }
+        AdminCommand::Rebuild { allow_differences } => {
+            let report = replay::rebuild(&pool, INTERPRETERS, allow_differences).await?;
+            print_rebuild(&report);
+            if !report.switched {
+                bail!(
+                    "{} différence(s), pas de bascule ; génération {} laissée à examiner, \
+                     --allow-differences pour basculer",
+                    report.comparison.differences.len(),
+                    report.generation
+                );
+            }
+        }
+        AdminCommand::RetryErrors => {
+            let report = replay::retry_errors(&pool, INTERPRETERS).await?;
+            println!(
+                "{} levée(s) : {:?} ; {} restante(s) : {:?}",
+                report.cleared.len(),
+                report.cleared,
+                report.kept.len(),
+                report.kept
+            );
+        }
     }
     Ok(())
+}
+
+/// Des numéros du journal seulement, jamais le contenu des lignes.
+fn print_rebuild(report: &replay::RebuildReport) {
+    for (kind, last_seq) in &report.comparison.compared_up_to {
+        println!("{kind} : comparé jusqu'au numéro {last_seq}");
+    }
+    for difference in &report.comparison.differences {
+        println!(
+            "différence : {} numéro {}",
+            difference.table, difference.seq
+        );
+    }
+    println!(
+        "génération {} : {} différence(s), {}",
+        report.generation,
+        report.comparison.differences.len(),
+        if report.switched {
+            "active"
+        } else {
+            "non basculée"
+        }
+    );
 }

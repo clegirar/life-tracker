@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM derived.generations\n         WHERE ($1::integer IS NULL AND state = 'active') OR (id = $1 AND state = 'building')\n         FOR SHARE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "derived.generations",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a49485bd2659387c5bb3cc20a68909bf6c1d272d80379c379ddbe6407f938fc8"
+}
