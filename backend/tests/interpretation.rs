@@ -1184,6 +1184,12 @@ async fn rebuilds_with_a_running_worker_and_arriving_records_lose_nothing() {
     assert_eq!(last.comparison.differences, vec![]);
 }
 
+async fn wait_for_more_records(db: &TestDb, than: i64) {
+    while db.count("SELECT count(*) FROM core.records").await <= than {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
 /// Un journal qui avance plus vite que l'interprétation ne retient pas la reconstruction : elle vise
 /// le bout du journal à son départ, et ce qui suit revient au worker.
 #[tokio::test(flavor = "multi_thread")]
@@ -1194,8 +1200,11 @@ async fn a_rebuild_finishes_even_if_the_journal_outruns_it() {
     drain(&db.app, INTERPRETERS).await;
 
     let writer_db = life_tracker::db::pool(&db.app_url()).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_writer = stop.clone();
     let writer = tokio::spawn(async move {
-        for n in 0..usize::MAX {
+        let mut n = 0;
+        while !stop_writer.load(Ordering::Relaxed) {
             sqlx::query(
                 "INSERT INTO core.records (source_id, kind, schema_version, key, occurred_at, payload)
                  VALUES ($1, 'coffee.cup', 1, $2, now(), '{}')",
@@ -1205,8 +1214,11 @@ async fn a_rebuild_finishes_even_if_the_journal_outruns_it() {
             .execute(&writer_db)
             .await
             .unwrap();
+            n += 1;
         }
     });
+    // Le journal avance déjà au départ de la reconstruction...
+    wait_for_more_records(&db, 1).await;
     let report = tokio::time::timeout(
         Duration::from_secs(60),
         replay::rebuild(&db.admin, INTERPRETERS, false),
@@ -1214,7 +1226,11 @@ async fn a_rebuild_finishes_even_if_the_journal_outruns_it() {
     .await
     .expect("la reconstruction doit finir")
     .unwrap();
-    writer.abort();
+    // ... et il a dépassé sa cible à l'arrivée, quelle que soit la charge de la machine.
+    let at_end = db.count("SELECT count(*) FROM core.records").await;
+    wait_for_more_records(&db, at_end).await;
+    stop.store(true, Ordering::Relaxed);
+    writer.await.unwrap();
     assert!(report.switched);
     assert_eq!(report.comparison.differences, vec![]);
 
