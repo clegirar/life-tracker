@@ -1,49 +1,141 @@
-//! API d'ingestion v1 : contrat dans contract/ingestion-v1.schema.json.
+//! L'API : ingestion v1 (contrat dans contract/ingestion-v1.schema.json), compte web et lecture.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Instant;
 
 use axum::body::Bytes;
 use axum::extract::rejection::BytesRejection;
-use axum::extract::{DefaultBodyLimit, FromRequestParts, MatchedPath, Request, State};
-use axum::http::header::{AUTHORIZATION, WWW_AUTHENTICATE};
+use axum::extract::{DefaultBodyLimit, FromRequestParts, MatchedPath, Path, Request, State};
+use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, SET_COOKIE, WWW_AUTHENTICATE};
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
-use chrono::{DateTime, Utc};
-use serde::Serialize;
+use chrono::{DateTime, NaiveDate, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::PgPool;
+use tokio::sync::Semaphore;
 use tracing::{Instrument, error, info, info_span, warn};
 use uuid::Uuid;
 
-use crate::admin::token_hash;
+use crate::admin::{generate_token, token_hash};
+use crate::auth;
 use crate::ingest::{Envelope, RejectReason, Rejection, parse_envelope};
 
 pub const MAX_RECORDS: usize = 500;
 pub const MAX_BODY_BYTES: usize = 1_000_000;
 
+const LOGIN: &str = "/v1/auth/login";
+const RECORDS: &str = "/v1/records";
+/// Le mot de passe et l'identifiant n'ont pas besoin de plus.
+const MAX_LOGIN_BYTES: usize = 4096;
+/// Argon2 prend 19 Mio par calcul : le NAS n'en fait pas plus de deux à la fois.
+const MAX_CONCURRENT_LOGINS: usize = 2;
+
+/// Une route exige la session par défaut (voir `guard`) : seules celles-ci en sont dispensées.
+/// `/v1/records` est à part : le token, ou sinon la session.
+pub const NO_SESSION_ROUTES: [&str; 3] = ["/health", LOGIN, "/v1/heartbeat"];
+
+/// Toute écriture par cookie doit porter cet en-tête. Un autre site ne peut pas l'ajouter sans
+/// une autorisation CORS préalable, et le serveur n'en donne jamais.
+pub const CSRF_HEADER: &str = "x-csrf-protection";
+
+#[derive(Clone, Copy, Default)]
+pub struct Config {
+    pub insecure_cookie: bool,
+}
+
 #[derive(Clone)]
-struct AppState {
+pub struct AppState {
     pool: PgPool,
+    config: Config,
+    logins: Arc<Semaphore>,
 }
 
 #[derive(Clone, Copy)]
 struct RequestId(Uuid);
 
+/// Posée par `guard` sur une requête authentifiée par sa session.
+#[derive(Clone, Copy)]
+struct SessionAuth;
+
 pub fn router(pool: PgPool) -> Router {
+    router_with(pool, Config::default())
+}
+
+pub fn router_with(pool: PgPool, config: Config) -> Router {
+    harden(routes(), pool, config)
+}
+
+fn routes() -> Router<AppState> {
     Router::new()
         .route(
-            "/v1/records",
+            RECORDS,
             post(post_records).layer(DefaultBodyLimit::max(MAX_BODY_BYTES)),
         )
         .route("/v1/heartbeat", post(post_heartbeat))
+        .route(
+            LOGIN,
+            post(login).layer(DefaultBodyLimit::max(MAX_LOGIN_BYTES)),
+        )
+        .route("/v1/auth/logout", post(logout))
+        .route("/v1/days/{date}", get(get_day))
         .route("/health", get(health))
+}
+
+/// Pose les protections sur toutes les routes, y compris celles qu'on ajoutera et les chemins inconnus.
+pub fn harden(routes: Router<AppState>, pool: PgPool, config: Config) -> Router {
+    let state = AppState {
+        pool,
+        config,
+        logins: Arc::new(Semaphore::new(MAX_CONCURRENT_LOGINS)),
+    };
+    routes
+        .layer(middleware::from_fn_with_state(state.clone(), guard))
         .layer(middleware::from_fn(request_context))
-        .with_state(AppState { pool })
+        .with_state(state)
+}
+
+/// Le seul contrôle d'accès, refus par défaut.
+async fn guard(
+    State(state): State<AppState>,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|path| path.as_str().to_owned());
+    let route = route.as_deref().unwrap_or("");
+    let headers = request.headers();
+    let writes = !matches!(*request.method(), Method::GET | Method::HEAD);
+    let csrf_ok = !writes || headers.contains_key(CSRF_HEADER);
+
+    // Pas de CORS, donc pas d'Authorization venue d'un autre site : le token n'a rien à craindre
+    // du CSRF. Un mauvais token ne se rattrape jamais par le cookie.
+    if route == RECORDS && headers.contains_key(AUTHORIZATION) {
+        return Ok(next.run(request).await);
+    }
+    if NO_SESSION_ROUTES.contains(&route) {
+        if route == LOGIN && !csrf_ok {
+            return Err(ApiError::CsrfRejected);
+        }
+        return Ok(next.run(request).await);
+    }
+
+    let token = auth::session_token(headers).ok_or(ApiError::Unauthorized)?;
+    if !auth::session_is_valid(&state.pool, token).await? {
+        return Err(ApiError::Unauthorized);
+    }
+    if !csrf_ok {
+        return Err(ApiError::CsrfRejected);
+    }
+    request.extensions_mut().insert(SessionAuth);
+    Ok(next.run(request).await)
 }
 
 /// Identifiant de requête, et le seul journal d'accès : jamais d'en-tête ni de corps.
@@ -64,6 +156,10 @@ async fn request_context(mut request: Request, next: Next) -> Response {
             duration_ms = started.elapsed().as_millis() as u64,
             "request completed"
         );
+        // Rien ici ne se garde : le passé peut changer d'apparence (règle 7).
+        response
+            .headers_mut()
+            .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
         response.headers_mut().insert(
             "x-request-id",
             HeaderValue::from_str(&id.to_string()).expect("un UUID est un en-tête valide"),
@@ -76,6 +172,9 @@ async fn request_context(mut request: Request, next: Next) -> Response {
 
 enum ApiError {
     Unauthorized,
+    InvalidCredentials,
+    CsrfRejected,
+    InvalidDate,
     InvalidJson,
     BatchTooLarge,
     Internal,
@@ -83,14 +182,18 @@ enum ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let (status, code) = match self {
+        let (status, code) = match &self {
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            // Le même refus quelle qu'en soit la cause : mauvais identifiant, mauvais mot de passe, pas de compte.
+            Self::InvalidCredentials => (StatusCode::UNAUTHORIZED, "invalid_credentials"),
+            Self::CsrfRejected => (StatusCode::FORBIDDEN, "csrf_rejected"),
+            Self::InvalidDate => (StatusCode::BAD_REQUEST, "invalid_date"),
             Self::InvalidJson => (StatusCode::BAD_REQUEST, "invalid_json"),
             Self::BatchTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "batch_too_large"),
             Self::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
         };
         let mut response = (status, Json(json!({ "error": code }))).into_response();
-        if status == StatusCode::UNAUTHORIZED {
+        if matches!(self, Self::Unauthorized) {
             response
                 .headers_mut()
                 .insert(WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
@@ -110,7 +213,8 @@ impl From<sqlx::Error> for ApiError {
     }
 }
 
-/// Source authentifiée par son token. Tout appel authentifié met à jour son dernier contact.
+/// Source authentifiée par son token, ou `webapp` si `guard` a validé la session : jamais une source
+/// choisie par le client. Tout appel authentifié met à jour son dernier contact.
 struct Source {
     id: i16,
     client_version: Option<String>,
@@ -126,24 +230,36 @@ impl FromRequestParts<AppState> for Source {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
-        let token = bearer_token(&parts.headers).ok_or(ApiError::Unauthorized)?;
-        let hash = token_hash(token);
         let client_version = parts
             .headers
             .get("x-client-version")
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
-        // auth = 'token' : la source webapp passe par la session et n'a pas de token.
-        let id = sqlx::query_scalar!(
-            "UPDATE core.sources
-             SET last_seen_at = now(), client_version = COALESCE($2, client_version)
-             WHERE token_hash = $1 AND auth = 'token' AND revoked_at IS NULL
-             RETURNING id",
-            hash,
-            client_version,
-        )
-        .fetch_optional(&state.pool)
-        .await?
+        let id = if parts.extensions.get::<SessionAuth>().is_some() {
+            sqlx::query_scalar!(
+                "UPDATE core.sources
+                 SET last_seen_at = now(), client_version = COALESCE($1, client_version)
+                 WHERE name = 'webapp' AND auth = 'session' AND revoked_at IS NULL
+                 RETURNING id",
+                client_version,
+            )
+            .fetch_optional(&state.pool)
+            .await?
+        } else {
+            let token = bearer_token(&parts.headers).ok_or(ApiError::Unauthorized)?;
+            let hash = token_hash(token);
+            // auth = 'token' : la source webapp passe par la session et n'a pas de token.
+            sqlx::query_scalar!(
+                "UPDATE core.sources
+                 SET last_seen_at = now(), client_version = COALESCE($2, client_version)
+                 WHERE token_hash = $1 AND auth = 'token' AND revoked_at IS NULL
+                 RETURNING id",
+                hash,
+                client_version,
+            )
+            .fetch_optional(&state.pool)
+            .await?
+        }
         .ok_or(ApiError::Unauthorized)?;
         Ok(Self { id, client_version })
     }
@@ -377,4 +493,129 @@ async fn health(State(state): State<AppState>) -> StatusCode {
         Ok(_) => StatusCode::OK,
         Err(_) => StatusCode::SERVICE_UNAVAILABLE,
     }
+}
+
+#[derive(Deserialize)]
+struct LoginRequest {
+    username: String,
+    password: String,
+}
+
+/// Le mot de passe est toujours vérifié contre le compte, quel que soit l'identifiant donné :
+/// le temps de réponse ne dit pas si l'identifiant est bon.
+async fn login(
+    State(state): State<AppState>,
+    body: Result<Bytes, BytesRejection>,
+) -> Result<Response, ApiError> {
+    let body = body.map_err(|_| ApiError::InvalidJson)?;
+    let credentials: LoginRequest =
+        serde_json::from_slice(&body).map_err(|_| ApiError::InvalidJson)?;
+    let account = sqlx::query!("SELECT username, password_hash FROM core.account")
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or(ApiError::InvalidCredentials)?;
+    let _permit = state
+        .logins
+        .acquire()
+        .await
+        .map_err(|_| ApiError::Internal)?;
+    let password = credentials.password;
+    let stored_hash = account.password_hash;
+    let password_ok =
+        tokio::task::spawn_blocking(move || auth::verify_password(&password, &stored_hash))
+            .await
+            .map_err(|_| ApiError::Internal)?;
+    if !password_ok || credentials.username != account.username {
+        warn!("login refused");
+        return Err(ApiError::InvalidCredentials);
+    }
+    let token = generate_token().map_err(|_| ApiError::Internal)?;
+    auth::create_session(&state.pool, &token).await?;
+    let cookie = auth::session_cookie(&token, auth::SESSION_SECONDS, state.config.insecure_cookie);
+    info!("login succeeded");
+    Ok(with_cookie(cookie))
+}
+
+async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Response, ApiError> {
+    if let Some(token) = auth::session_token(&headers) {
+        auth::delete_session(&state.pool, token).await?;
+    }
+    Ok(with_cookie(auth::session_cookie(
+        "",
+        0,
+        state.config.insecure_cookie,
+    )))
+}
+
+fn with_cookie(cookie: String) -> Response {
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    response.headers_mut().insert(
+        SET_COOKIE,
+        HeaderValue::from_str(&cookie).expect("un token hexadécimal est un en-tête valide"),
+    );
+    response
+}
+
+#[derive(Serialize)]
+struct Cup {
+    /// Heure de Paris, `HH:MM`.
+    time: String,
+    occurred_at: String,
+    /// Source et clé : ce qu'il faut pour annuler ce café, quelle que soit sa source.
+    source: String,
+    key: String,
+}
+
+#[derive(Serialize)]
+struct DayResponse {
+    date: NaiveDate,
+    count: usize,
+    cups: Vec<Cup>,
+}
+
+/// `AAAA-MM-JJ` strict : chrono seul accepterait aussi `2026-1-5`.
+fn parse_day(value: &str) -> Option<NaiveDate> {
+    (value.len() == 10)
+        .then(|| NaiveDate::parse_from_str(value, "%Y-%m-%d").ok())
+        .flatten()
+}
+
+/// La vue choisit les événements ; le journal et le registre ne donnent que leur clé et leur source.
+/// Le jour demandé devient un intervalle UTC : minuit à minuit, 23 ou 25 heures au changement d'heure.
+async fn get_day(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Result<Json<DayResponse>, ApiError> {
+    let date = parse_day(&date).ok_or(ApiError::InvalidDate)?;
+    let cups = sqlx::query!(
+        r#"SELECT to_char(e.occurred_at AT TIME ZONE s.timezone, 'HH24:MI') AS "time!",
+                  e.occurred_at AS "occurred_at!",
+                  src.name AS source,
+                  r.key
+           FROM derived.live_events e
+           JOIN core.records r ON r.seq = e.seq
+           JOIN core.sources src ON src.id = e.source_id
+           CROSS JOIN core.settings s
+           WHERE e.metric = 'coffee'
+             AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE s.timezone)
+             AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE s.timezone)
+           ORDER BY e.occurred_at, e.seq"#,
+        date,
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let cups: Vec<Cup> = cups
+        .into_iter()
+        .map(|cup| Cup {
+            time: cup.time,
+            occurred_at: cup.occurred_at.to_rfc3339(),
+            source: cup.source,
+            key: cup.key,
+        })
+        .collect();
+    Ok(Json(DayResponse {
+        date,
+        count: cups.len(),
+        cups,
+    }))
 }

@@ -1,3 +1,4 @@
+use std::io::{BufRead, IsTerminal};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -30,6 +31,9 @@ enum Command {
         database_url: String,
         #[arg(long, env = "LISTEN_ADDR", default_value = "127.0.0.1:8080")]
         listen: String,
+        /// Développement seulement : retire `Secure` du cookie de session (Safari sur http://localhost)
+        #[arg(long, env = "DEV_INSECURE_COOKIE")]
+        dev_insecure_cookie: bool,
     },
     /// Applique les migrations, avec le rôle tracker_owner
     Migrate {
@@ -60,6 +64,9 @@ enum AdminCommand {
     GrantKind { source: String, kind: String },
     /// Retire un type de donnée à une source
     RevokeKind { source: String, kind: String },
+    /// Crée le compte web ou change son mot de passe (lu au clavier ou sur l'entrée standard),
+    /// et ferme toutes les sessions
+    SetPassword { username: String },
     /// Construit une génération à côté de l'active, la compare, puis bascule
     Rebuild {
         /// Bascule malgré les différences (une nouvelle version d'interprète, par exemple)
@@ -76,7 +83,8 @@ async fn main() -> Result<()> {
         Command::Serve {
             database_url,
             listen,
-        } => serve(&database_url, &listen).await,
+            dev_insecure_cookie,
+        } => serve(&database_url, &listen, dev_insecure_cookie).await,
         Command::Migrate { database_url } => {
             let pool = db::pool(&database_url)?;
             db::MIGRATOR.run(&pool).await.context("migrations")?;
@@ -90,13 +98,16 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn serve(database_url: &str, listen: &str) -> Result<()> {
+async fn serve(database_url: &str, listen: &str, insecure_cookie: bool) -> Result<()> {
     tracing_subscriber::fmt()
         .json()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
+    if insecure_cookie {
+        tracing::warn!("cookie de session sans Secure : développement seulement");
+    }
     let pool = db::pool(database_url)?;
     let listener = TcpListener::bind(listen).await.context("écoute")?;
     tracing::info!(addr = %listener.local_addr()?, "listening");
@@ -107,9 +118,12 @@ async fn serve(database_url: &str, listen: &str) -> Result<()> {
         POLL_INTERVAL,
         stopped,
     ));
-    let served = axum::serve(listener, api::router(pool.clone()))
-        .with_graceful_shutdown(shutdown_signal())
-        .await;
+    let served = axum::serve(
+        listener,
+        api::router_with(pool.clone(), api::Config { insecure_cookie }),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await;
     // Le worker finit l'enregistrement en cours ; le suivant attendra le prochain démarrage.
     stop.send_replace(true);
     worker.await?;
@@ -151,6 +165,10 @@ async fn run_admin(database_url: &str, command: AdminCommand) -> Result<()> {
             admin::revoke_kind(&pool, &source, &kind).await?;
             eprintln!("{kind} révoqué pour {source}");
         }
+        AdminCommand::SetPassword { username } => {
+            admin::set_password(&pool, &username, &read_password()?).await?;
+            eprintln!("mot de passe de {username} enregistré ; sessions fermées");
+        }
         AdminCommand::Rebuild { allow_differences } => {
             let report = replay::rebuild(&pool, INTERPRETERS, allow_differences).await?;
             print_rebuild(&report);
@@ -175,6 +193,20 @@ async fn run_admin(database_url: &str, command: AdminCommand) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Jamais sur la ligne de commande : elle se lit dans `ps` et dans l'historique du shell.
+fn read_password() -> Result<String> {
+    if std::io::stdin().is_terminal() {
+        let password = rpassword::prompt_password("Mot de passe : ")?;
+        if password != rpassword::prompt_password("Encore une fois : ")? {
+            bail!("les deux saisies diffèrent");
+        }
+        return Ok(password);
+    }
+    let mut line = String::new();
+    std::io::stdin().lock().read_line(&mut line)?;
+    Ok(line.trim_end_matches(['\r', '\n']).to_owned())
 }
 
 /// Des numéros du journal seulement, jamais le contenu des lignes.

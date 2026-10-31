@@ -112,6 +112,10 @@ Les rôles et la base sont créés par `db/init/01-roles.sh` à la création du 
 
 **Annulation.** Charge utile `{"source": "<nom dans core.sources>", "key": "<clé de la cible>"}`. Le nom plutôt que le numéro de source : il est stable et lisible par le client, alors que le numéro dépend de l'ordre de création. Le moteur le résout à l'écriture ; une source inconnue est une erreur d'interprétation. Le droit d'annuler est le droit `record.cancel` sur la source, et il vaut pour toutes les sources : la web app doit pouvoir annuler un café du raccourci iOS. Une révocation ne change pas le passé, car le rejeu ne consulte pas les droits actuels.
 
+**Compte et sessions.** `admin set-password`, en `tracker_admin`, crée ou remplace la ligne de `core.account` et vide `core.sessions` dans la même transaction. `serve`, en `tracker_app`, lit le compte et gère les sessions : 30 jours depuis la connexion, `last_seen_at` à chaque requête, lignes expirées supprimées à la connexion suivante. Un token de session vaut 32 octets aléatoires, seul son SHA-256 est stocké.
+
+**Lecture d'un jour.** Le jour devient un intervalle UTC d'après `core.settings.timezone`, puis `derived.live_events` donne les événements. La jointure avec `core.records` et `core.sources` n'apporte que la clé et le nom de la source, pour annuler : jamais la charge utile ni le choix des événements.
+
 **Purge** (outil d'administration, une transaction) : ajouter l'entrée au registre, rédiger les enregistrements visés, supprimer leurs lignes dérivées dans toutes les générations. La clé conservée empêche la donnée de revenir. Après une restauration, le registre des purges est réappliqué avant la remise en service.
 
 ## Tests

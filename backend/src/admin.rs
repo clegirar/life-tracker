@@ -4,12 +4,17 @@ use anyhow::{Result, bail};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
+use crate::auth;
+
+/// En dessous, le mot de passe protège mal : le compte n'a pas de limite de tentatives pendant le POC.
+const MIN_PASSWORD_CHARS: usize = 12;
+
 /// SHA-256 du token, tel que stocké dans core.sources.token_hash.
 pub fn token_hash(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()
 }
 
-fn generate_token() -> Result<String> {
+pub(crate) fn generate_token() -> Result<String> {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("CSPRNG indisponible : {e}"))?;
     Ok(hex::encode(bytes))
@@ -87,5 +92,31 @@ pub async fn revoke_kind(pool: &PgPool, source: &str, kind: &str) -> Result<()> 
     if revoked.rows_affected() == 0 {
         bail!("aucune déclaration active de {kind} pour {source}");
     }
+    Ok(())
+}
+
+/// Crée ou remplace le compte unique. Changer le mot de passe ferme toutes les sessions.
+pub async fn set_password(pool: &PgPool, username: &str, password: &str) -> Result<()> {
+    if username.trim().is_empty() {
+        bail!("identifiant vide");
+    }
+    if password.chars().count() < MIN_PASSWORD_CHARS {
+        bail!("mot de passe trop court : {MIN_PASSWORD_CHARS} caractères au moins");
+    }
+    let hash = auth::hash_password(password)?;
+    let mut tx = pool.begin().await?;
+    sqlx::query!(
+        "INSERT INTO core.account (username, password_hash) VALUES ($1, $2)
+         ON CONFLICT (id) DO UPDATE
+         SET username = EXCLUDED.username, password_hash = EXCLUDED.password_hash, updated_at = now()",
+        username,
+        hash,
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!("DELETE FROM core.sessions")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(())
 }

@@ -215,6 +215,26 @@ async fn admin_token_lifecycle() {
     assert_eq!(send("e").await.0, 401);
 }
 
+/// `set-password` avec le vrai rôle tracker_admin, le mot de passe sur l'entrée standard.
+fn set_password(db: &TestDb, username: &str, stdin: &str) -> Output {
+    use std::io::Write;
+    let mut child = bin()
+        .args(["admin", "set-password", username])
+        .env("ADMIN_DATABASE_URL", db.admin_url())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
 struct Server {
     child: Child,
     base: String,
@@ -224,6 +244,10 @@ struct Server {
 impl Server {
     /// Démarre `serve` avec pour seule URL celle donnée, logs dans un fichier.
     async fn start(database_url: &str, rust_log: &str) -> Self {
+        Self::start_with(database_url, rust_log, &[]).await
+    }
+
+    async fn start_with(database_url: &str, rust_log: &str, env: &[(&str, &str)]) -> Self {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()
@@ -236,6 +260,7 @@ impl Server {
             .env("DATABASE_URL", database_url)
             .env("LISTEN_ADDR", format!("127.0.0.1:{port}"))
             .env("RUST_LOG", rust_log)
+            .envs(env.iter().copied())
             .stdout(Stdio::from(file.try_clone().unwrap()))
             .stderr(Stdio::from(file))
             .spawn()
@@ -644,6 +669,124 @@ async fn interpretation_logs_contain_only_identifiers() {
             .any(|l| l.contains("record in error") && l.contains(&request_id)),
         "le suivi de requête va jusqu'à l'interprétation"
     );
+}
+
+#[tokio::test]
+async fn set_password_reads_stdin_and_never_prints_it() {
+    let db = TestDb::new().await;
+    let password = format!("{SENTINEL}-mot-de-passe");
+    // Le compte n'existe pas : création.
+    let created = set_password(&db, "moi", &format!("{password}\n"));
+    assert!(created.status.success(), "{created:?}");
+    // Il existe : remplacement, toujours avec les seuls droits de tracker_admin.
+    let replaced = set_password(&db, "moi", &format!("{password}\r\n"));
+    assert!(replaced.status.success(), "{replaced:?}");
+    for output in [&created, &replaced] {
+        let printed = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!printed.contains(SENTINEL), "{printed}");
+    }
+    let hash: String = sqlx::query_scalar("SELECT password_hash FROM core.account")
+        .fetch_one(&db.admin)
+        .await
+        .unwrap();
+    assert!(life_tracker::auth::verify_password(&password, &hash));
+
+    let empty = set_password(&db, "moi", "");
+    assert!(!empty.status.success());
+    // Refuser sur la ligne de commande : il n'y a pas de place pour le mot de passe.
+    let extra = admin_on(&db, &["set-password", "moi", &password]);
+    assert!(!extra.status.success());
+}
+
+/// Seule une valeur vraie retire `Secure` ; « false » ne doit surtout pas compter comme présent.
+#[tokio::test]
+async fn dev_insecure_cookie_is_off_unless_explicitly_true() {
+    let db = TestDb::new().await;
+    assert!(
+        set_password(&db, "moi", "un mot de passe assez long")
+            .status
+            .success()
+    );
+    for (value, secure) in [("false", true), ("true", false)] {
+        let server =
+            Server::start_with(&db.app_url(), "info", &[("DEV_INSECURE_COOKIE", value)]).await;
+        let response = reqwest::Client::new()
+            .post(format!("{}/v1/auth/login", server.base))
+            .header("x-csrf-protection", "1")
+            .json(&json!({ "username": "moi", "password": "un mot de passe assez long" }))
+            .send()
+            .await
+            .unwrap();
+        let cookie = response.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(cookie.contains("; Secure"), secure, "{value} : {cookie}");
+        server.stop();
+    }
+}
+
+#[tokio::test]
+async fn serve_logs_nothing_of_a_login_or_a_session() {
+    let db = TestDb::new().await;
+    let password = format!("{SENTINEL}-mot-de-passe");
+    assert!(set_password(&db, "moi", &password).status.success());
+    let server = Server::start(&db.app_url(), "trace").await;
+    let http = reqwest::Client::new();
+    let login = |username: &str, password: &str| {
+        http.post(format!("{}/v1/auth/login", server.base))
+            .header("x-csrf-protection", "1")
+            .json(&json!({ "username": username, "password": password }))
+            .send()
+    };
+    assert_eq!(
+        login("moi", &format!("{SENTINEL}-faux"))
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    let response = login("moi", &password).await.unwrap();
+    assert_eq!(response.status(), 204);
+    let set_cookie = response.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    // Sans DEV_INSECURE_COOKIE, le vrai binaire pose Secure.
+    assert!(set_cookie.contains("; Secure"), "{set_cookie}");
+    let cookie = set_cookie.split(';').next().unwrap().to_owned();
+    let token = cookie.split_once('=').unwrap().1.to_owned();
+    let key = format!("{SENTINEL}-cle");
+    let response = http
+        .post(format!("{}/v1/records", server.base))
+        .header("cookie", &cookie)
+        .header("x-csrf-protection", "1")
+        .json(&json!({ "records": [{
+            "key": key, "kind": "coffee.cup", "schema_version": 1,
+            "occurred_at": "2026-10-13T09:00:00+02:00", "payload": { "note": SENTINEL },
+        }]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let response = http
+        .get(format!("{}/v1/days/2026-10-13", server.base))
+        .header("cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let logs = server.stop();
+    assert!(!logs.contains(SENTINEL), "fuite : {}", leak(&logs));
+    assert!(!logs.contains(&token), "session dans les logs");
+    assert!(logs.contains("login refused") && logs.contains("login succeeded"));
+    // Le patron de la route, jamais la date demandée.
+    assert!(logs.contains("/v1/days/{date}"));
+    assert!(!logs.contains("/v1/days/2026-10-13"));
 }
 
 fn leak(logs: &str) -> &str {

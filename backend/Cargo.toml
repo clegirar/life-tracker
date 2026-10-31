@@ -7,12 +7,14 @@ publish = false
 
 [dependencies]
 anyhow = "=1.0.104"
+argon2 = { version = "=0.6.0", features = ["password-hash", "getrandom"] }
 axum = "=0.8.9"
-chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
+chrono = { version = "=0.4.45", default-features = false, features = ["clock", "serde", "std"] }
 clap = { version = "=4.6.7", features = ["derive", "env"] }
 getrandom = "=0.4.3"
 hex = "=0.4.3"
 log = "=0.4.35"
+rpassword = "=7.5.4"
 serde = { version = "=1.0.229", features = ["derive"] }
 # arbitrary_precision : les nombres de la charge utile restent exacts jusqu'au jsonb.
 serde_json = { version = "=1.0.154", features = ["arbitrary_precision"] }

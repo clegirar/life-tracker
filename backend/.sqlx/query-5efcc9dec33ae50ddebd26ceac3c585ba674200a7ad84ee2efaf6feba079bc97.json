@@ -1,0 +1,59 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT to_char(e.occurred_at AT TIME ZONE s.timezone, 'HH24:MI') AS \"time!\",\n                  e.occurred_at AS \"occurred_at!\",\n                  src.name AS source,\n                  r.key\n           FROM derived.live_events e\n           JOIN core.records r ON r.seq = e.seq\n           JOIN core.sources src ON src.id = e.source_id\n           CROSS JOIN core.settings s\n           WHERE e.metric = 'coffee'\n             AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE s.timezone)\n             AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE s.timezone)\n           ORDER BY e.occurred_at, e.seq",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "time!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "occurred_at!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "source",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.sources",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.records",
+            "name": "key"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date"
+      ]
+    },
+    "nullable": [
+      null,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "5efcc9dec33ae50ddebd26ceac3c585ba674200a7ad84ee2efaf6feba079bc97"
+}

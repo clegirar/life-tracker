@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE core.sessions SET last_seen_at = now()\n         WHERE token_hash = $1 AND expires_at > now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8a065aff82f20d278517f543d6eee147b0e07bd5f025b78ab77a25c177c63f53"
+}

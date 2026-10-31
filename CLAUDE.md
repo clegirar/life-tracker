@@ -16,17 +16,22 @@ Hors POC : les messages et l'agent Mac, l'annuaire côté interface, les autres 
 
 Seul ce qui existe aujourd'hui est listé ; ajouter ici les commandes de chaque nouveau composant.
 
+- Tout le dépôt : `./test.sh` (base, qualité et tests du backend, web app ; conteneurs jetables, Docker requis).
 - Tests de la base : `db/test/run.sh` (conteneurs jetables, Docker requis).
 - Base de développement : `cp .env.example .env && docker compose -f compose.dev.yaml up -d` (port 54329).
 - Tests du backend : `backend/test.sh [arguments de cargo test]` (conteneur jetable, Docker requis ; Rust figé par `backend/rust-toolchain.toml`).
 - Après un changement de requête SQL : `backend/test.sh --prepare` régénère le cache `backend/.sqlx/` (sqlx-cli 0.9 requis), à versionner.
 - Qualité : dans `backend/`, `cargo fmt --check` et `cargo clippy --all-targets -- -D warnings`.
+- Web app : `web/test.sh [arguments de playwright test]` lance lint, types, tests unitaires, build, puis Playwright contre le vrai backend et un PostgreSQL 18.6 jetable (Docker requis ; télécharge Chromium au premier passage). Captures et logs dans `web/e2e-artifacts/`, ignoré par git.
+- Dans `web/` : `npm ci`, puis `npm run dev` (proxy de `/v1` vers `API_TARGET`, par défaut `http://127.0.0.1:8080`), `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`.
 
 Depuis `backend/`, après `set -a && . ../.env && set +a` (chaque commande lit sa propre URL) :
 
 - Migrations : `cargo run -- migrate` (`MIGRATE_DATABASE_URL`, `tracker_owner`).
 - API et interprètes : `cargo run -- serve` (`DATABASE_URL`, `tracker_app` ; `LISTEN_ADDR`, `RUST_LOG`).
-- Administration (`ADMIN_DATABASE_URL`, `tracker_admin`) : `cargo run -- admin create-source <nom> [--silence-threshold "6 hours"]` (affiche le token une seule fois), `admin revoke-source <nom>`, `admin grant-kind <source> <type>`, `admin revoke-kind <source> <type>`, `admin rebuild [--allow-differences]` (génération à côté, comparaison, bascule), `admin retry-errors`.
+- Administration (`ADMIN_DATABASE_URL`, `tracker_admin`) : `cargo run -- admin create-source <nom> [--silence-threshold "6 hours"]` (affiche le token une seule fois), `admin revoke-source <nom>`, `admin grant-kind <source> <type>`, `admin revoke-kind <source> <type>`, `admin rebuild [--allow-differences]` (génération à côté, comparaison, bascule), `admin retry-errors`, `admin set-password <identifiant>` (crée le compte web ou change son mot de passe, lu au clavier ou sur l'entrée standard, et ferme les sessions).
+
+Le cookie de session est toujours `Secure`. Seule exception, pour le développement : `DEV_INSECURE_COOKIE=true` sur `serve`, utile à Safari et à un téléphone en http. Chrome et Firefox l'acceptent déjà sur `localhost`.
 
 ## Règles à ne jamais casser
 

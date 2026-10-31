@@ -13,13 +13,14 @@ Le POC couvre le compteur de cafés et les écoutes de musique (Last.fm en direc
 | 0 | Schéma de la base et `CLAUDE.md` | Fait |
 | 1 | Socle backend et ingestion | Fait |
 | 2 | Interprètes et rejeu | Fait |
-| 3 | Lecture et web app du café | À faire |
+| 3 | Lecture et web app du café | Fait |
 | 4 | Déploiement sur le NAS | À faire |
 | 5 | Musique en direct (Last.fm) | À faire |
 | 6 | Découvertes et « déjà connu » | À faire |
 | 7 | Historique Apple | À faire |
 | 8 | Calendrier et complétude | À faire |
 | 9 | Serveur MCP | À faire |
+| 10 | Peaufiner l'interface | À faire |
 
 ## Étape 0 : schéma de la base
 
@@ -67,7 +68,9 @@ Fait le 31 oct. 2026. Chaque test d'interprétation a sa propre base sur le Post
 
 ## Étape 3 : lecture et web app du café
 
-**Prérequis :** l'esquisse de la page du jour.
+Fait le 31 oct. 2026. Tout se vérifie par `web/test.sh` et `backend/test.sh`, sur un PostgreSQL 18.6 jetable. L'affichage est contrôlé à 390 px sous Chromium ; il reste à l'essayer sur un vrai iPhone, en HTTPS, à l'étape 4.
+
+**Prérequis :** l'esquisse de la page du jour, validée le 31 oct. 2026 comme base provisoire : `docs/maquettes/page-du-jour.dc.html` ([maquette en ligne](https://claude.ai/artifact/NcMWypZr5N9VXw9dk4J6w6)). Elle sera reprise à l'étape 10.
 
 **Contenu**
 
@@ -188,9 +191,24 @@ Fait le 31 oct. 2026. Chaque test d'interprétation a sa propre base sur le Post
 - Aucun appel MCP ne peut écrire.
 - Le serveur ne répond à rien sans OAuth.
 
+## Étape 10 : peaufiner l'interface
+
+**Prérequis :** la liste de toutes les fonctionnalités que j'ai en tête, y compris après le POC, que je donnerai en début d'étape.
+
+**Contenu**
+
+- Repenser la maquette en tenant compte de ces fonctionnalités, pour que l'interface puisse les accueillir sans refonte.
+- Peaufiner toute l'interface : page du jour, calendrier, animations et détails, avec les skills de la section « Interface » de l'architecture.
+
+**Terminé quand**
+
+- La nouvelle maquette est validée par moi.
+- La web app la suit, à la largeur d'un iPhone et sur Mac, en clair et en sombre.
+- Les tests de bout en bout passent toujours.
+
 ## Fin du POC
 
-Les étapes 1 à 9 sont faites, et le café comme la musique ont tourné une semaine sur le NAS sans intervention.
+Les étapes 1 à 10 sont faites, et le café comme la musique ont tourné une semaine sur le NAS sans intervention.
 
 ## Après le POC : ouvrir la web app sur Internet
 
