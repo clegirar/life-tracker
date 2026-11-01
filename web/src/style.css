@@ -15,6 +15,7 @@
   --notice-fg: #6f4300;
   --error: #b3261e;
   --music: #c8102e;
+  --on-music: #ffffff;
   --segment-on: #ffffff;
   /* Ressort échantillonné : amortissement 0,72, léger dépassement. */
   --spring: linear(0, 0.13, 0.383, 0.632, 0.822, 0.944, 1.009, 1.035, 1.038, 1.031, 1.021, 1.012, 1.005, 1.001, 1);
@@ -37,6 +38,7 @@
     --notice-fg: #ffd08a;
     --error: #ff8a80;
     --music: #ff7a8a;
+    --on-music: #2a0509;
     --segment-on: #636366;
   }
 }
@@ -62,6 +64,7 @@ body {
 p,
 h1,
 h2,
+h3,
 dl,
 dd {
   margin: 0;
@@ -257,7 +260,8 @@ button:disabled {
   padding: 0;
 }
 
-.row {
+.row,
+.find {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -266,7 +270,8 @@ button:disabled {
   border-bottom: 0.5px solid var(--separator);
 }
 
-.row:last-child {
+.row:last-child,
+.find:last-child {
   border-bottom: 0;
 }
 
@@ -293,6 +298,53 @@ button:disabled {
   font-size: 15px;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
+}
+
+.subsection-title {
+  margin-top: 20px;
+  font-size: 20px;
+  line-height: 25px;
+  font-weight: 600;
+}
+
+.finds {
+  margin-top: 4px;
+}
+
+.find {
+  min-height: 56px;
+}
+
+/* Le bouton fait 44 px pour le doigt, la pastille 36 px comme sur la maquette. */
+.known {
+  flex-shrink: 0;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+/* Largeur minimale : la ligne ne saute pas quand le libellé change. */
+.known-pill {
+  display: block;
+  min-width: 124px;
+  padding: 8px 12px;
+  border-radius: 18px;
+  background: var(--control);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 500;
+  text-align: center;
+  transition: transform 300ms var(--spring), background-color 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+
+.known:active .known-pill {
+  transform: scale(0.97);
+  transition: transform 100ms var(--ease-out), background-color 120ms var(--ease-out), color 120ms var(--ease-out);
+}
+
+.known[aria-pressed='true'] .known-pill {
+  background: var(--music);
+  color: var(--on-music);
 }
 
 .inline-failure {
@@ -544,6 +596,9 @@ button:disabled {
   .add:hover {
     filter: brightness(0.95);
   }
+  .known:hover .known-pill {
+    filter: brightness(0.95);
+  }
   .segment:hover:not([aria-pressed='true']) {
     opacity: 0.75;
   }
@@ -566,6 +621,11 @@ button:disabled {
   }
   .segment {
     transition: none;
+  }
+  .known-pill,
+  .known:active .known-pill {
+    transform: none;
+    transition: background-color 120ms linear, color 120ms linear;
   }
   .cup-new {
     animation: cup-fade 150ms linear;

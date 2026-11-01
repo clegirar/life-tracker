@@ -583,6 +583,8 @@ fn parse_day(value: &str) -> Option<NaiveDate> {
 }
 
 /// La vue choisit les événements ; le journal et le registre ne donnent que leur clé et leur source.
+/// Le numéro de génération, redondant avec la vue, est ce qui ouvre l'index : sans lui, toute lecture
+/// d'un jour parcourt tous les événements (6 s pour 300 écoutes sur 60 000, voir l'architecture).
 /// Le jour demandé devient un intervalle UTC : minuit à minuit, 23 ou 25 heures au changement d'heure.
 async fn get_day(
     State(state): State<AppState>,
@@ -598,7 +600,8 @@ async fn get_day(
            JOIN core.records r ON r.seq = e.seq
            JOIN core.sources src ON src.id = e.source_id
            CROSS JOIN core.settings s
-           WHERE e.metric = 'coffee'
+           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+             AND e.metric = 'coffee'
              AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE s.timezone)
              AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE s.timezone)
            ORDER BY e.occurred_at, e.seq"#,
@@ -650,6 +653,25 @@ struct ArtistOfDay {
     listens: i64,
 }
 
+/// Ce qu'il faut pour annuler un marquage, quelle que soit sa source.
+#[derive(Serialize)]
+struct KnownMark {
+    source: String,
+    key: String,
+}
+
+/// Un élément écouté pour la première fois ce jour-là. C'est une découverte tant que `known_marks` est
+/// vide. Marqué, il reste dans la liste pour que le marquage puisse s'annuler depuis la même ligne.
+#[derive(Serialize)]
+struct FirstListen {
+    level: String,
+    item_key: String,
+    name: String,
+    artist: String,
+    /// Plusieurs si plusieurs appareils ont marqué : les annuler tous rétablit la découverte.
+    known_marks: Vec<KnownMark>,
+}
+
 #[derive(Serialize)]
 struct DayMusic {
     date: NaiveDate,
@@ -662,6 +684,75 @@ struct DayMusic {
     tracks: Vec<MusicTrack>,
     artists: Vec<MusicArtist>,
     albums: Vec<MusicAlbum>,
+    /// Nombre d'éléments de `first_listens` qui ne sont pas marqués.
+    discoveries: usize,
+    first_listens: Vec<FirstListen>,
+}
+
+/// Une découverte dépend de tout l'historique : elle se calcule à la lecture, jamais dans un interprète
+/// (principe 8). Pour chaque élément écouté ce jour-là, à son niveau : aucune écoute avant minuit, heure
+/// de Paris. `live_*` écarte d'office les écoutes annulées et les sources qui ne font pas foi, et les
+/// marquages annulés. Le coût suit le jour demandé, pas l'historique : une recherche d'index par élément,
+/// d'où le `LIMIT 1` latéral, qu'un `NOT EXISTS` ferait devenir un parcours de tous les éléments.
+async fn first_listens(pool: &PgPool, date: NaiveDate) -> Result<Vec<FirstListen>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"WITH listened AS (
+             SELECT DISTINCT ON (i.level, i.item_key)
+                    e.generation, i.level, i.item_key, i.display,
+                    e.details->>'artist' AS artist,
+                    min(e.occurred_at) OVER (PARTITION BY i.level, i.item_key) AS first_at,
+                    ($1::date::timestamp AT TIME ZONE s.timezone) AS day_start
+             FROM derived.live_events e
+             CROSS JOIN core.settings s
+             JOIN derived.event_items i USING (generation, seq, ordinal)
+             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+               AND e.metric = 'music.listen'
+               AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE s.timezone)
+               AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE s.timezone)
+             ORDER BY i.level, i.item_key, e.occurred_at DESC, e.seq DESC
+           )
+           SELECT l.level, l.item_key, l.display AS name, l.artist AS "artist!",
+                  COALESCE(m.sources, '{}') AS "mark_sources!: Vec<String>",
+                  COALESCE(m.keys, '{}') AS "mark_keys!: Vec<String>"
+           FROM listened l
+           LEFT JOIN LATERAL (
+             SELECT array_agg(src.name ORDER BY k.seq) AS sources,
+                    array_agg(r.key ORDER BY k.seq) AS keys
+             FROM derived.live_event_items k
+             JOIN core.records r ON r.seq = k.seq
+             JOIN core.sources src ON src.id = r.source_id
+             WHERE k.generation = l.generation AND k.metric = 'music.known'
+               AND k.level = l.level AND k.item_key = l.item_key
+           ) m ON true
+           LEFT JOIN LATERAL (
+             SELECT 1 AS found FROM derived.live_event_items x
+             WHERE x.generation = l.generation AND x.metric = 'music.listen'
+               AND x.level = l.level AND x.item_key = l.item_key
+               AND x.occurred_at < l.day_start
+             LIMIT 1
+           ) earlier ON true
+           WHERE earlier.found IS NULL
+           ORDER BY array_position(ARRAY['artist', 'album', 'track'], l.level), l.first_at,
+                    l.item_key"#,
+        date,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| FirstListen {
+            level: row.level,
+            item_key: row.item_key,
+            name: row.name,
+            artist: row.artist,
+            known_marks: row
+                .mark_sources
+                .into_iter()
+                .zip(row.mark_keys)
+                .map(|(source, key)| KnownMark { source, key })
+                .collect(),
+        })
+        .collect())
 }
 
 /// Une ligne de liste en cours de calcul. Les écoutes arrivent de la plus ancienne à la plus récente :
@@ -722,14 +813,16 @@ async fn get_day_music(
            CROSS JOIN core.settings s
            LEFT JOIN LATERAL (
              SELECT known.value
-             FROM derived.live_event_items i
+             FROM derived.event_items i
              JOIN derived.live_events known USING (generation, seq, ordinal)
-             WHERE i.metric = 'music.track_duration' AND i.level = 'track'
+             WHERE i.generation = e.generation
+               AND i.metric = 'music.track_duration' AND i.level = 'track'
                AND i.item_key = e.details->>'track_key'
              ORDER BY i.occurred_at DESC, i.seq DESC
              LIMIT 1
            ) d ON true
-           WHERE e.metric = 'music.listen'
+           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+             AND e.metric = 'music.listen'
              AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE s.timezone)
              AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE s.timezone)
            ORDER BY e.occurred_at, e.seq"#,
@@ -738,6 +831,7 @@ async fn get_day_music(
     .fetch_all(&state.pool)
     .await?;
 
+    let first_listens = first_listens(&state.pool, date).await?;
     let listens = rows.len();
     let known: Vec<f64> = rows.iter().filter_map(|row| row.seconds).collect();
     let minutes = (!known.is_empty()).then(|| (known.iter().sum::<f64>() / 60.0).round() as i64);
@@ -785,6 +879,11 @@ async fn get_day_music(
                 listens: t.listens,
             })
             .collect(),
+        discoveries: first_listens
+            .iter()
+            .filter(|f| f.known_marks.is_empty())
+            .count(),
+        first_listens,
     }))
 }
 

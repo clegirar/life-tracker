@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   fetchDay,
+  newKey,
   Refused,
   sendRecord,
   Transient,
@@ -19,16 +20,6 @@ const SLOW_AFTER_MS = 15_000
 const SEND_RETRY_DELAYS_MS = [500, 1500]
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
-/** `crypto.randomUUID` n'existe qu'en contexte sécurisé, or le téléphone en dev passe par http. */
-function newKey(): string {
-  if (crypto.randomUUID) return crypto.randomUUID()
-  const bytes = crypto.getRandomValues(new Uint8Array(16))
-  bytes[6] = (bytes[6] & 0x0f) | 0x40
-  bytes[8] = (bytes[8] & 0x3f) | 0x80
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-}
 
 export function useCoffee(date: string, onSessionLost: () => void, enabled: boolean) {
   const [server, setServer] = useState<Record<string, Cup[]>>({})

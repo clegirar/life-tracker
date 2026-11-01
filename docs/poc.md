@@ -16,7 +16,7 @@ Le POC couvre le compteur de cafés et les écoutes de musique (Last.fm en direc
 | 3 | Lecture et web app du café | Fait |
 | 4 | Déploiement sur le NAS | Fait, raccourci iOS reporté |
 | 5 | Musique en direct (Last.fm) | Fait |
-| 6 | Découvertes et « déjà connu » | À faire |
+| 6 | Découvertes et « déjà connu » | Préparé, à confirmer sur le NAS |
 | 7 | Historique Apple | À faire |
 | 8 | Calendrier et complétude | À faire |
 | 9 | Serveur MCP | À faire |
@@ -131,6 +131,8 @@ Fait le 1er nov. 2026 sur le vrai NAS : 399 écoutes et 219 fiches entrées, auc
 - Sur le NAS, une vraie journée correspond à Last.fm.
 
 ## Étape 6 : découvertes et « déjà connu »
+
+Préparé le 1er nov. 2026 : `./test.sh` vert et captures à 390 px regardées, en clair et en sombre. Reste à faire sur le NAS la [mise à jour](deploiement.md#mise-à-jour-vers-létape-6-découvertes) et à essayer le marquage sur l'iPhone ; seulement alors, l'étape sera « Faite ».
 
 **Contenu**
 

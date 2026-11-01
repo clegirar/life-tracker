@@ -98,6 +98,12 @@ pub static INTERPRETERS: &[Interpreter] = &[
         schema_version: 1,
         interpret: lastfm_track_info,
     },
+    Interpreter {
+        kind: "music.mark_known",
+        version: 1,
+        schema_version: 1,
+        interpret: music_mark_known,
+    },
 ];
 
 /// Un café : un événement à l'heure de l'enveloppe. La charge utile, attendue vide, est ignorée.
@@ -219,6 +225,44 @@ fn lastfm_track_info(record: &Record) -> Result<Vec<Output>, InterpretError> {
             display: track.to_owned(),
         }],
         ..Event::at_envelope(record, "music.track_duration")
+    })])
+}
+
+/// Assez pour tout vrai nom, et assez court pour tenir dans l'index des éléments : une clé trop longue
+/// serait une panne pour la base, pas un refus, et bloquerait le worker.
+const MAX_MARKED_NAME_BYTES: usize = 1024;
+
+/// `{"level", "artist", "album", "track"}` : la déclaration « déjà connu », avec les noms tels
+/// qu'affichés. Un seul élément, à son niveau : c'est ce qui fait qu'un marquage n'agit qu'à son niveau.
+/// Les clés se recalculent comme celles des écoutes, donc suivent la normalisation à chaque rebuild.
+fn music_mark_known(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    let name = |field: &str| {
+        let text = record.payload.get(field)?.as_str()?.trim();
+        Some(text).filter(|t| !t.is_empty() && t.len() <= MAX_MARKED_NAME_BYTES)
+    };
+    let artist = name("artist").ok_or(InterpretError("music.mark_known: invalid artist"))?;
+    let (album, track) = (name("album"), name("track"));
+    let level = record.payload.get("level").and_then(Value::as_str);
+    let (level, item_key, display) = match level {
+        Some("artist") => ("artist", music::artist_key(artist), artist),
+        Some("album") => {
+            let album = album.ok_or(InterpretError("music.mark_known: invalid album"))?;
+            ("album", music::album_key(artist, album), album)
+        }
+        Some("track") => {
+            let track = track.ok_or(InterpretError("music.mark_known: invalid track"))?;
+            ("track", music::track_key(artist, track), track)
+        }
+        _ => return Err(InterpretError("music.mark_known: invalid level")),
+    };
+    Ok(vec![Output::Event(Event {
+        details: json!({ "level": level, "artist": artist, "album": album, "track": track }),
+        items: vec![Item {
+            level,
+            item_key,
+            display: display.to_owned(),
+        }],
+        ..Event::at_envelope(record, "music.known")
     })])
 }
 
@@ -391,6 +435,59 @@ mod tests {
             json!({"artist": "A", "info": {"track": {}}}),
         ] {
             assert!(lastfm_track_info(&record(bad)).is_err());
+        }
+    }
+
+    #[test]
+    fn a_mark_gives_one_item_at_its_own_level_under_the_key_of_the_listens() {
+        let item = |payload: Value| {
+            let event = single_event(music_mark_known(&record(payload)).unwrap());
+            assert_eq!(event.metric, "music.known");
+            assert_eq!(event.items.len(), 1);
+            let item = &event.items[0];
+            (item.level, item.item_key.clone(), item.display.clone())
+        };
+        let artist = "DAFT PUNK feat. X";
+        assert_eq!(
+            item(json!({"level": "artist", "artist": artist, "album": "Discovery", "track": "T"})),
+            ("artist", music::artist_key("Daft Punk"), artist.to_owned())
+        );
+        assert_eq!(
+            item(json!({"level": "album", "artist": artist, "album": "Discovery"})),
+            (
+                "album",
+                music::album_key("Daft Punk", "discovery"),
+                "Discovery".to_owned()
+            )
+        );
+        assert_eq!(
+            item(json!({"level": "track", "artist": artist, "track": "Voyager (Live)"})),
+            (
+                "track",
+                music::track_key("Daft Punk", "Voyager"),
+                "Voyager (Live)".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn an_unusable_mark_is_an_error_that_cites_nothing() {
+        for payload in [
+            json!({}),
+            json!(null),
+            json!({"level": "artist"}),
+            json!({"level": "artist", "artist": "  "}),
+            json!({"level": "artist", "artist": 3}),
+            json!({"level": "artist", "artist": "x".repeat(1025)}),
+            json!({"level": "genre", "artist": "A"}),
+            json!({"artist": "A"}),
+            json!({"level": "album", "artist": "A"}),
+            json!({"level": "album", "artist": "A", "track": "T"}),
+            json!({"level": "track", "artist": "A", "album": "L"}),
+            json!({"level": "track", "track": "T"}),
+        ] {
+            let failure = music_mark_known(&record(payload)).unwrap_err();
+            assert!(failure.0.starts_with("music.mark_known: invalid "));
         }
     }
 }

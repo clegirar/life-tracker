@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { discoveryDetail, markFailureText } from './discoveries'
 import { formatMinutes, musicEmptyText, plural } from './music'
 import type { useMusic } from './useMusic'
 
@@ -24,7 +25,7 @@ interface Row {
 
 export function MusicCard({ date, today, state }: Props) {
   const [tab, setTab] = useState<Tab>('tracks')
-  const { music, health, loadFailed } = state
+  const { music, health, loadFailed, firstListens } = state
 
   const rows: Row[] = !music
     ? []
@@ -81,6 +82,57 @@ export function MusicCard({ date, today, state }: Props) {
               </div>
             )}
           </dl>
+
+          <section aria-labelledby="titre-decouvertes" data-testid="discoveries">
+            <h3 id="titre-decouvertes" className="subsection-title">
+              Découvertes
+            </h3>
+            {state.failedMarks.map((op) => (
+              <div className="inline-failure" role="alert" key={op.id}>
+                <span>{markFailureText(op)}</span>
+                <span className="notice-actions">
+                  {!op.final && (
+                    <button type="button" className="notice-action" onClick={() => state.retryMark(op)}>
+                      Réessayer
+                    </button>
+                  )}
+                  <button type="button" className="notice-action" onClick={() => state.dismissMark(op)}>
+                    Ignorer
+                  </button>
+                </span>
+              </div>
+            ))}
+            {state.marksSlow && (
+              <p className="empty" role="status">
+                C'est bien enregistré. La liste sera confirmée dès que le serveur l'aura traité.
+              </p>
+            )}
+            {firstListens.length === 0 ? (
+              <p className="empty">Aucune découverte ce jour-là.</p>
+            ) : (
+              <ul className="rows finds">
+                {firstListens.map((row) => (
+                  <li key={`${row.level}/${row.item_key}`} className="find">
+                    <div className="row-text">
+                      <p className="row-name">{row.name}</p>
+                      <p className="row-detail">{discoveryDetail(row, row.known)}</p>
+                    </div>
+                    {/* Pas `disabled` pendant l'envoi : le bouton garderait mal le focus. */}
+                    <button
+                      type="button"
+                      className="known"
+                      aria-pressed={row.known}
+                      aria-busy={row.pending}
+                      aria-label={`${row.name} : déjà connu`}
+                      onClick={() => state.toggleKnown(row)}
+                    >
+                      <span className="known-pill">{row.known ? 'Marqué connu' : 'Déjà connu'}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
           <div className="segments" role="group" aria-label="Liste du jour">
             {TABS.map(([id, label]) => (

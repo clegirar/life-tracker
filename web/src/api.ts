@@ -15,7 +15,7 @@ export interface Day {
 
 export interface OutgoingRecord {
   key: string
-  kind: 'coffee.cup' | 'record.cancel'
+  kind: 'coffee.cup' | 'record.cancel' | 'music.mark_known'
   schema_version: 1
   occurred_at: string
   payload: Record<string, string>
@@ -72,16 +72,28 @@ export async function fetchDay(date: string): Promise<Day> {
   return response.json()
 }
 
-/** Accepté ou déjà reçu : c'est écrit au journal. Sinon, une exception dit quoi faire. */
-export async function sendRecord(record: OutgoingRecord): Promise<void> {
+/** Accepté ou déjà reçu : c'est écrit au journal, en une seule transaction. Sinon, une exception dit quoi faire. */
+export async function sendRecords(records: OutgoingRecord[]): Promise<void> {
   const response = await call('/v1/records', {
     method: 'POST',
-    body: JSON.stringify({ records: [record] }),
+    body: JSON.stringify({ records }),
   })
   if (response.status === 401) throw new Unauthorized()
   if (!response.ok) throw new Refused()
   const body: { results: { status: string }[] } = await response.json()
-  if (body.results[0]?.status === 'rejected') throw new Refused()
+  if (body.results.some((result) => result.status === 'rejected')) throw new Refused()
+}
+
+export const sendRecord = (record: OutgoingRecord) => sendRecords([record])
+
+/** `crypto.randomUUID` n'existe qu'en contexte sécurisé, or le téléphone en dev passe par http. */
+export function newKey(): string {
+  if (crypto.randomUUID) return crypto.randomUUID()
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
 export interface MusicRow {
@@ -96,6 +108,20 @@ export interface MusicArtist {
   listens: number
 }
 
+export interface KnownMark {
+  source: string
+  key: string
+}
+
+/** Un élément écouté pour la première fois ce jour-là : une découverte tant qu'il n'est pas marqué. */
+export interface FirstListen {
+  level: 'artist' | 'album' | 'track'
+  item_key: string
+  name: string
+  artist: string
+  known_marks: KnownMark[]
+}
+
 export interface DayMusic {
   date: string
   listens: number
@@ -106,6 +132,8 @@ export interface DayMusic {
   tracks: MusicRow[]
   artists: MusicArtist[]
   albums: MusicRow[]
+  discoveries: number
+  first_listens: FirstListen[]
 }
 
 export interface SourceHealth {

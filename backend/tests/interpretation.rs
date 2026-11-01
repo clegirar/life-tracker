@@ -529,7 +529,8 @@ async fn concurrent_starters_establish_one_active_generation() {
             .unwrap();
     assert_eq!(
         serde_json::from_str::<Value>(&versions).unwrap(),
-        json!({"coffee.cup": 1, "record.cancel": 1, "lastfm.scrobble": 1, "lastfm.track_info": 1})
+        json!({"coffee.cup": 1, "record.cancel": 1, "lastfm.scrobble": 1, "lastfm.track_info": 1,
+               "music.mark_known": 1})
     );
 }
 

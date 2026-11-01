@@ -248,7 +248,8 @@ async fn an_empty_day_and_a_day_without_any_duration() {
     assert_eq!(
         empty,
         json!({"date": "2026-10-10", "listens": 0, "minutes": null, "listens_without_duration": 0,
-               "artist_of_day": null, "tracks": [], "artists": [], "albums": []})
+               "artist_of_day": null, "tracks": [], "artists": [], "albums": [],
+               "discoveries": 0, "first_listens": []})
     );
 
     app.send(vec![scrobble("2026-10-16T08:00:00Z", "A", "T", "")])
@@ -527,4 +528,484 @@ async fn a_rebuild_gives_the_same_music() {
     assert!(report.switched);
     assert_eq!(report.comparison.differences, vec![]);
     assert_eq!(app.music("2026-10-16").await, before);
+}
+
+// ─── Découvertes et « déjà connu » ───────────────────────────────────────────
+
+impl App {
+    /// Écrit comme la web app : par la session, avec l'en-tête anti-CSRF. La source vient de la session.
+    async fn write_as_webapp(&self, records: Vec<Value>) {
+        let response = self
+            .http
+            .post(format!("{}/v1/records", self.base))
+            .header("cookie", &self.cookie)
+            .header(api::CSRF_HEADER, "1")
+            .json(&json!({ "records": records }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let body: Value = response.json().await.unwrap();
+        for result in body["results"].as_array().unwrap() {
+            assert_eq!(result["status"], "accepted", "{body}");
+        }
+    }
+
+    async fn mark(&self, key: &str, payload: Value) {
+        self.write_as_webapp(vec![mark_known(key, payload)]).await;
+    }
+
+    async fn cancel_mark(&self, cancel_key: &str, key: &str) {
+        self.write_as_webapp(vec![json!({
+            "key": cancel_key, "kind": "record.cancel", "schema_version": 1,
+            "occurred_at": "2026-10-20T00:00:00Z",
+            "payload": {"source": "webapp", "key": key},
+        })])
+        .await;
+    }
+
+    /// (niveau, nom) des découvertes du jour : sans les éléments marqués.
+    async fn discoveries(&self, date: &str) -> Vec<(String, String)> {
+        let day = self.music(date).await;
+        let found: Vec<_> = day["first_listens"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f["known_marks"].as_array().unwrap().is_empty())
+            .map(|f| {
+                (
+                    f["level"].as_str().unwrap().to_owned(),
+                    f["name"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        assert_eq!(day["discoveries"], found.len());
+        found
+    }
+}
+
+fn mark_known(key: &str, payload: Value) -> Value {
+    json!({"key": key, "kind": "music.mark_known", "schema_version": 1,
+           "occurred_at": "2026-10-20T00:00:00Z", "payload": payload})
+}
+
+fn found(list: &[(&str, &str)]) -> Vec<(String, String)> {
+    list.iter()
+        .map(|(level, name)| ((*level).to_owned(), (*name).to_owned()))
+        .collect()
+}
+
+#[tokio::test]
+async fn the_daft_punk_example_of_the_architecture() {
+    let app = App::new().await;
+    app.mark("m", json!({"level": "artist", "artist": "Daft Punk"}))
+        .await;
+    app.send(vec![scrobble(
+        "2026-10-16T08:00:00Z",
+        "Daft Punk",
+        "Veridis Quo",
+        "Discovery",
+    )])
+    .await;
+    assert_eq!(
+        app.discoveries("2026-10-16").await,
+        found(&[("album", "Discovery"), ("track", "Veridis Quo")]),
+        "Daft Punk n'est pas un artiste découvert, mais le titre est bien un titre découvert"
+    );
+}
+
+#[tokio::test]
+async fn a_discovery_is_the_first_listen_of_a_life_at_each_level() {
+    let app = App::new().await;
+    app.send(vec![
+        scrobble("2026-10-14T08:00:00Z", "A", "Un", "L1"),
+        // Le 16 : un titre connu, un nouveau titre du même album, puis un nouvel album du même artiste.
+        scrobble("2026-10-16T08:00:00Z", "A", "Un", "L1"),
+        scrobble("2026-10-16T09:00:00Z", "A", "Deux", "L1"),
+        scrobble("2026-10-16T10:00:00Z", "A", "Trois", "L2"),
+        scrobble("2026-10-16T11:00:00Z", "B", "Quatre", ""),
+        // Réécouté le même jour : une seule découverte.
+        scrobble("2026-10-16T12:00:00Z", "B", "Quatre", ""),
+    ])
+    .await;
+    assert_eq!(
+        app.discoveries("2026-10-14").await,
+        found(&[("artist", "A"), ("album", "L1"), ("track", "Un")])
+    );
+    assert_eq!(
+        app.discoveries("2026-10-16").await,
+        found(&[
+            ("artist", "B"),
+            ("album", "L2"),
+            ("track", "Deux"),
+            ("track", "Trois"),
+            ("track", "Quatre"),
+        ])
+    );
+    assert_eq!(app.discoveries("2026-10-17").await, found(&[]));
+}
+
+#[tokio::test]
+async fn the_day_of_a_discovery_is_the_day_in_paris() {
+    let app = App::new().await;
+    // 22:30 UTC le 15 : 00:30 le 16 à Paris. Le 25 oct. 2026 dure 25 heures.
+    app.send(vec![
+        scrobble("2026-10-15T22:30:00Z", "A", "T", ""),
+        scrobble("2026-10-25T22:30:00Z", "B", "T", ""),
+    ])
+    .await;
+    assert_eq!(app.discoveries("2026-10-15").await, found(&[]));
+    assert_eq!(
+        app.discoveries("2026-10-16").await,
+        found(&[("artist", "A"), ("track", "T")])
+    );
+    assert_eq!(
+        app.discoveries("2026-10-25").await,
+        found(&[("artist", "B"), ("track", "T")])
+    );
+}
+
+#[tokio::test]
+async fn the_past_can_change_a_discovery() {
+    let app = App::new().await;
+    let first = scrobble("2026-10-10T08:00:00Z", "A", "T", "L");
+    let first_key = first["key"].as_str().unwrap().to_owned();
+    app.send(vec![scrobble("2026-10-16T08:00:00Z", "A", "T", "L")])
+        .await;
+    let all = found(&[("artist", "A"), ("album", "L"), ("track", "T")]);
+    assert_eq!(app.discoveries("2026-10-16").await, all);
+
+    // Une écoute plus ancienne arrive en retard : la découverte recule.
+    app.send(vec![first]).await;
+    assert_eq!(app.discoveries("2026-10-16").await, found(&[]));
+    assert_eq!(app.discoveries("2026-10-10").await, all);
+
+    // Annuler cette écoute rétablit l'ancienne découverte.
+    app.send(vec![
+        json!({"key": "x", "kind": "record.cancel", "schema_version": 1,
+        "occurred_at": "2026-10-20T00:00:00Z", "payload": {"source": "lastfm", "key": first_key}}),
+    ])
+    .await;
+    assert_eq!(app.discoveries("2026-10-16").await, all);
+    assert_eq!(app.discoveries("2026-10-10").await, found(&[]));
+}
+
+#[tokio::test]
+async fn a_mark_acts_only_at_its_own_level() {
+    for (payload, expected) in [
+        (
+            json!({"level": "artist", "artist": "A"}),
+            [("album", "L"), ("track", "T")],
+        ),
+        (
+            json!({"level": "album", "artist": "A", "album": "L"}),
+            [("artist", "A"), ("track", "T")],
+        ),
+        (
+            json!({"level": "track", "artist": "A", "track": "T"}),
+            [("artist", "A"), ("album", "L")],
+        ),
+    ] {
+        let app = App::new().await;
+        app.send(vec![scrobble("2026-10-16T08:00:00Z", "A", "T", "L")])
+            .await;
+        app.mark("m", payload).await;
+        assert_eq!(app.discoveries("2026-10-16").await, found(&expected));
+        let day = app.music("2026-10-16").await;
+        assert_eq!(day["listens"], 1, "l'écoute elle-même ne change pas");
+        assert_eq!(day["first_listens"].as_array().unwrap().len(), 3);
+    }
+
+    // Un homonyme n'est pas touché : un album se lit avec son artiste, et un nom d'artiste n'est pas un titre.
+    let app = App::new().await;
+    app.send(vec![
+        scrobble("2026-10-16T08:00:00Z", "A", "Même nom", "Même nom"),
+        scrobble("2026-10-16T09:00:00Z", "B", "Même nom", "Même nom"),
+    ])
+    .await;
+    app.mark(
+        "m",
+        json!({"level": "album", "artist": "A", "album": "Même nom"}),
+    )
+    .await;
+    assert_eq!(
+        app.discoveries("2026-10-16").await,
+        found(&[
+            ("artist", "A"),
+            ("artist", "B"),
+            ("album", "Même nom"),
+            ("track", "Même nom"),
+            ("track", "Même nom"),
+        ])
+    );
+}
+
+/// Ce que renvoie l'API suffit à marquer, quelle que soit l'orthographe : c'est ce que fait la web app.
+#[tokio::test]
+async fn a_mark_from_the_displayed_names_covers_every_spelling() {
+    let app = App::new().await;
+    app.send(vec![
+        scrobble("2026-10-16T08:00:00Z", "Daft Punk", "Voyager", "Discovery"),
+        scrobble(
+            "2026-10-16T09:00:00Z",
+            "DAFT PUNK feat. X",
+            "Voyager (Live) - Remastered",
+            "DISCOVERY ",
+        ),
+    ])
+    .await;
+    let day = app.music("2026-10-16").await;
+    let rows = day["first_listens"].as_array().unwrap();
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    assert_eq!(rows[0]["name"], "DAFT PUNK feat. X", "le dernier nom vu");
+    for (index, row) in rows.iter().enumerate() {
+        let (name, artist) = (row["name"].clone(), row["artist"].clone());
+        let payload = match row["level"].as_str().unwrap() {
+            "artist" => json!({"level": "artist", "artist": name}),
+            "album" => json!({"level": "album", "artist": artist, "album": name}),
+            _ => json!({"level": "track", "artist": artist, "track": name}),
+        };
+        app.mark(&format!("m{index}"), payload).await;
+    }
+    assert_eq!(app.discoveries("2026-10-16").await, found(&[]));
+}
+
+#[tokio::test]
+async fn cancelling_a_mark_restores_the_discovery_and_gives_what_it_needs() {
+    let app = App::new().await;
+    app.send(vec![scrobble("2026-10-16T08:00:00Z", "A", "T", "")])
+        .await;
+    let all = found(&[("artist", "A"), ("track", "T")]);
+    let artist = json!({"level": "artist", "artist": "A"});
+    app.mark("m1", artist.clone()).await;
+    assert_eq!(
+        app.discoveries("2026-10-16").await,
+        found(&[("track", "T")])
+    );
+    assert_eq!(
+        app.music("2026-10-16").await["first_listens"][0]["known_marks"],
+        json!([{"source": "webapp", "key": "m1"}])
+    );
+
+    // Marqué deux fois (deux appareils) : annuler l'un ne suffit pas.
+    app.mark("m2", artist.clone()).await;
+    app.cancel_mark("c1", "m1").await;
+    assert_eq!(
+        app.discoveries("2026-10-16").await,
+        found(&[("track", "T")])
+    );
+    app.cancel_mark("c2", "m2").await;
+    assert_eq!(app.discoveries("2026-10-16").await, all);
+
+    // Se marque de nouveau, et une annulation peut arriver avant sa cible.
+    app.mark("m3", artist.clone()).await;
+    assert_eq!(
+        app.discoveries("2026-10-16").await,
+        found(&[("track", "T")])
+    );
+    app.cancel_mark("c3", "m3").await;
+    app.cancel_mark("c4", "m4").await;
+    app.mark("m4", artist).await;
+    assert_eq!(app.discoveries("2026-10-16").await, all);
+}
+
+#[tokio::test]
+async fn marks_and_discoveries_are_identical_after_a_rebuild() {
+    let app = App::new().await;
+    app.send(vec![
+        scrobble("2026-10-14T08:00:00Z", "A", "Un", "L1"),
+        scrobble("2026-10-16T08:00:00Z", "A", "Deux", "L2"),
+        scrobble("2026-10-16T09:00:00Z", "B", "Trois", "L3"),
+    ])
+    .await;
+    app.mark(
+        "kept",
+        json!({"level": "album", "artist": "A", "album": "L2"}),
+    )
+    .await;
+    app.mark("undone", json!({"level": "artist", "artist": "B"}))
+        .await;
+    app.cancel_mark("c", "undone").await;
+    // Une déclaration inutilisable reste une erreur, à l'identique dans les deux générations.
+    app.mark("bad", json!({"level": "genre", "artist": "A"}))
+        .await;
+
+    let before = (app.music("2026-10-14").await, app.music("2026-10-16").await);
+    assert_eq!(
+        app.discoveries("2026-10-16").await,
+        found(&[
+            ("artist", "B"),
+            ("album", "L3"),
+            ("track", "Deux"),
+            ("track", "Trois")
+        ])
+    );
+    let report = replay::rebuild(&app.db.admin, INTERPRETERS, false)
+        .await
+        .unwrap();
+    assert!(report.switched);
+    assert_eq!(report.comparison.differences, vec![]);
+    let after = (app.music("2026-10-14").await, app.music("2026-10-16").await);
+    assert_eq!(after, before);
+}
+
+/// Le déploiement sur un NAS en service : le journal et les curseurs existent déjà, le binaire apporte un
+/// interprète de plus. Le worker le rattrape par son curseur, sans rebuild ni perte ni différence.
+#[tokio::test]
+async fn a_new_interpreter_catches_up_by_its_cursor_alone() {
+    let db = TestDb::new().await;
+    let without_mark: Vec<_> = INTERPRETERS
+        .iter()
+        .filter(|i| i.kind != "music.mark_known")
+        .copied()
+        .collect();
+    let source = admin::create_source(&db.admin, "lastfm", None)
+        .await
+        .unwrap();
+    admin::grant_kind(&db.admin, "lastfm", "lastfm.scrobble")
+        .await
+        .unwrap();
+    let webapp_mark = |key: &str, payload: Value| {
+        let (key, payload) = (key.to_owned(), payload.to_string());
+        let pool = db.app.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO core.records (source_id, kind, schema_version, key, occurred_at, payload)
+                 SELECT id, 'music.mark_known', 1, $1, now(), $2::jsonb FROM core.sources
+                 WHERE name = 'webapp'",
+            )
+            .bind(key)
+            .bind(payload)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    let base = serve(db.app.clone()).await;
+    let sent = client()
+        .post(format!("{base}/v1/records"))
+        .bearer_auth(&source)
+        .json(&json!({"records": [scrobble("2026-10-16T08:00:00Z", "A", "T", "")]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(sent.status(), 200);
+    webapp_mark("avant", json!({"level": "artist", "artist": "A"})).await;
+
+    // L'ancien binaire : l'écoute est traitée, le marquage attend sans erreur ni curseur.
+    while engine::pass(&db.app, &without_mark, engine::Target::Active)
+        .await
+        .unwrap()
+        > 0
+    {}
+    let known = "SELECT count(*) FROM derived.events WHERE metric = 'music.known'";
+    assert_eq!(db.count(known).await, 0);
+    assert_eq!(
+        db.count("SELECT count(*) FROM derived.events WHERE metric = 'music.listen'")
+            .await,
+        1
+    );
+
+    // Le nouveau binaire : rien d'autre à faire.
+    while engine::pass(&db.app, INTERPRETERS, engine::Target::Active)
+        .await
+        .unwrap()
+        > 0
+    {}
+    assert_eq!(db.count(known).await, 1);
+    assert_eq!(
+        db.count("SELECT count(*) FROM derived.interpretation_errors")
+            .await,
+        0
+    );
+    assert_eq!(
+        db.count("SELECT count(*) FROM derived.events WHERE metric = 'music.listen'")
+            .await,
+        1,
+        "l'écoute n'est pas rejouée"
+    );
+    let report = replay::rebuild(&db.admin, INTERPRETERS, false)
+        .await
+        .unwrap();
+    assert_eq!(report.comparison.differences, vec![]);
+}
+
+#[tokio::test]
+async fn a_mark_needs_the_session_the_csrf_header_and_the_right() {
+    let app = App::new().await;
+    let url = format!("{}/v1/records", app.base);
+    let body = json!({"records": [mark_known("m", json!({"level": "artist", "artist": "A"}))]});
+
+    let anonymous = app.http.post(&url).json(&body).send().await.unwrap();
+    assert_eq!(anonymous.status(), 401);
+    let no_csrf = app
+        .http
+        .post(&url)
+        .header("cookie", &app.cookie)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_csrf.status(), 403);
+
+    // Une source à token n'a ce droit que si on le lui donne.
+    let by_token: Value = app
+        .http
+        .post(&url)
+        .bearer_auth(&app.token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(by_token["results"][0]["status"], "rejected");
+    assert_eq!(
+        app.db
+            .count("SELECT count(*) FROM core.records WHERE kind = 'music.mark_known'")
+            .await,
+        0
+    );
+}
+
+/// Le droit vient de la migration, pas de `grant-kind` : rien à accorder en production.
+#[tokio::test]
+async fn the_webapp_already_has_the_right_to_mark_and_to_cancel() {
+    let db = TestDb::new().await;
+    assert_eq!(
+        db.count(
+            "SELECT count(*) FROM core.source_kinds k JOIN core.sources s ON s.id = k.source_id
+             WHERE s.name = 'webapp' AND k.revoked_at IS NULL
+               AND k.kind IN ('music.mark_known', 'record.cancel')"
+        )
+        .await,
+        2
+    );
+}
+
+#[tokio::test]
+async fn an_unusable_mark_is_set_aside_without_citing_its_payload() {
+    let app = App::new().await;
+    app.send(vec![scrobble("2026-10-16T08:00:00Z", "A", "T", "")])
+        .await;
+    app.mark(
+        "bad",
+        json!({"level": "artist", "artist": "x".repeat(2000)}),
+    )
+    .await;
+    app.mark(
+        "good",
+        json!({"level": "track", "artist": "A", "track": "T"}),
+    )
+    .await;
+    assert_eq!(
+        app.discoveries("2026-10-16").await,
+        found(&[("artist", "A")])
+    );
+    let stored: String = sqlx::query_scalar("SELECT error FROM derived.interpretation_errors")
+        .fetch_one(&app.db.app)
+        .await
+        .unwrap();
+    assert_eq!(stored, "music.mark_known: invalid artist");
 }

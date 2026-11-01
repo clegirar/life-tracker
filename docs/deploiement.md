@@ -283,6 +283,53 @@ Une nouvelle clé naît à chaque lancement. Si le réseau coupe après l'écrit
 
 **Retour arrière.** Pas de migration entre les deux versions : l'ancien `compose.yaml` et l'ancien `TRACKER_TAG` suffisent ; `lastfm` reste dans le registre, et sa santé n'est plus lue. Le journal garde ce qui est entré. Pour couper seulement la collecte : `sudo docker compose stop collector`, et la page du jour signalera le silence après 6 h.
 
+## Mise à jour vers l'étape 6 (découvertes)
+
+À faire une fois, sur le NAS déjà en service, après un workflow vert. `compose.yaml` ne change pas, aucun secret non plus. **Pas de nouvelle migration** : `_sqlx_migrations` reste à 2 lignes.
+
+**Pas de `rebuild` obligatoire.** Le seul nouvel interprète, `music.mark_known`, n'a aucun ancien enregistrement à relire ; s'il y en avait, le worker les reprendrait seul par son curseur. Les écoutes ne sont pas réinterprétées. La reconstruction ci-dessous sert seulement de contrôle, et n'interrompt ni les lectures ni l'ingestion.
+
+**Pas de droit à accorder.** La source `webapp` a `music.mark_known` et `record.cancel` depuis la migration initiale : `grant-kind` n'a rien à faire ici. La vérification de l'étape 2 le confirme ; si une ligne manquait, le bouton afficherait « refusé par le serveur », et l'accorder se ferait par `grant-kind webapp <type> </dev/null`, sur une ligne seule.
+
+1. Sur le NAS, en root dans le dossier en `700`. `</dev/null` : sans lui, `run -T` peut avaler la ligne collée suivante.
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   sed -i 's/^TRACKER_TAG=.*/TRACKER_TAG=NOUVEAU_SHA/' .env
+   sudo docker compose config -q
+   sudo docker compose pull
+   sudo docker compose up -d
+   sudo docker compose ps -a
+   sudo docker compose logs migrate | tail -3
+   ```
+
+2. Vérifier les droits, le nombre de migrations et l'absence d'erreur :
+
+   ```sh
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select s.name, k.kind from core.source_kinds k join core.sources s on s.id = k.source_id where k.revoked_at is null order by 1, 2" </dev/null
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select (select count(*) from _sqlx_migrations), (select count(*) from derived.interpretation_errors)" </dev/null   # 2|0
+   ```
+
+   La première liste doit contenir `webapp|coffee.cup`, `webapp|music.mark_known` et `webapp|record.cancel`.
+
+3. Sur l'iPhone, sur un jour passé qui a des écoutes : toucher « Déjà connu » sur un artiste. Le bouton passe à « Marqué connu », la ligne cesse de dire « découvert », l'album et le titre ne bougent pas. Recharger : il l'est toujours. Toucher de nouveau : « Artiste découvert » revient, ce qui confirme que `record.cancel` passe.
+
+4. Contrôle des enregistrements du geste, puis reconstruction. Le NAS n'a que quelques centaines d'enregistrements ; à titre d'ordre de grandeur, 89 600 ont pris environ 20 min sur le Mac, machine occupée par ailleurs, et le temps sur le NAS n'est pas mesuré.
+
+   ```sh
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select kind, count(*) from core.records where kind in ('music.mark_known', 'record.cancel') group by 1" </dev/null
+   sudo docker compose run --rm -T admin rebuild </dev/null
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select count(*) from derived.interpretation_errors" </dev/null   # 0
+   exit
+   ```
+
+   `rebuild` doit basculer sans aucune différence ; un code de sortie non nul laisse l'ancienne génération en service. La page du jour reste identique.
+
+Seulement alors, marquer l'étape 6 « Fait » dans `docs/poc.md`.
+
+**Retour arrière.** Sans migration : l'ancien `TRACKER_TAG`, `pull` et `up -d` suffisent. Les marquages restent au journal et leur curseur s'arrête ; ils ne sont simplement plus lus. Un `rebuild` de l'ancienne image verrait alors une différence, et demanderait `--allow-differences`. En revenant à la nouvelle image, le worker reprend là où il s'était arrêté.
+
 ## Vérifier les critères « Terminé quand »
 
 **Un café saisi depuis l'iPhone, par la web app comme par le raccourci, apparaît.**

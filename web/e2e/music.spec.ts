@@ -1,42 +1,11 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
-import { addDays, API_URL, apiSession, LASTFM_TOKEN, login, parisToday } from './helpers'
+import { addDays, apiSession, checkLayout, login, noon, parisToday, previousDay, scrobble, send, waitForListens, type Listen } from './helpers'
 
 // Les écoutes entrent par la vraie API d'ingestion, avec le token de la source, comme le collecteur.
 // Noms fictifs. Chaque test a sa journée : le journal n'efface rien.
 const today = parisToday()
 const SHOTS = process.env.E2E_SCREENSHOTS ?? 'e2e-artifacts/screenshots'
 const music = (page: Page) => page.getByTestId('music')
-const noon = (date: string, minute = 0) => `${date}T12:${String(minute).padStart(2, '0')}:00+01:00`
-
-interface Listen {
-  artist: string
-  track: string
-  album?: string
-}
-
-async function send(request: APIRequestContext, records: unknown[]) {
-  const response = await request.post(`${API_URL}/v1/records`, {
-    headers: { Authorization: `Bearer ${LASTFM_TOKEN}` },
-    data: { records },
-  })
-  expect(response.status()).toBe(200)
-  const body = await response.json()
-  for (const result of body.results) expect(['accepted', 'duplicate']).toContain(result.status)
-}
-
-const scrobble = (date: string, minute: number, { artist, track, album = '' }: Listen) => ({
-  key: `${date}-${minute}-${artist}-${track}`,
-  kind: 'lastfm.scrobble',
-  schema_version: 1,
-  occurred_at: noon(date, minute),
-  payload: {
-    artist: { mbid: '', '#text': artist },
-    album: { mbid: '', '#text': album },
-    name: track,
-    date: { uts: '0', '#text': '' },
-  },
-})
-
 const info = (artist: string, track: string, ms: string) => ({
   key: `info-${artist}-${track}`,
   kind: 'lastfm.track_info',
@@ -44,23 +13,6 @@ const info = (artist: string, track: string, ms: string) => ({
   occurred_at: noon(addDays(today, -40)),
   payload: { artist, track, info: { track: { name: track, duration: ms } } },
 })
-
-/** Attend que le worker ait tout interprété, sans supposer de sa vitesse. */
-async function waitForListens(request: APIRequestContext, cookie: string, date: string, expected: number) {
-  await expect
-    .poll(
-      async () => {
-        const response = await request.get(`/v1/days/${date}/music`, { headers: { Cookie: cookie } })
-        return (await response.json()).listens
-      },
-      { timeout: 30_000 },
-    )
-    .toBe(expected)
-}
-
-async function previousDay(page: Page, times: number) {
-  for (let i = 0; i < times; i++) await page.getByRole('button', { name: 'Jour précédent' }).click()
-}
 
 const DAY: Listen[] = [
   { artist: 'Artiste Fictif', track: 'Titre fictif', album: 'Album fictif' },
@@ -108,7 +60,7 @@ test('la section musique montre le nombre, le temps, l\'artiste du jour et les t
   await music(page).getByRole('button', { name: 'Albums' }).click()
   await expect(rows).toHaveCount(2)
   await expect(rows.first()).toContainText('Album fictif')
-  await expect(music(page).getByText('Sans album')).toHaveCount(0)
+  await expect(rows.getByText('Sans album')).toHaveCount(0)
 })
 
 test('la journée de Paris : une écoute à 00:30 est du jour, pas de la veille', async ({ page, request }) => {
@@ -124,7 +76,7 @@ test('la journée de Paris : une écoute à 00:30 est du jour, pas de la veille'
   await waitForListens(request, cookie, date, 1)
   await login(page)
   await previousDay(page, 3)
-  await expect(music(page).getByText('Minuit passé')).toBeVisible()
+  await expect(music(page).locator('.row').getByText('Minuit passé')).toBeVisible()
   await previousDay(page, 1)
   await expect(music(page).getByText('Minuit passé')).toHaveCount(0)
 })
@@ -161,21 +113,6 @@ test('une panne de lecture ne ressemble pas à zéro écoute', async ({ page }) 
   await music(page).getByRole('button', { name: 'Réessayer' }).click()
   await expect(music(page).getByText("Impossible d'actualiser la musique.")).toHaveCount(0)
 })
-
-async function checkLayout(page: Page) {
-  const problems = await page.evaluate(() => {
-    const out: string[] = []
-    if (document.documentElement.scrollWidth > window.innerWidth) out.push('défilement horizontal')
-    for (const el of document.querySelectorAll('button, input, a')) {
-      const { width, height, right } = el.getBoundingClientRect()
-      const name = el.getAttribute('aria-label') ?? el.textContent ?? el.tagName
-      if (height < 44 || width < 44) out.push(`${name} : ${width}×${height}`)
-      if (right > window.innerWidth) out.push(`${name} dépasse à droite`)
-    }
-    return out
-  })
-  expect(problems).toEqual([])
-}
 
 for (const [colorScheme, daysAgo] of [['light', 4], ['dark', 5]] as const) {
   test.describe(colorScheme, () => {

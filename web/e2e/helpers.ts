@@ -76,3 +76,67 @@ export async function clearDay(request: APIRequestContext, cookie: string, date:
 export async function waitForServerCount(request: APIRequestContext, cookie: string, date: string, expected: number) {
   await expect.poll(async () => (await serverDay(request, cookie, date)).length, { timeout: 10_000 }).toBe(expected)
 }
+
+// Les écoutes entrent par la vraie API d'ingestion, avec le token de la source, comme le collecteur.
+export const noon = (date: string, minute = 0) => `${date}T12:${String(minute).padStart(2, '0')}:00+01:00`
+
+export interface Listen {
+  artist: string
+  track: string
+  album?: string
+}
+
+export async function send(request: APIRequestContext, records: unknown[]) {
+  const response = await request.post(`${API_URL}/v1/records`, {
+    headers: { Authorization: `Bearer ${LASTFM_TOKEN}` },
+    data: { records },
+  })
+  expect(response.status()).toBe(200)
+  const body = await response.json()
+  for (const result of body.results) expect(['accepted', 'duplicate']).toContain(result.status)
+}
+
+export const scrobble = (date: string, minute: number, { artist, track, album = '' }: Listen) => ({
+  key: `${date}-${minute}-${artist}-${track}`,
+  kind: 'lastfm.scrobble',
+  schema_version: 1,
+  occurred_at: noon(date, minute),
+  payload: {
+    artist: { mbid: '', '#text': artist },
+    album: { mbid: '', '#text': album },
+    name: track,
+    date: { uts: '0', '#text': '' },
+  },
+})
+
+/** Attend que le worker ait tout interprété, sans supposer de sa vitesse. */
+export async function waitForListens(request: APIRequestContext, cookie: string, date: string, expected: number) {
+  await expect
+    .poll(
+      async () => {
+        const response = await request.get(`/v1/days/${date}/music`, { headers: { Cookie: cookie } })
+        return (await response.json()).listens
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(expected)
+}
+
+export async function previousDay(page: Page, times: number) {
+  for (let i = 0; i < times; i++) await page.getByRole('button', { name: 'Jour précédent' }).click()
+}
+
+export async function checkLayout(page: Page) {
+  const problems = await page.evaluate(() => {
+    const out: string[] = []
+    if (document.documentElement.scrollWidth > window.innerWidth) out.push('défilement horizontal')
+    for (const el of document.querySelectorAll('button, input, a')) {
+      const { width, height, right } = el.getBoundingClientRect()
+      const name = el.getAttribute('aria-label') ?? el.textContent ?? el.tagName
+      if (height < 44 || width < 44) out.push(`${name} : ${width}×${height}`)
+      if (right > window.innerWidth) out.push(`${name} dépasse à droite`)
+    }
+    return out
+  })
+  expect(problems).toEqual([])
+}

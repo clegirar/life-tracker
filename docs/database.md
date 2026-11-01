@@ -84,6 +84,8 @@ Les messages sont hors POC depuis le 31 oct. 2026 : leur type et leur métrique 
 
 **Clés et charges utiles Last.fm.** Écoute : `horodatage:SHA-256(artiste, titre)`, charge utile : le scrobble brut, date en `Z` (décalage inconnu). Fiche : SHA-256 de la clé du titre normalisée, charge utile `{"artist", "track", "info"}` : le titre tel que scrobblé et la réponse brute de `track.getInfo`. Une fiche sans durée (zéro ou absente) ne produit aucun événement. Dans les clés d'éléments, artiste et titre sont séparés par une tabulation, qu'aucun nom normalisé ne peut contenir. Pas de migration à l'étape 5 : les registres prévoyaient déjà ces types et métriques.
 
+**Un marquage « déjà connu ».** Charge utile `{"level", "artist", "album", "track"}` : le niveau et les noms tels qu'affichés, `album` ou `track` seulement au niveau qui les nomme. Il donne un événement `music.known` et un seul élément, à son niveau, sous la même clé qu'une écoute. Les détails gardent les noms. Pas de migration à l'étape 6 : les registres prévoyaient déjà le type, la métrique et le droit de `webapp`, et l'index des éléments suffit.
+
 **L'heure d'un café** est celle de l'enveloppe (`occurred_at`), fixée par le client : « maintenant » par défaut, modifiable pour un café noté après coup. La charge utile reste vide. Une heure erronée se corrige par une annulation et une nouvelle saisie.
 
 **Les détails d'une écoute** gardent les noms affichés (`artist`, `album`, `track`), les clés normalisées (`artist_key`, `album_key` = artiste et album, `track_key` = artiste et titre) et, si l'export Apple la fournit, la durée réellement écoutée (`played_ms`). La clé d'un album inclut l'artiste, sinon tous les « Greatest Hits » seraient confondus. Les minutes d'écoute se calculent en vue : la durée écoutée si elle existe, sinon la dernière durée connue du titre.
@@ -117,6 +119,8 @@ Les rôles et la base sont créés par `db/init/01-roles.sh` à la création du 
 **Compte et sessions.** `admin set-password`, en `tracker_admin`, crée ou remplace la ligne de `core.account` et vide `core.sessions` dans la même transaction. `serve`, en `tracker_app`, lit le compte et gère les sessions : 30 jours depuis la connexion, `last_seen_at` à chaque requête, lignes expirées supprimées à la connexion suivante. Un token de session vaut 32 octets aléatoires, seul son SHA-256 est stocké.
 
 **Lecture d'un jour.** Le jour devient un intervalle UTC d'après `core.settings.timezone`, puis `derived.live_events` donne les événements. La jointure avec `core.records` et `core.sources` n'apporte que la clé et le nom de la source, pour annuler : jamais la charge utile ni le choix des événements.
+
+**Lecture des découvertes.** Calculée à chaque lecture dans `GET /v1/days/{date}/music`, jamais stockée. Pour chaque élément écouté ce jour-là : aucune écoute vivante du même niveau et de la même clé avant minuit, heure de Paris. Le champ `first_listens` liste ces éléments avec leurs `known_marks` ; c'est une découverte si cette liste est vide (`discoveries` les compte). Toutes les lectures fixent le numéro de génération active, ce qui ouvre les index, et le pool coupe le JIT : voir le journal des décisions de l'architecture.
 
 **Purge** (outil d'administration, une transaction) : ajouter l'entrée au registre, rédiger les enregistrements visés, supprimer leurs lignes dérivées dans toutes les générations. La clé conservée empêche la donnée de revenir. Après une restauration, le registre des purges est réappliqué avant la remise en service.
 
