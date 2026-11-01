@@ -42,7 +42,7 @@ impl Web {
         Self {
             db,
             base,
-            http: reqwest::Client::new(),
+            http: client(),
             _stop: stop,
         }
     }
@@ -271,7 +271,7 @@ async fn login_failure_is_one_generic_answer() {
 async fn login_without_an_account_gives_the_same_answer() {
     let db = TestDb::new().await;
     let base = serve(db.app.clone()).await;
-    let response = reqwest::Client::new()
+    let response = client()
         .post(format!("{base}/v1/auth/login"))
         .header(CSRF.0, CSRF.1)
         .json(&json!({ "username": USER, "password": PASSWORD }))

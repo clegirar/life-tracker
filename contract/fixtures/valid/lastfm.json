@@ -1,0 +1,4 @@
+{"records":[
+  {"key":"1792310400:0000000000000000000000000000000000000000000000000000000000000000","kind":"lastfm.scrobble","schema_version":1,"occurred_at":"2026-10-18T08:00:00Z","payload":{"artist":{"mbid":"","#text":"Les Exemples"},"album":{"mbid":"","#text":""},"name":"Titre fictif","date":{"uts":"1792310400","#text":"18 Oct 2026, 08:00"}}},
+  {"key":"0000000000000000000000000000000000000000000000000000000000000000","kind":"lastfm.track_info","schema_version":1,"occurred_at":"2026-10-18T08:05:00Z","payload":{"artist":"Les Exemples","track":"Titre fictif","info":{"track":{"name":"Titre fictif","duration":"240000"}}}}
+]}

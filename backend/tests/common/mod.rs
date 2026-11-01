@@ -198,7 +198,7 @@ impl Ctx {
         let base = serve(app.clone()).await;
         Self {
             base,
-            http: Client::new(),
+            http: client(),
             token,
             source,
             source_id,
@@ -296,4 +296,10 @@ pub fn fixtures(dir: &str) -> Vec<(String, Value)> {
             )
         })
         .collect()
+}
+
+/// Le client HTTP des tests : reqwest demande que le fournisseur TLS soit installé.
+pub fn client() -> Client {
+    life_tracker::collector::install_tls();
+    Client::new()
 }

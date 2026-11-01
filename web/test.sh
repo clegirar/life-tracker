@@ -72,6 +72,10 @@ printf '%s\n' "$E2E_PASSWORD" | ADMIN_DATABASE_URL="$(url tracker_admin admin-te
 E2E_IOS_TOKEN="$(ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin create-source ios 2>/dev/null)"
 export E2E_IOS_TOKEN
 ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin grant-kind ios coffee.cup 2>/dev/null
+E2E_LASTFM_TOKEN="$(ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin create-source lastfm --silence-threshold "6 hours" 2>/dev/null)"
+export E2E_LASTFM_TOKEN
+ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin grant-kind lastfm lastfm.scrobble 2>/dev/null
+ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin grant-kind lastfm lastfm.track_info 2>/dev/null
 
 API_PORT="$(free_port)"
 # Sans DEV_INSECURE_COOKIE : le cookie est Secure, comme en production.
@@ -93,7 +97,7 @@ echo "▶ Playwright"
 npx playwright test "$@"
 
 echo "▶ Les logs du backend ne contiennent ni mot de passe ni token"
-if grep -qF -e "$E2E_PASSWORD" -e "$E2E_IOS_TOKEN" "$LOG"; then
+if grep -qF -e "$E2E_PASSWORD" -e "$E2E_IOS_TOKEN" -e "$E2E_LASTFM_TOKEN" -e "Artiste Fictif" -e "Titre fictif" "$LOG"; then
   echo "ÉCHEC : secret dans les logs" >&2
   exit 1
 fi

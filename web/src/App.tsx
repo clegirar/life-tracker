@@ -4,6 +4,7 @@ import { DayPage } from './DayPage'
 import { Login } from './Login'
 import { parisDate } from './time'
 import { useCoffee } from './useCoffee'
+import { useMusic } from './useMusic'
 
 type Auth = 'unknown' | 'in' | 'out' | 'expired'
 
@@ -29,6 +30,7 @@ export function App() {
 
   // Vit au-dessus de l'écran de connexion : une écriture refusée par une session expirée y survit.
   const coffee = useCoffee(date, onSessionLost, auth === 'in')
+  const music = useMusic(date, onSessionLost, auth === 'in')
 
   // Une panne n'est pas une déconnexion : la page du jour saura la signaler.
   useEffect(() => {
@@ -48,9 +50,11 @@ export function App() {
       today={today}
       onSelect={(next) => setSelected(next === today ? null : next)}
       coffee={coffee}
+      music={music}
       onLogout={async () => {
         await logout().catch(() => undefined)
         coffee.reset()
+        music.reset()
         setSelected(null)
         setAuth('out')
       }}

@@ -1,16 +1,18 @@
 use std::io::{BufRead, IsTerminal};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use life_tracker::interpreters::INTERPRETERS;
-use life_tracker::{admin, api, db, engine, replay};
+use life_tracker::{admin, api, collector, db, engine, replay};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
 use tracing_subscriber::EnvFilter;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
+const LASTFM_PAUSE: Duration = Duration::from_millis(250);
 
 #[derive(Parser)]
 #[command(
@@ -34,6 +36,28 @@ enum Command {
         /// Développement seulement : retire `Secure` du cookie de session (Safari sur http://localhost)
         #[arg(long, env = "DEV_INSECURE_COOKIE")]
         dev_insecure_cookie: bool,
+    },
+    /// Interroge Last.fm et envoie à l'API d'ingestion, sans jamais connaître la base
+    Collect {
+        #[arg(long, env = "LASTFM_API_KEY", hide_env_values = true)]
+        lastfm_api_key: String,
+        #[arg(long, env = "LASTFM_USER", hide_env_values = true)]
+        lastfm_user: String,
+        #[arg(long, env = "COLLECTOR_TOKEN", hide_env_values = true)]
+        token: String,
+        #[arg(long, env = "INGEST_URL")]
+        ingest_url: String,
+        #[arg(long, env = "LASTFM_API_URL", default_value = collector::DEFAULT_LASTFM_URL)]
+        lastfm_url: String,
+        /// Où garder le curseur ; le perdre ne coûte qu'un rattrapage
+        #[arg(
+            long,
+            env = "COLLECTOR_STATE_DIR",
+            default_value = "/var/lib/life-tracker"
+        )]
+        state_dir: PathBuf,
+        #[arg(long, env = "COLLECT_INTERVAL_SECONDS", default_value_t = 300)]
+        interval_seconds: u64,
     },
     /// Applique les migrations, avec le rôle tracker_owner
     Migrate {
@@ -85,6 +109,27 @@ async fn main() -> Result<()> {
             listen,
             dev_insecure_cookie,
         } => serve(&database_url, &listen, dev_insecure_cookie).await,
+        Command::Collect {
+            lastfm_api_key,
+            lastfm_user,
+            token,
+            ingest_url,
+            lastfm_url,
+            state_dir,
+            interval_seconds,
+        } => {
+            collect(collector::Config {
+                lastfm_url,
+                api_key: lastfm_api_key,
+                user: lastfm_user,
+                ingest_url: ingest_url.trim_end_matches('/').to_owned(),
+                token,
+                state_dir,
+                interval: Duration::from_secs(interval_seconds),
+                pause: LASTFM_PAUSE,
+            })
+            .await
+        }
         Command::Migrate { database_url } => {
             let pool = db::pool(&database_url)?;
             db::MIGRATOR.run(&pool).await.context("migrations")?;
@@ -96,6 +141,34 @@ async fn main() -> Result<()> {
             command,
         } => run_admin(&database_url, command).await,
     }
+}
+
+/// Même à `RUST_LOG=trace`, les bibliothèques HTTP se taisent : elles citeraient l'URL, donc la clé.
+async fn collect(config: collector::Config) -> Result<()> {
+    let filter = [
+        "reqwest=off",
+        "hyper=off",
+        "hyper_util=off",
+        "h2=off",
+        "rustls=off",
+    ]
+    .iter()
+    .fold(
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        |filter, directive| filter.add_directive(directive.parse().expect("directive valide")),
+    );
+    tracing_subscriber::fmt()
+        .json()
+        .with_env_filter(filter)
+        .init();
+    let collector = collector::Collector::new(config)?;
+    let (stop, stopped) = watch::channel(false);
+    let worker = tokio::spawn(collector.run(stopped));
+    shutdown_signal().await;
+    stop.send_replace(true);
+    worker.await?;
+    tracing::info!("stopped");
+    Ok(())
 }
 
 async fn serve(database_url: &str, listen: &str, insecure_cookie: bool) -> Result<()> {

@@ -407,7 +407,8 @@ async fn a_new_interpreter_is_one_entry_and_catches_up_on_the_journal() {
         .insert(source, "lastfm.track_info", "before", json!({}))
         .await;
     db.insert(source, "coffee.cup", "c", json!({})).await;
-    drain(&db.app, INTERPRETERS).await;
+    // Le registre d'avant l'interprète : le café et les annulations.
+    drain(&db.app, &INTERPRETERS[..2]).await;
     assert_eq!(
         live_seqs(&db).await.len(),
         1,
@@ -528,7 +529,7 @@ async fn concurrent_starters_establish_one_active_generation() {
             .unwrap();
     assert_eq!(
         serde_json::from_str::<Value>(&versions).unwrap(),
-        json!({"coffee.cup": 1, "record.cancel": 1})
+        json!({"coffee.cup": 1, "record.cancel": 1, "lastfm.scrobble": 1, "lastfm.track_info": 1})
     );
 }
 
@@ -773,6 +774,7 @@ async fn a_rebuild_produces_an_identical_generation() {
             .comparison
             .compared_up_to
             .iter()
+            .filter(|(kind, _)| KINDS.contains(&kind.as_str()))
             .all(|(_, seq)| *seq > 0),
         "la comparaison a bien porté sur quelque chose : {:?}",
         report.comparison.compared_up_to

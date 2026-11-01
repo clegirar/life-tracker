@@ -10,11 +10,12 @@ Runbook de l'étape 4. Tout s'exécute à la main : rien n'automatise le déploi
 | --- | --- | --- | --- |
 | `db` | PostgreSQL 18.6, volume `life-tracker-prod-db-data` | `secrets/db.env` | `data` |
 | `migrate` | Une fois à chaque `up`, puis s'arrête (état « arrêté » normal) | `secrets/migrate.env` (`tracker_owner`) | `data` |
-| `backend` | API et interprètes | `secrets/backend.env` (`tracker_app`) | `data`, `front` |
+| `backend` | API et interprètes | `secrets/backend.env` (`tracker_app`) | `data`, `front`, `collect` |
 | `web` | nginx : app statique et proxy de `/v1` et `/health` | aucun secret | `front`, `edge` |
+| `collector` | Interroge Last.fm, écrit par l'API d'ingestion ; curseur dans le volume `life-tracker-prod-collector-state` | `secrets/collector.env` (clé, utilisateur, token) | `collect`, `egress` |
 | `admin` | Profil `admin`, lancé à la main | `secrets/admin.env` (`tracker_admin`) | `data` |
 
-Seul `web` publie un port, sur `127.0.0.1:18080` par défaut. `data` et `front` n'ont aucune sortie, et `data` n'a aucune adresse côté hôte. À l'étape 5, le backend aura besoin d'une sortie vers Last.fm.
+Seul `web` publie un port, sur `127.0.0.1:18080` par défaut. `data`, `front` et `collect` n'ont aucune sortie, et `data` n'a aucune adresse côté hôte. `egress` est la seule sortie vers Internet, et seul le collecteur y est : il ne voit pas la base, et le backend ne voit pas Internet. Docker ne filtre pas par destination : le collecteur pourrait joindre autre chose que Last.fm, ce que limitent l'absence de secret de base, `read_only` et l'absence de tout port entrant. Il ne connaît que ce qu'il envoie déjà.
 
 ## Ce que je fais à la main
 
@@ -213,6 +214,74 @@ Tailscale doit être actif sur l'iPhone. Noms d'actions de l'iOS en français, �
 
 Une nouvelle clé naît à chaque lancement. Si le réseau coupe après l'écriture, relancer compte un second café : il s'annule dans la web app. Le token vit dans le raccourci : ne jamais partager ce raccourci.
 
+## Mise à jour vers l'étape 5 (musique)
+
+À faire une fois, sur le NAS déjà en service, après un workflow vert. **L'ordre compte :** dès que le nouveau `compose.yaml` est en place, `docker compose` exige `secrets/collector.env`. Je ne lance rien de tout cela depuis le dépôt.
+
+1. Une clé d'API : [last.fm/api/account/create](https://www.last.fm/api/account/create). Elle va dans le gestionnaire de mots de passe, jamais ailleurs. L'API lit l'historique sans authentification : s'il est masqué dans les réglages de confidentialité de Last.fm, il faudra le rendre visible (de mémoire, à contrôler).
+
+2. Depuis le Mac, à la racine du dépôt :
+
+   ```sh
+   scp -O compose.yaml NAS:/tmp/
+   ```
+
+3. Sur le NAS, en root dans le dossier en `700`, **avec l'ancien `compose.yaml` encore en place** :
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   TOKEN=$(sudo docker compose run --rm -T admin create-source lastfm --silence-threshold "6 hours")
+   [ "${#TOKEN}" = 64 ] && echo "token ok" || echo "ÉCHEC : ne pas continuer"
+   sudo docker compose run --rm -T admin grant-kind lastfm lastfm.scrobble
+   sudo docker compose run --rm -T admin grant-kind lastfm lastfm.track_info
+   read -rs LASTFM_API_KEY   # la clé, sans écho
+   read -r LASTFM_USER       # le nom d'utilisateur Last.fm
+   (umask 077; printf 'LASTFM_API_KEY=%s\nLASTFM_USER=%s\nCOLLECTOR_TOKEN=%s\n' "$LASTFM_API_KEY" "$LASTFM_USER" "$TOKEN" > secrets/collector.env)
+   unset TOKEN LASTFM_API_KEY LASTFM_USER
+   ls -l secrets/collector.env   # -rw-------
+   ```
+
+   Le token n'est gardé que là : s'il se perd, voir l'étape 9 pour le remplacer (`lastfm-2`, reconnu aussi par la page du jour). `create-source` échoue si le nom existe déjà.
+
+4. Toujours en root, le nouveau fichier et la nouvelle version :
+
+   ```sh
+   mv /tmp/compose.yaml .
+   chown root:root compose.yaml
+   chmod 600 compose.yaml
+   sed -i 's/^TRACKER_TAG=.*/TRACKER_TAG=NOUVEAU_SHA/' .env
+   sudo docker compose config -q
+   sudo docker compose pull
+   sudo docker compose up -d
+   sudo docker compose ps -a
+   sudo docker compose logs collector | tail   # « collect pass completed »
+   exit
+   ```
+
+   Pas de migration ni de `rebuild` : aucun ancien enregistrement n'a de nouvel interprète à rejouer. Le premier passage relit tout l'historique Last.fm, page par page puis fiche par fiche, à quatre requêtes par seconde au plus : compter quelques minutes par millier de titres.
+
+5. Vérifier le critère **« une vraie journée correspond à Last.fm »** : choisir un jour passé et complet, comparer sur la page du jour le nombre d'écoutes et la liste des titres avec last.fm/user/MOI/library?from=AAAA-MM-JJ&to=AAAA-MM-JJ. Last.fm découpe selon le fuseau de son compte : le régler sur Paris, ou s'attendre à un écart autour de minuit. Le temps estimé n'a pas d'équivalent à comparer. Regarder aussi si des erreurs d'interprétation existent, ce qui dirait que les vraies réponses diffèrent des fixtures :
+
+   ```sh
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select count(*) from derived.interpretation_errors"   # 0
+   ```
+
+   Seulement alors, marquer l'étape 5 « Fait » dans `docs/poc.md`.
+
+6. Vérifier l'isolement :
+
+   ```sh
+   sudo docker compose exec -T collector sh -c 'getent hosts db || echo "base inconnue"'       # base inconnue
+   sudo docker compose exec -T backend sh -c 'wget -q -T5 -O /dev/null https://www.last.fm && echo SORTIE || echo "pas de sortie"'   # pas de sortie
+   sudo docker inspect "$(sudo docker compose ps -q backend)" | grep -c LASTFM   # 0
+   sudo docker inspect "$(sudo docker compose ps -q web)" | grep -c LASTFM       # 0
+   ```
+
+   Le collecteur doit joindre Last.fm : si ses logs montrent `"reason":"connect"` en continu, voir d'abord le DNS et le pare-feu de DSM, sans donner de sortie au backend.
+
+**Retour arrière.** Pas de migration entre les deux versions : l'ancien `compose.yaml` et l'ancien `TRACKER_TAG` suffisent ; `lastfm` reste dans le registre, et sa santé n'est plus lue. Le journal garde ce qui est entré. Pour couper seulement la collecte : `sudo docker compose stop collector`, et la page du jour signalera le silence après 6 h.
+
 ## Vérifier les critères « Terminé quand »
 
 **Un café saisi depuis l'iPhone, par la web app comme par le raccourci, apparaît.**
@@ -265,6 +334,8 @@ Si le changement touche un interprète, ensuite : `sudo docker compose run --rm 
 
 **Panne de la base.** `/health` répond 503 et le backend passe `unhealthy`, sans redémarrer : `restart` ne réagit qu'à la fin d'un processus. Il reprend seul au retour de la base. Lectures et écritures répondent 500 entre-temps, et l'app le traite comme une erreur passagère.
 
+**Collecteur.** Il réessaie seul (1, 2, 4… jusqu'à 30 min ; le délai demandé par une réponse 429), sans jamais avancer son curseur. `unhealthy` : aucun passage réussi depuis 6 h, sans redémarrage. Effacer son volume ne coûte qu'un rattrapage en doublons ignorés. Remplacer la clé : modifier `secrets/collector.env`, puis `sudo docker compose up -d collector`. Une écoute qui arrive sur Last.fm plus de 48 h après sa date n'entre pas d'elle-même ; effacer le volume la rattrape.
+
 **Logs.** `sudo docker compose logs <service>`. Rotation par taille : 3 fichiers de 10 Mo par service. Docker ne sait pas purger par âge : la règle des 30 jours est un ordre de grandeur, et un service peu bavard garde ses logs plus longtemps. Le backend ne journalise aucune donnée personnelle, et nginx n'écrit pas de journal d'accès.
 
 ## Retour arrière
@@ -293,6 +364,7 @@ Reste à confirmer :
 - le raccourci sur un vrai iPhone (étape 10), reporté ;
 - la persistance de `tailscale serve` après un redémarrage du NAS ;
 - l'import du projet dans l'interface de Container Manager, facultatif ;
-- l'accès refusé depuis un autre compte du NAS, si un compte non administrateur existe.
+- l'accès refusé depuis un autre compte du NAS, si un compte non administrateur existe ;
+- tout le collecteur sur le NAS : sortie vers Last.fm, vraies réponses, et le critère de l'étape 5. Vérifié seulement en local, en compose, contre `example.com` et sans clé réelle.
 
 `cpus` n'est pas utilisé dans `compose.yaml` : de mémoire, le noyau de Synology refuse cette limite, sans que j'aie pu le vérifier. Seule la mémoire est limitée.

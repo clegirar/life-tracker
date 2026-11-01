@@ -143,7 +143,7 @@ async fn admin_token_lifecycle() {
     assert!(taken.stdout.is_empty());
 
     let base = serve(app.clone()).await;
-    let http = reqwest::Client::new();
+    let http = client();
     let send = async |key: &str| -> (u16, Value) {
         let response = http
             .post(format!("{base}/v1/records"))
@@ -267,7 +267,7 @@ impl Server {
             .unwrap();
         let base = format!("http://127.0.0.1:{port}");
         for _ in 0..100 {
-            if reqwest::get(format!("{base}/health")).await.is_ok() {
+            if client().get(format!("{base}/health")).send().await.is_ok() {
                 return Self { child, base, log };
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -419,7 +419,7 @@ fn admin_on(db: &TestDb, args: &[&str]) -> Output {
 }
 
 async fn post_records(base: &str, token: &str, records: Value) -> Vec<Value> {
-    let response = reqwest::Client::new()
+    let response = client()
         .post(format!("{base}/v1/records"))
         .bearer_auth(token)
         .json(&json!({ "records": records }))
@@ -441,14 +441,16 @@ fn cancel(key: &str, source: &str, target: &str) -> Value {
            "payload": {"source": source, "key": target}})
 }
 
+/// Échoue seulement si le nombre cesse de bouger : la vitesse de la machine ne décide pas du résultat.
 async fn wait_until_count(db: &TestDb, sql: &str, expected: i64) {
-    for _ in 0..1200 {
-        if db.count(sql).await == expected {
-            return;
-        }
+    let (mut last, mut still) = (db.count(sql).await, 0);
+    while last != expected {
         tokio::time::sleep(Duration::from_millis(50)).await;
+        let now = db.count(sql).await;
+        still = if now == last { still + 1 } else { 0 };
+        last = now;
+        assert!(still < 1200, "{sql} : {last} au lieu de {expected}");
     }
-    panic!("{sql} : {} au lieu de {expected}", db.count(sql).await);
 }
 
 const LIVE: &str = "SELECT count(*) FROM derived.live_events";
@@ -714,7 +716,7 @@ async fn dev_insecure_cookie_is_off_unless_explicitly_true() {
     for (value, secure) in [("false", true), ("true", false)] {
         let server =
             Server::start_with(&db.app_url(), "info", &[("DEV_INSECURE_COOKIE", value)]).await;
-        let response = reqwest::Client::new()
+        let response = client()
             .post(format!("{}/v1/auth/login", server.base))
             .header("x-csrf-protection", "1")
             .json(&json!({ "username": "moi", "password": "un mot de passe assez long" }))
@@ -736,7 +738,7 @@ async fn serve_logs_nothing_of_a_login_or_a_session() {
     let password = format!("{SENTINEL}-mot-de-passe");
     assert!(set_password(&db, "moi", &password).status.success());
     let server = Server::start(&db.app_url(), "trace").await;
-    let http = reqwest::Client::new();
+    let http = client();
     let login = |username: &str, password: &str| {
         http.post(format!("{}/v1/auth/login", server.base))
             .header("x-csrf-protection", "1")

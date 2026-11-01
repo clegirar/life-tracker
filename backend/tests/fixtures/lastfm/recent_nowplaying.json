@@ -1,0 +1,5 @@
+{"recenttracks":{"track":[
+{"artist":{"mbid":"","#text":"Les Exemples"},"streamable":"0","image":[{"size":"small","#text":"https://lastfm.example/s.png"}],"mbid":"","album":{"mbid":"","#text":"Disque fictif"},"name":"Titre en cours","@attr":{"nowplaying":"true"},"url":"https://www.last.fm/music/Les+Exemples/_/Titre+en+cours"},
+{"artist":{"mbid":"00000000-0000-4000-8000-000000000001","#text":"Les Exemples"},"streamable":"0","image":[{"size":"small","#text":"https://lastfm.example/s.png"}],"mbid":"00000000-0000-4000-8000-000000000002","album":{"mbid":"00000000-0000-4000-8000-000000000003","#text":"Disque fictif"},"name":"Chanson d'essai (feat. Invité Fictif)","url":"https://www.last.fm/music/Les+Exemples/_/Chanson+d'essai","date":{"uts":"1792310400","#text":"18 Oct 2026, 08:00"}},
+{"artist":{"mbid":"","#text":"Groupe Sans Album"},"streamable":"0","image":[],"mbid":"","album":{"mbid":"","#text":""},"name":"Morceau isolé","url":"https://www.last.fm/music/Groupe+Sans+Album/_/Morceau+isol%C3%A9","date":{"uts":"1792306800","#text":"18 Oct 2026, 07:00"}}
+],"@attr":{"user":"utilisateur-fictif","totalPages":"1","page":"1","perPage":"200","total":"2"}}}

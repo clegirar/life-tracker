@@ -261,7 +261,8 @@ test('une lecture en échec n’affiche jamais un zéro', async ({ page }) => {
   await expect(count(page)).toHaveText('–')
   await expect(page.getByText('Aucun café noté')).toBeHidden()
   await page.unroute('**/v1/days/**')
-  await page.getByRole('button', { name: 'Réessayer' }).click()
+  // La musique a aussi échoué, et a son propre bouton.
+  await page.getByRole('alert').getByRole('button', { name: 'Réessayer' }).click()
   await expect(count(page)).toHaveText('0')
   await expect(page.getByRole('alert')).toHaveCount(0)
 })

@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT k AS \"kind!\" FROM unnest($1::text[]) AS k\n           WHERE EXISTS (\n             SELECT 1 FROM core.records r\n             WHERE r.kind = k AND r.seq <= $2\n               AND r.seq > COALESCE((SELECT c.last_seq FROM derived.cursors c\n                                     WHERE c.generation = $3 AND c.kind = k), 0))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "kind!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Int8",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "42836961712580fd5eb2e957c48eca7487576427783009795a25b352ecd44631"
+}

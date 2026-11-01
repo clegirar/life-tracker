@@ -146,7 +146,28 @@ pub async fn catch_up(
         id: building,
         up_to,
     };
-    while engine::pass(pool, registry, target).await? > 0 {}
+    // Seulement les types qui ont du retard : un passage à vide coûte une transaction par type, et
+    // la bascule n'aboutit que si elle devance le prochain enregistrement du worker.
+    let kinds: Vec<&str> = registry.iter().map(|i| i.kind).collect();
+    let behind = sqlx::query_scalar!(
+        r#"SELECT k AS "kind!" FROM unnest($1::text[]) AS k
+           WHERE EXISTS (
+             SELECT 1 FROM core.records r
+             WHERE r.kind = k AND r.seq <= $2
+               AND r.seq > COALESCE((SELECT c.last_seq FROM derived.cursors c
+                                     WHERE c.generation = $3 AND c.kind = k), 0))"#,
+        &kinds as &[&str],
+        up_to,
+        building,
+    )
+    .fetch_all(pool)
+    .await?;
+    let behind: Vec<Interpreter> = registry
+        .iter()
+        .filter(|i| behind.iter().any(|kind| kind == i.kind))
+        .copied()
+        .collect();
+    while engine::pass(pool, &behind, target).await? > 0 {}
     Ok(())
 }
 

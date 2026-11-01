@@ -82,6 +82,8 @@ Seule la source `webapp` est créée par la migration. Les sources à token (con
 
 Les messages sont hors POC depuis le 31 oct. 2026 : leur type et leur métrique arriveront par une migration, avec l'agent Mac. L'annuaire (`people`, `pseudonyms`) est déjà en place et testé pour les accueillir, mais rien ne s'en sert pendant le POC.
 
+**Clés et charges utiles Last.fm.** Écoute : `horodatage:SHA-256(artiste, titre)`, charge utile : le scrobble brut, date en `Z` (décalage inconnu). Fiche : SHA-256 de la clé du titre normalisée, charge utile `{"artist", "track", "info"}` : le titre tel que scrobblé et la réponse brute de `track.getInfo`. Une fiche sans durée (zéro ou absente) ne produit aucun événement. Dans les clés d'éléments, artiste et titre sont séparés par une tabulation, qu'aucun nom normalisé ne peut contenir. Pas de migration à l'étape 5 : les registres prévoyaient déjà ces types et métriques.
+
 **L'heure d'un café** est celle de l'enveloppe (`occurred_at`), fixée par le client : « maintenant » par défaut, modifiable pour un café noté après coup. La charge utile reste vide. Une heure erronée se corrige par une annulation et une nouvelle saisie.
 
 **Les détails d'une écoute** gardent les noms affichés (`artist`, `album`, `track`), les clés normalisées (`artist_key`, `album_key` = artiste et album, `track_key` = artiste et titre) et, si l'export Apple la fournit, la durée réellement écoutée (`played_ms`). La clé d'un album inclut l'artiste, sinon tous les « Greatest Hits » seraient confondus. Les minutes d'écoute se calculent en vue : la durée écoutée si elle existe, sinon la dernière durée connue du titre.

@@ -32,6 +32,7 @@ Depuis `backend/`, après `set -a && . ../.env && set +a` (chaque commande lit s
 
 - Migrations : `cargo run -- migrate` (`MIGRATE_DATABASE_URL`, `tracker_owner`).
 - API et interprètes : `cargo run -- serve` (`DATABASE_URL`, `tracker_app` ; `LISTEN_ADDR`, `RUST_LOG`).
+- Collecteur : `cargo run -- collect` (`LASTFM_API_KEY`, `LASTFM_USER`, `COLLECTOR_TOKEN` : le token d'une source de développement, `INGEST_URL`, `COLLECTOR_STATE_DIR` ; facultatifs `LASTFM_API_URL`, `COLLECT_INTERVAL_SECONDS`). Ne connaît pas la base. Jamais de token ni de clé de production en développement.
 - Administration (`ADMIN_DATABASE_URL`, `tracker_admin`) : `cargo run -- admin create-source <nom> [--silence-threshold "6 hours"]` (affiche le token une seule fois), `admin revoke-source <nom>`, `admin grant-kind <source> <type>`, `admin revoke-kind <source> <type>`, `admin rebuild [--allow-differences]` (génération à côté, comparaison, bascule), `admin retry-errors`, `admin set-password <identifiant>` (crée le compte web ou change son mot de passe, lu au clavier ou sur l'entrée standard, et ferme les sessions).
 
 Le cookie de session est toujours `Secure`. Seule exception, pour le développement : `DEV_INSECURE_COOKIE=true` sur `serve`, utile à Safari et à un téléphone en http. Chrome et Firefox l'acceptent déjà sur `localhost`.

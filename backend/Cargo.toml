@@ -14,7 +14,10 @@ clap = { version = "=4.6.7", features = ["derive", "env"] }
 getrandom = "=0.4.3"
 hex = "=0.4.3"
 log = "=0.4.35"
+# Le collecteur. rustls sur ring : pur Rust et C sans CMake, compilable en croisé depuis un Mac.
+reqwest = { version = "=0.13.5", default-features = false, features = ["json", "query", "rustls-no-provider"] }
 rpassword = "=7.5.4"
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 # arbitrary_precision : les nombres de la charge utile restent exacts jusqu'au jsonb.
 serde_json = { version = "=1.0.154", features = ["arbitrary_precision"] }
@@ -23,8 +26,8 @@ sqlx = { version = "=0.9.0", default-features = false, features = ["chrono", "ma
 tokio = { version = "=1.54.1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json", "tracing-log"] }
+unicode-normalization = "=0.1.25"
 uuid = { version = "=1.29.0", features = ["serde", "v7"] }
 
 [dev-dependencies]
 jsonschema = { version = "=0.60.2", default-features = false }
-reqwest = { version = "=0.13.5", default-features = false, features = ["json"] }

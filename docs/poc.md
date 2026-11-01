@@ -15,7 +15,7 @@ Le POC couvre le compteur de cafés et les écoutes de musique (Last.fm en direc
 | 2 | Interprètes et rejeu | Fait |
 | 3 | Lecture et web app du café | Fait |
 | 4 | Déploiement sur le NAS | Fait, raccourci iOS reporté |
-| 5 | Musique en direct (Last.fm) | À faire |
+| 5 | Musique en direct (Last.fm) | Préparé, à vérifier sur le NAS |
 | 6 | Découvertes et « déjà connu » | À faire |
 | 7 | Historique Apple | À faire |
 | 8 | Calendrier et complétude | À faire |
@@ -109,6 +109,8 @@ Fait le 31 oct. 2026 sur le vrai NAS, en suivant le [runbook](deploiement.md), s
 À partir de là, les vrais cafés s'accumulent.
 
 ## Étape 5 : musique en direct (Last.fm)
+
+Préparé le 1er nov. 2026, pas fait : le dernier critère ne se vérifie que sur le NAS, avec une vraie clé (voir [le runbook](deploiement.md), « Mise à jour vers l'étape 5 »). Les fixtures de `backend/tests/fixtures/lastfm/` sont **reconstituées d'après la documentation de Last.fm, pas enregistrées**, faute de clé : à confronter à de vraies réponses au premier passage.
 
 **Contenu**
 

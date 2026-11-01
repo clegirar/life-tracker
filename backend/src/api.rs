@@ -1,6 +1,6 @@
 //! L'API : ingestion v1 (contrat dans contract/ingestion-v1.schema.json), compte web et lecture.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -84,6 +84,8 @@ fn routes() -> Router<AppState> {
         )
         .route("/v1/auth/logout", post(logout))
         .route("/v1/days/{date}", get(get_day))
+        .route("/v1/days/{date}/music", get(get_day_music))
+        .route("/v1/sources/health", get(get_sources_health))
         .route("/health", get(health))
 }
 
@@ -617,5 +619,248 @@ async fn get_day(
         date,
         count: cups.len(),
         cups,
+    }))
+}
+
+#[derive(Serialize)]
+struct MusicTrack {
+    name: String,
+    artist: String,
+    listens: i64,
+}
+
+#[derive(Serialize)]
+struct MusicArtist {
+    name: String,
+    /// Titres différents écoutés ce jour-là.
+    tracks: usize,
+    listens: i64,
+}
+
+#[derive(Serialize)]
+struct MusicAlbum {
+    name: String,
+    artist: String,
+    listens: i64,
+}
+
+#[derive(Serialize)]
+struct ArtistOfDay {
+    name: String,
+    listens: i64,
+}
+
+#[derive(Serialize)]
+struct DayMusic {
+    date: NaiveDate,
+    listens: usize,
+    /// Minutes estimées, sur les écoutes dont la durée est connue. `null` si aucune ne l'est.
+    minutes: Option<i64>,
+    /// Écoutes sans durée connue : le temps affiché les ignore, et cela doit se voir.
+    listens_without_duration: usize,
+    artist_of_day: Option<ArtistOfDay>,
+    tracks: Vec<MusicTrack>,
+    artists: Vec<MusicArtist>,
+    albums: Vec<MusicAlbum>,
+}
+
+/// Une ligne de liste en cours de calcul. Les écoutes arrivent de la plus ancienne à la plus récente :
+/// le nom gardé est le dernier vu, car une même clé peut couvrir plusieurs orthographes.
+struct Tally {
+    name: String,
+    artist: String,
+    listens: i64,
+    tracks: HashSet<String>,
+}
+
+fn tally<'a>(
+    lists: &'a mut HashMap<String, Tally>,
+    key: String,
+    name: &str,
+    artist: &str,
+) -> &'a mut Tally {
+    let entry = lists.entry(key).or_insert_with(|| Tally {
+        name: String::new(),
+        artist: String::new(),
+        listens: 0,
+        tracks: HashSet::new(),
+    });
+    entry.name = name.to_owned();
+    entry.artist = artist.to_owned();
+    entry.listens += 1;
+    entry
+}
+
+/// Les plus écoutés d'abord, puis par nom : le même jour donne toujours le même ordre.
+fn ranked(lists: HashMap<String, Tally>) -> Vec<Tally> {
+    let mut rows: Vec<Tally> = lists.into_values().collect();
+    rows.sort_by(|a, b| {
+        b.listens
+            .cmp(&a.listens)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| a.artist.cmp(&b.artist))
+    });
+    rows
+}
+
+/// Les minutes croisent deux enregistrements, donc se calculent ici et jamais dans un interprète :
+/// la durée réellement écoutée si la source la donne, sinon la dernière durée connue du titre.
+async fn get_day_music(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Result<Json<DayMusic>, ApiError> {
+    let date = parse_day(&date).ok_or(ApiError::InvalidDate)?;
+    let rows = sqlx::query!(
+        r#"SELECT e.details->>'artist' AS "artist!",
+                  e.details->>'artist_key' AS "artist_key!",
+                  e.details->>'album' AS album,
+                  e.details->>'album_key' AS album_key,
+                  e.details->>'track' AS "track!",
+                  e.details->>'track_key' AS "track_key!",
+                  COALESCE((e.details->>'played_ms')::numeric / 1000, d.value)::float8 AS seconds
+           FROM derived.live_events e
+           CROSS JOIN core.settings s
+           LEFT JOIN LATERAL (
+             SELECT known.value
+             FROM derived.live_event_items i
+             JOIN derived.live_events known USING (generation, seq, ordinal)
+             WHERE i.metric = 'music.track_duration' AND i.level = 'track'
+               AND i.item_key = e.details->>'track_key'
+             ORDER BY i.occurred_at DESC, i.seq DESC
+             LIMIT 1
+           ) d ON true
+           WHERE e.metric = 'music.listen'
+             AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE s.timezone)
+             AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE s.timezone)
+           ORDER BY e.occurred_at, e.seq"#,
+        date,
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    let listens = rows.len();
+    let known: Vec<f64> = rows.iter().filter_map(|row| row.seconds).collect();
+    let minutes = (!known.is_empty()).then(|| (known.iter().sum::<f64>() / 60.0).round() as i64);
+    let (mut tracks, mut artists, mut albums) = (HashMap::new(), HashMap::new(), HashMap::new());
+    for row in rows {
+        tally(&mut tracks, row.track_key.clone(), &row.track, &row.artist);
+        tally(&mut artists, row.artist_key, &row.artist, &row.artist)
+            .tracks
+            .insert(row.track_key);
+        if let (Some(key), Some(album)) = (row.album_key, row.album) {
+            tally(&mut albums, key, &album, &row.artist);
+        }
+    }
+    let artists: Vec<MusicArtist> = ranked(artists)
+        .into_iter()
+        .map(|t| MusicArtist {
+            tracks: t.tracks.len(),
+            name: t.name,
+            listens: t.listens,
+        })
+        .collect();
+    Ok(Json(DayMusic {
+        date,
+        listens,
+        minutes,
+        listens_without_duration: listens - known.len(),
+        artist_of_day: artists.first().map(|a| ArtistOfDay {
+            name: a.name.clone(),
+            listens: a.listens,
+        }),
+        tracks: ranked(tracks)
+            .into_iter()
+            .map(|t| MusicTrack {
+                name: t.name,
+                artist: t.artist,
+                listens: t.listens,
+            })
+            .collect(),
+        artists,
+        albums: ranked(albums)
+            .into_iter()
+            .map(|t| MusicAlbum {
+                name: t.name,
+                artist: t.artist,
+                listens: t.listens,
+            })
+            .collect(),
+    }))
+}
+
+#[derive(Serialize)]
+struct SourceHealth {
+    name: String,
+    last_seen_at: Option<DateTime<Utc>>,
+    silence_threshold_seconds: f64,
+    silent: bool,
+}
+
+#[derive(Serialize)]
+struct MetricHealth {
+    metric: String,
+    first_event_at: Option<DateTime<Utc>>,
+    last_event_at: Option<DateTime<Utc>>,
+    freshness_threshold_seconds: f64,
+    /// Aucune nouvelle donnée depuis le seuil : à vérifier, pas une erreur.
+    stale: bool,
+}
+
+#[derive(Serialize)]
+struct SourcesHealth {
+    sources: Vec<SourceHealth>,
+    metrics: Vec<MetricHealth>,
+}
+
+/// Générique : tout vient des seuils des registres. Une source est jugée sur son dernier contact
+/// réussi, ou sur sa création si elle n'en a jamais eu. Une métrique sans aucune donnée n'est pas
+/// « à vérifier » : elle n'a jamais commencé, et l'interface le dit autrement.
+async fn get_sources_health(
+    State(state): State<AppState>,
+) -> Result<Json<SourcesHealth>, ApiError> {
+    let sources = sqlx::query!(
+        r#"SELECT name, last_seen_at,
+                  extract(epoch FROM silence_threshold)::float8 AS "threshold!",
+                  now() - COALESCE(last_seen_at, created_at) > silence_threshold AS "silent!"
+           FROM core.sources
+           WHERE silence_threshold IS NOT NULL AND revoked_at IS NULL
+           ORDER BY name"#,
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let metrics = sqlx::query!(
+        r#"SELECT m.metric, seen.first_at, seen.last_at,
+                  extract(epoch FROM m.freshness_threshold)::float8 AS "threshold!",
+                  COALESCE(now() - seen.last_at > m.freshness_threshold, false) AS "stale!"
+           FROM core.metrics m
+           CROSS JOIN LATERAL (
+             SELECT min(e.occurred_at) AS first_at, max(e.occurred_at) AS last_at
+             FROM derived.live_events e WHERE e.metric = m.metric
+           ) seen
+           WHERE m.freshness_threshold IS NOT NULL
+           ORDER BY m.metric"#,
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(SourcesHealth {
+        sources: sources
+            .into_iter()
+            .map(|s| SourceHealth {
+                name: s.name,
+                last_seen_at: s.last_seen_at,
+                silence_threshold_seconds: s.threshold,
+                silent: s.silent,
+            })
+            .collect(),
+        metrics: metrics
+            .into_iter()
+            .map(|m| MetricHealth {
+                metric: m.metric,
+                first_event_at: m.first_at,
+                last_event_at: m.last_at,
+                freshness_threshold_seconds: m.threshold,
+                stale: m.stale,
+            })
+            .collect(),
     }))
 }

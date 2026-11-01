@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use sqlx::Row;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-const ALL: &[&str] = &["coffee.cup", "lastfm.scrobble"];
+const ALL: &[&str] = &["coffee.cup", "lastfm.scrobble", "lastfm.track_info"];
 const COFFEE: &[&str] = &["coffee.cup"];
 
 fn assert_rejected(result: &Value, reason: &str, field: &str) {
@@ -787,7 +787,7 @@ async fn database_down_gives_5xx() {
         .connect_lazy("postgres://tracker_app:x@127.0.0.1:1/tracker")
         .unwrap();
     let base = serve(pool).await;
-    let http = reqwest::Client::new();
+    let http = client();
     let response = http
         .post(format!("{base}/v1/records"))
         .bearer_auth("any")

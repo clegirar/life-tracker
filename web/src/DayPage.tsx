@@ -1,6 +1,9 @@
 import { useRef, useState } from 'react'
 import type { Op } from './reconcile'
 import { isAdd } from './reconcile'
+import { musicAlert } from './music'
+import { MusicCard } from './MusicCard'
+import type { useMusic } from './useMusic'
 import { addDays, dayTitle, emptyLabel, longDate, parisInstant, parisTime } from './time'
 import type { useCoffee } from './useCoffee'
 
@@ -9,6 +12,7 @@ interface Props {
   today: string
   onSelect: (date: string) => void
   coffee: ReturnType<typeof useCoffee>
+  music: ReturnType<typeof useMusic>
   onLogout: () => void
 }
 
@@ -30,13 +34,14 @@ function failureText(op: Op, date: string, today: string): string {
     : `${what} de ${when} n'a pas été enregistré${e}.`
 }
 
-export function DayPage({ date, today, onSelect, coffee, onLogout }: Props) {
+export function DayPage({ date, today, onSelect, coffee, music, onLogout }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [picked, setPicked] = useState('12:00')
   const [pickError, setPickError] = useState<string | null>(null)
   const timeInput = useRef<HTMLInputElement>(null)
   const isToday = date === today
   const { cups } = coffee
+  const alert = musicAlert(music.health)
 
   function select(next: string) {
     setPickerOpen(false)
@@ -117,7 +122,16 @@ export function DayPage({ date, today, onSelect, coffee, onLogout }: Props) {
         </p>
       )}
 
-      <section className="card" aria-labelledby="titre-cafe">
+      {alert && (
+        <p className="notice notice-block" role="status" data-testid="music-alert">
+          <span>
+            <strong>{alert.title}</strong> {alert.text}
+          </span>
+        </p>
+      )}
+
+      <div className="cards">
+      <section className="card card-coffee" aria-labelledby="titre-cafe">
         <h2 id="titre-cafe" className="card-title">
           Café
         </h2>
@@ -172,6 +186,9 @@ export function DayPage({ date, today, onSelect, coffee, onLogout }: Props) {
           {pickerOpen ? 'Fermer' : 'Noter à une autre heure'}
         </button>
       </section>
+
+      <MusicCard date={date} today={today} state={music} />
+      </div>
 
       <button type="button" className="quiet" onClick={onLogout}>
         Se déconnecter
