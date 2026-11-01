@@ -233,16 +233,17 @@ Une nouvelle clé naît à chaque lancement. Si le réseau coupe après l'écrit
    cd /volume1/docker/life-tracker
    TOKEN=$(sudo docker compose run --rm -T admin create-source lastfm --silence-threshold "6 hours")
    [ "${#TOKEN}" = 64 ] && echo "token ok" || echo "ÉCHEC : ne pas continuer"
-   sudo docker compose run --rm -T admin grant-kind lastfm lastfm.scrobble
-   sudo docker compose run --rm -T admin grant-kind lastfm lastfm.track_info
+   sudo docker compose run --rm -T admin grant-kind lastfm lastfm.scrobble </dev/null
+   sudo docker compose run --rm -T admin grant-kind lastfm lastfm.track_info </dev/null
    read -rs LASTFM_API_KEY   # la clé, sans écho
    read -r LASTFM_USER       # le nom d'utilisateur Last.fm
    (umask 077; printf 'LASTFM_API_KEY=%s\nLASTFM_USER=%s\nCOLLECTOR_TOKEN=%s\n' "$LASTFM_API_KEY" "$LASTFM_USER" "$TOKEN" > secrets/collector.env)
    unset TOKEN LASTFM_API_KEY LASTFM_USER
    ls -l secrets/collector.env   # -rw-------
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select kind from core.source_kinds sk join core.sources s on s.id = sk.source_id where s.name = 'lastfm' and revoked_at is null"   # les deux types
    ```
 
-   Le token n'est gardé que là : s'il se perd, voir l'étape 9 pour le remplacer (`lastfm-2`, reconnu aussi par la page du jour). `create-source` échoue si le nom existe déjà.
+   `</dev/null` : sans lui, `run -T` peut avaler la ligne collée suivante, ce qui a fait sauter un droit au premier déploiement (cause probable). Si un droit manque, le collecteur l'indique par `kind_not_declared` dans ses logs et reprend seul une fois le droit accordé. Le token n'est gardé que là : s'il se perd, voir l'étape 9 pour le remplacer (`lastfm-2`, reconnu aussi par la page du jour). `create-source` échoue si le nom existe déjà.
 
 4. Toujours en root, le nouveau fichier et la nouvelle version :
 

@@ -295,6 +295,18 @@ impl Collector {
                 reason: "body",
                 status: None,
             })?;
+        // Un type non déclaré est une erreur de configuration, pas un défaut de l'enregistrement : rien
+        // n'est mis de côté, et tout repart seul une fois le droit accordé.
+        if body
+            .results
+            .iter()
+            .any(|r| r.reason.as_deref() == Some("kind_not_declared"))
+        {
+            return Err(TickError::Ingest {
+                reason: "kind_not_declared",
+                status: None,
+            });
+        }
         Ok(body.results.iter().map(RecordOutcome::of).collect())
     }
 
@@ -400,7 +412,7 @@ impl Collector {
         Ok(())
     }
 
-    /// Une fiche par titre. Une fiche inconnue de Last.fm ou refusée n'est plus redemandée.
+    /// Une fiche par titre. Une fiche inconnue de Last.fm ou refusée pour elle-même n'est plus redemandée.
     async fn enrich(&mut self, report: &mut TickReport) -> Result<(), TickError> {
         let mut unsaved = 0;
         while let Some((key, name)) = self
@@ -515,9 +527,11 @@ struct IngestResponse {
 #[derive(Deserialize)]
 struct IngestResult {
     status: String,
+    reason: Option<String>,
 }
 
-/// Un rejet est définitif : il est mis de côté, compté par le serveur, et la suite continue.
+/// Un rejet est définitif, sauf type non déclaré (voir `send`) : il est mis de côté, compté par le
+/// serveur, et la suite continue.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RecordOutcome {
     Accepted,

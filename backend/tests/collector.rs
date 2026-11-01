@@ -542,23 +542,31 @@ async fn a_refused_token_is_a_failure_not_a_success() {
     assert_eq!(collector.cursor(), None);
 }
 
+/// Un droit oublié ne perd rien : les fiches attendent, et repartent seules une fois le droit accordé.
 #[tokio::test]
-async fn a_rejected_record_is_set_aside_and_the_cursor_goes_on() {
+async fn a_missing_grant_keeps_the_enrichments_pending_until_it_is_granted() {
     let bench = Bench::new().await;
     admin_revoke_info(&bench).await;
     let mock = Mock::start(one_page).await;
     let mut collector = bench.collector(&mock);
-    let report = collector.tick().await.unwrap();
-    assert_eq!(report.accepted, 2);
-    assert_eq!(report.rejected, 2, "les deux fiches, refusées pour ce type");
-    assert_eq!(collector.pending_enrichments(), 0);
     assert_eq!(
-        bench
-            .db
-            .count("SELECT rejected_count FROM core.sources WHERE name = 'lastfm'")
-            .await,
-        2
+        collector.tick().await.unwrap_err(),
+        TickError::Ingest {
+            reason: "kind_not_declared",
+            status: None
+        }
     );
+    assert_eq!(bench.journal("lastfm.scrobble").await, 2);
+    assert_eq!(bench.journal("lastfm.track_info").await, 0);
+    assert_eq!(collector.pending_enrichments(), 2);
+
+    life_tracker::admin::grant_kind(&bench.db.admin, "lastfm", "lastfm.track_info")
+        .await
+        .unwrap();
+    let report = collector.tick().await.unwrap();
+    assert_eq!((report.enriched, report.rejected), (2, 0));
+    assert_eq!(collector.pending_enrichments(), 0);
+    assert_eq!(bench.journal("lastfm.track_info").await, 2);
 }
 
 async fn admin_revoke_info(bench: &Bench) {
