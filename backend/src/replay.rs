@@ -167,7 +167,7 @@ pub async fn catch_up(
         .filter(|i| behind.iter().any(|kind| kind == i.kind))
         .copied()
         .collect();
-    while engine::pass(pool, &behind, target).await? > 0 {}
+    while engine::pass_batch(pool, &behind, target, engine::WORKER_BATCH).await? > 0 {}
     Ok(())
 }
 

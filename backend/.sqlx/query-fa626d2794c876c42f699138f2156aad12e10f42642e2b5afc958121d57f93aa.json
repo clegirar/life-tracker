@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.details->>'artist' AS artist,\n                  e.details->>'artist_key' AS artist_key,\n                  e.details->>'album' AS album,\n                  e.details->>'album_key' AS album_key,\n                  e.details->>'track' AS \"track!\",\n                  e.details->>'track_key' AS track_key,\n                  COALESCE((e.details->>'played_ms')::numeric / 1000, d.value)::float8 AS seconds\n           FROM derived.live_events e\n           LEFT JOIN LATERAL (\n             SELECT known.value\n             FROM derived.event_items i\n             JOIN derived.live_events known USING (generation, seq, ordinal)\n             WHERE i.generation = e.generation\n               AND i.metric = 'music.track_duration' AND i.level = 'track'\n               AND i.item_key = e.details->>'track_key'\n             ORDER BY i.occurred_at DESC, i.seq DESC\n             LIMIT 1\n           ) d ON true\n           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND e.metric = 'music.listen'\n             AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n             AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n           ORDER BY e.occurred_at, e.seq",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "artist",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "artist_key",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "album",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "album_key",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "track!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "track_key",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "seconds",
+        "type_info": "Float8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "fa626d2794c876c42f699138f2156aad12e10f42642e2b5afc958121d57f93aa"
+}

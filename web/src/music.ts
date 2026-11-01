@@ -51,13 +51,21 @@ export function musicAlert(health: SourcesHealth | null): Alert | null {
 /** Le texte d'une journée sans écoute reçue. */
 export function musicEmptyText(date: string, today: string, health: SourcesHealth | null): string {
   if (!health) return 'Aucune écoute reçue pour ce jour.'
+  const coverage = listenMetric(health)?.coverage ?? []
+  const day = (at: string) => parisDate(Date.parse(at))
+  // Un historique importé couvre sa période, quoi que devienne Last.fm ensuite.
+  const inHistory = coverage.some(
+    (c) => !/^lastfm\b/.test(c.source) && day(c.first_at) <= date && date <= day(c.last_at),
+  )
+  if (inHistory) return date === addDays(today, -1) ? 'Aucune écoute hier.' : 'Aucune écoute ce jour-là.'
   const sources = health.sources.filter(isLastfm)
   if (sources.length === 0) return "Last.fm n'est pas encore relié."
   if (sources.some((source) => source.silent)) {
     return 'Pas de données : Last.fm ne répond plus, cette journée peut être incomplète.'
   }
-  const first = listenMetric(health)?.first_event_at
-  if (!first || date < parisDate(Date.parse(first))) {
+  // Avant Last.fm et hors de tout historique, on ne sait pas : le trou entre deux sources n'est pas un silence.
+  const first = coverage.find((c) => /^lastfm\b/.test(c.source))?.first_at
+  if (!first || date < day(first)) {
     if (date !== today) return 'Pas de données musicales à cette date.'
   }
   if (date === today) return "Aucune écoute aujourd'hui."

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO core.source_precedence (metric, source_id, valid_during)\n         SELECT $1, s.id, tstzrange($3, NULL, '[)') FROM core.sources s WHERE s.name = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4fb0edf3ebafbf2d9d7162ee8b5c7a3c55a4b3b7d2b02040e415310d004ec9f9"
+}

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT m.metric, seen.first_at, seen.last_at,\n                  extract(epoch FROM m.freshness_threshold)::float8 AS \"threshold!\",\n                  COALESCE(now() - seen.last_at > m.freshness_threshold, false) AS \"stale!\"\n           FROM core.metrics m\n           CROSS JOIN LATERAL (\n             SELECT min(e.occurred_at) AS first_at, max(e.occurred_at) AS last_at\n             FROM derived.live_events e WHERE e.metric = m.metric\n           ) seen\n           WHERE m.freshness_threshold IS NOT NULL\n           ORDER BY m.metric",
+  "query": "SELECT m.metric, seen.first_at, seen.last_at,\n                  extract(epoch FROM m.freshness_threshold)::float8 AS \"threshold!\",\n                  COALESCE(now() - seen.last_at > m.freshness_threshold, false) AS \"stale!\"\n           FROM core.metrics m\n           CROSS JOIN LATERAL (\n             SELECT min(e.occurred_at) AS first_at, max(e.occurred_at) AS last_at\n             FROM derived.live_events e\n             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n               AND e.metric = m.metric\n           ) seen\n           WHERE m.freshness_threshold IS NOT NULL\n           ORDER BY m.metric",
   "describe": {
     "columns": [
       {
@@ -50,5 +50,5 @@
       null
     ]
   },
-  "hash": "49c8caa4cd33e6c2b0e1510b04095fa3b2ecb3fc18c4dbdb0ac4c0d295287253"
+  "hash": "caef438ede25d6f240358de647df0265b326bf527e6cd95f27f41873f312559e"
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT seq, source_id, kind, schema_version, occurred_at, utc_offset_minutes, request_id,\n                payload::text AS payload\n         FROM core.records WHERE kind = $1 AND seq > $2 AND seq <= $3 ORDER BY seq LIMIT 1",
+  "query": "SELECT seq, source_id, kind, schema_version, occurred_at, utc_offset_minutes, request_id,\n                payload::text AS payload\n         FROM core.records WHERE kind = $1 AND seq > $2 AND seq <= $3 ORDER BY seq LIMIT $4",
   "describe": {
     "columns": [
       {
@@ -91,6 +91,7 @@
       "Left": [
         "Text",
         "Int8",
+        "Int8",
         "Int8"
       ]
     },
@@ -105,5 +106,5 @@
       null
     ]
   },
-  "hash": "0b0bf0212bb7698e6599d9c21e2897790af620b582d4a5dbede418e6888d9867"
+  "hash": "18d2a7148593d29a8104a34e6ac7c549b31ea318d8c64a7bc562151562a8b475"
 }

@@ -1,6 +1,7 @@
-//! Le moteur d'interprétation : avance dans le journal par type, une transaction par enregistrement.
-//! Les événements, l'erreur éventuelle et le curseur sont validés ensemble : une coupure ne perd
-//! ni ne double rien. Tourne en tracker_app (serve) comme en tracker_admin (rebuild, retry-errors).
+//! Le moteur d'interprétation : avance dans le journal par type, une transaction par lot, et un point
+//! de reprise par enregistrement : chacun écrit tous ses événements ou aucun. Les événements, les
+//! erreurs et le curseur sont validés ensemble : une coupure ne perd ni ne double rien, et repart au
+//! curseur. Tourne en tracker_app (serve) comme en tracker_admin (rebuild, retry-errors).
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Duration;
@@ -13,6 +14,11 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::interpreters::{Interpreter, Output, Record};
+
+/// Le lot du worker et de la reconstruction : gros gain de débit (une seule écriture disque par lot)
+/// sans retarder les autres types de plus que le temps de ce lot, moins d'une seconde sur le NAS
+/// (mesure dans l'architecture).
+pub const WORKER_BATCH: i64 = 100;
 
 /// La génération sur laquelle travailler.
 #[derive(Clone, Copy, Debug)]
@@ -153,8 +159,11 @@ enum Refused {
 impl From<sqlx::Error> for Refused {
     fn from(err: sqlx::Error) -> Self {
         // Données (22) et contraintes (23). Le code seul : le message pourrait citer des valeurs.
+        // 54000 : un nom trop long pour l'index des éléments. Rejouer échouerait pareil, et le prendre
+        // pour une panne bloquerait le worker en boucle. Ce code seul de la classe 54 : les autres
+        // limites disent un défaut de la requête, pas de la sortie.
         match err.as_database_error().and_then(|db| db.code()) {
-            Some(code) if code.starts_with("22") || code.starts_with("23") => {
+            Some(code) if code.starts_with("22") || code.starts_with("23") || code == "54000" => {
                 Self::Permanent(format!("output refused by the database ({code})"))
             }
             _ => Self::Outage(err),
@@ -258,15 +267,17 @@ pub(crate) async fn store_error(
 
 enum Step {
     NoGeneration,
-    Idle,
-    Processed,
+    Processed(usize),
 }
 
-/// Traite le prochain enregistrement de ce type. Le verrou sur le curseur sérialise les workers.
-async fn process_next(
+/// Traite les prochains enregistrements de ce type, `limit` au plus. Le verrou sur le curseur sérialise
+/// les workers. Une panne perd tout le lot, curseur compris : il sera repris en entier. `apply` isole
+/// chaque enregistrement par un point de sauvegarde, et les messages n'en citent jamais le contenu.
+async fn process_batch(
     pool: &PgPool,
     interpreter: &Interpreter,
     target: Target,
+    limit: i64,
 ) -> Result<Step, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let Some(generation) = lock_generation(&mut tx, target).await? else {
@@ -290,58 +301,78 @@ async fn process_next(
         Target::Active => i64::MAX,
         Target::Building { up_to, .. } => up_to,
     };
-    let raw = sqlx::query_as!(
+    let records = sqlx::query_as!(
         RawRecord,
         "SELECT seq, source_id, kind, schema_version, occurred_at, utc_offset_minutes, request_id,
                 payload::text AS payload
-         FROM core.records WHERE kind = $1 AND seq > $2 AND seq <= $3 ORDER BY seq LIMIT 1",
+         FROM core.records WHERE kind = $1 AND seq > $2 AND seq <= $3 ORDER BY seq LIMIT $4",
         interpreter.kind,
         last_seq,
         up_to,
+        limit,
     )
-    .fetch_optional(&mut *tx)
+    .fetch_all(&mut *tx)
     .await?;
-    let Some(raw) = raw else {
+    let Some(last) = records.last().map(|raw| raw.seq) else {
         tx.commit().await?;
-        return Ok(Step::Idle);
+        return Ok(Step::Processed(0));
     };
 
-    let applied = apply(&mut tx, generation, interpreter, &raw).await?;
-    if let Applied::Failed(message) = &applied {
-        store_error(&mut tx, generation, raw.seq, interpreter.version, message).await?;
+    let mut outcomes = Vec::with_capacity(records.len());
+    for raw in &records {
+        let applied = apply(&mut tx, generation, interpreter, raw).await?;
+        if let Applied::Failed(message) = &applied {
+            store_error(&mut tx, generation, raw.seq, interpreter.version, message).await?;
+        }
+        outcomes.push(applied);
     }
     sqlx::query!(
         "UPDATE derived.cursors SET last_seq = $3 WHERE generation = $1 AND kind = $2",
         generation,
         interpreter.kind,
-        raw.seq,
+        last,
     )
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
 
     // Des identifiants seulement. Le message d'erreur reste en base.
-    let (seq, kind, request_id) = (raw.seq, interpreter.kind, raw.request_id);
-    match applied {
-        Applied::Purged => info!(seq, kind, ?request_id, "purged record skipped"),
-        Applied::Written(outputs) => info!(seq, kind, ?request_id, outputs, "record interpreted"),
-        Applied::Failed(_) => warn!(seq, kind, ?request_id, "record in error"),
+    let kind = interpreter.kind;
+    for (raw, applied) in records.iter().zip(outcomes) {
+        let (seq, request_id) = (raw.seq, raw.request_id);
+        match applied {
+            Applied::Purged => info!(seq, kind, ?request_id, "purged record skipped"),
+            Applied::Written(outputs) => {
+                info!(seq, kind, ?request_id, outputs, "record interpreted");
+            }
+            Applied::Failed(_) => warn!(seq, kind, ?request_id, "record in error"),
+        }
     }
-    Ok(Step::Processed)
+    Ok(Step::Processed(records.len()))
 }
 
-/// Un enregistrement au plus par type ; renvoie le nombre de pas utiles. `Target::Active` crée la
-/// génération d'une base neuve ; une génération en construction disparue est une erreur.
+/// Un enregistrement au plus par type ; renvoie le nombre de pas utiles.
 pub async fn pass(
     pool: &PgPool,
     registry: &[Interpreter],
     target: Target,
 ) -> Result<usize, sqlx::Error> {
+    pass_batch(pool, registry, target, 1).await
+}
+
+/// Un lot au plus par type, chacun à son tour : un gros import ne fait attendre un café que le temps
+/// d'un lot. `Target::Active` crée la génération d'une base neuve ; une génération en construction
+/// disparue est une erreur.
+pub async fn pass_batch(
+    pool: &PgPool,
+    registry: &[Interpreter],
+    target: Target,
+    limit: i64,
+) -> Result<usize, sqlx::Error> {
     let mut progress = 0;
     for interpreter in registry {
-        match process_next(pool, interpreter, target).await? {
-            Step::Idle => {}
-            Step::Processed => progress += 1,
+        match process_batch(pool, interpreter, target, limit).await? {
+            Step::Processed(count) => progress += count,
             Step::NoGeneration => match target {
                 Target::Active => {
                     ensure_active(pool, registry).await?;
@@ -369,7 +400,7 @@ pub async fn run(
 ) {
     let mut failures = 0;
     while !*stop.borrow() {
-        let delay = match pass(&pool, registry, Target::Active).await {
+        let delay = match pass_batch(&pool, registry, Target::Active, WORKER_BATCH).await {
             Ok(progress) => {
                 failures = 0;
                 if progress > 0 {

@@ -104,6 +104,12 @@ pub static INTERPRETERS: &[Interpreter] = &[
         schema_version: 1,
         interpret: music_mark_known,
     },
+    Interpreter {
+        kind: "apple.play_history_row",
+        version: 1,
+        schema_version: 1,
+        interpret: apple_play_history_row,
+    },
 ];
 
 /// Un café : un événement à l'heure de l'enveloppe. La charge utile, attendue vide, est ignorée.
@@ -157,6 +163,20 @@ fn lastfm_scrobble(record: &Record) -> Result<Vec<Output>, InterpretError> {
         lastfm_name(scrobble.get("name")).ok_or(InterpretError("lastfm.scrobble: missing name"))?;
     let album = lastfm_name(scrobble.get("album"));
 
+    Ok(vec![Output::Event(attributed_listen(
+        record, artist, album, track, None,
+    ))])
+}
+
+/// Une écoute dont l'artiste est connu, avec ses éléments, sous les mêmes clés quelle que soit la source.
+/// `played_ms` n'apparaît que si la source le donne.
+fn attributed_listen(
+    record: &Record,
+    artist: &str,
+    album: Option<&str>,
+    track: &str,
+    played_ms: Option<i64>,
+) -> Event {
     let artist_key = music::artist_key(artist);
     let track_key = music::track_key(artist, track);
     let album_key = album.map(|album| music::album_key(artist, album));
@@ -177,18 +197,83 @@ fn lastfm_scrobble(record: &Record) -> Result<Vec<Output>, InterpretError> {
         item_key: track_key.clone(),
         display: track.to_owned(),
     });
-    Ok(vec![Output::Event(Event {
-        details: json!({
-            "artist": artist,
-            "album": album,
-            "track": track,
-            "artist_key": artist_key,
-            "album_key": album_key,
-            "track_key": track_key,
-        }),
+    let mut details = json!({
+        "artist": artist,
+        "album": album,
+        "track": track,
+        "artist_key": artist_key,
+        "album_key": album_key,
+        "track_key": track_key,
+    });
+    if let Some(ms) = played_ms {
+        details["played_ms"] = ms.into();
+    }
+    Event {
+        details,
         items,
         ..Event::at_envelope(record, "music.listen")
-    })])
+    }
+}
+
+/// Un titre plus court n'est jamais scrobblé par Last.fm, dont les règles servent de référence.
+const MIN_TRACK_MS: i64 = 30_000;
+/// La moitié du titre, ou 4 minutes s'il est très long.
+const MAX_LISTEN_THRESHOLD_MS: i64 = 240_000;
+
+/// Une écoute au sens de Last.fm : un titre de plus de 30 s, joué jusqu'à la moitié ou jusqu'à 4 min.
+/// La lecture franchit ce point de la piste une fois, quel que soit le nombre de morceaux : après une
+/// pause ou un saut, une seule ligne compte, sans rien savoir des autres. Un saut par-dessus ce point
+/// n'est pas une écoute ; un retour en arrière qui le refranchit en est une seconde (voir l'architecture).
+fn crosses_listen_threshold(start_ms: i64, end_ms: i64, media_ms: i64) -> bool {
+    let threshold = (media_ms / 2).min(MAX_LISTEN_THRESHOLD_MS);
+    media_ms > MIN_TRACK_MS && start_ms < threshold && threshold <= end_ms
+}
+
+/// Une ligne `PLAY_END` de Play Activity, réduite par l'outil d'import à sa liste blanche (`apple.rs`).
+/// Ligne sans artiste attribuable : l'écoute existe, mais aucun élément n'est inventé, donc elle ne
+/// compte ni dans les artistes ou albums, ni dans les découvertes.
+fn apple_play_history_row(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    let row = &record.payload;
+    let number = |field| row.get(field).and_then(Value::as_i64);
+    let text = |field| {
+        row.get(field)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+    };
+    let track = text("song").ok_or(InterpretError("apple.play_history_row: missing song"))?;
+    let played = number("play_duration_ms").ok_or(InterpretError(
+        "apple.play_history_row: missing play_duration_ms",
+    ))?;
+    let (Some(start), Some(end), Some(media)) = (
+        number("start_position_ms"),
+        number("end_position_ms"),
+        number("media_duration_ms"),
+    ) else {
+        return Ok(Vec::new());
+    };
+    if played <= 0 || !crosses_listen_threshold(start, end, media) {
+        return Ok(Vec::new());
+    }
+    // Une ligne peut annoncer des heures pour un titre de trois minutes : jamais plus que le titre.
+    let played = played.min(media);
+    let album = text("album");
+    let event = match text("artist") {
+        Some(artist) => attributed_listen(record, artist, album, track, Some(played)),
+        None => Event {
+            details: json!({
+                "artist": null,
+                "album": album,
+                "track": track,
+                "artist_key": null,
+                "album_key": null,
+                "track_key": null,
+                "played_ms": played,
+            }),
+            ..Event::at_envelope(record, "music.listen")
+        },
+    };
+    Ok(vec![Output::Event(event)])
 }
 
 /// Une durée Last.fm en millisecondes, en texte ou en nombre. Zéro ou illisible : pas de durée.
@@ -489,5 +574,96 @@ mod tests {
             let failure = music_mark_known(&record(payload)).unwrap_err();
             assert!(failure.0.starts_with("music.mark_known: invalid "));
         }
+    }
+
+    fn apple_row(start: i64, end: i64, media: i64, played: i64) -> Value {
+        json!({"song": "Titre fictif", "album": "Album fictif", "artist": "Artiste Fictif",
+               "artist_source": "library_album", "play_duration_ms": played,
+               "media_duration_ms": media, "start_position_ms": start, "end_position_ms": end})
+    }
+
+    #[test]
+    fn a_listen_crosses_half_the_track_or_four_minutes_once() {
+        let listen = |start, end, media, played| {
+            let outputs = apple_play_history_row(&record(apple_row(start, end, media, played)));
+            !outputs.unwrap().is_empty()
+        };
+        for (case, expected, start, end, media) in [
+            ("en entier", true, 0, 200_000, 200_000),
+            ("jusqu'à la moitié", true, 0, 100_000, 200_000),
+            ("juste avant la moitié", false, 0, 99_999, 200_000),
+            ("4 min d'un titre de 20", true, 0, 240_000, 1_200_000),
+            ("3 min d'un titre de 20", false, 0, 180_000, 1_200_000),
+            ("reprise qui franchit", true, 80_000, 150_000, 200_000),
+            ("reprise après le seuil", false, 100_000, 200_000, 200_000),
+            ("saut par-dessus le seuil", false, 150_000, 200_000, 200_000),
+            ("titre de 30 s", false, 0, 30_000, 30_000),
+            ("titre de 31 s", true, 0, 31_000, 31_000),
+        ] {
+            let played = end - start;
+            assert_eq!(listen(start, end, media, played), expected, "{case}");
+        }
+        assert!(!listen(0, 200_000, 200_000, 0), "aucune lecture");
+        assert!(!listen(0, 200_000, 200_000, -5), "durée négative");
+    }
+
+    #[test]
+    fn pause_and_resume_count_once_and_a_replay_counts_again() {
+        let segments = [(0, 60_000), (60_000, 120_000), (120_000, 200_000)];
+        let listens = segments
+            .iter()
+            .filter(|(s, e)| {
+                !apple_play_history_row(&record(apple_row(*s, *e, 200_000, e - s)))
+                    .unwrap()
+                    .is_empty()
+            })
+            .count();
+        assert_eq!(listens, 1);
+    }
+
+    #[test]
+    fn an_apple_listen_has_the_keys_of_a_scrobble_and_a_bounded_duration() {
+        let event = single_event(
+            apple_play_history_row(&record(apple_row(0, 200_000, 200_000, 170_000_000))).unwrap(),
+        );
+        assert_eq!(event.metric, "music.listen");
+        assert_eq!(event.details["played_ms"], 200_000);
+        let scrobble = record(json!({"artist": {"#text": "ARTISTE FICTIF"},
+            "name": "Titre fictif (Live)", "album": {"#text": "Album fictif"}}));
+        let from_lastfm = single_event(lastfm_scrobble(&scrobble).unwrap());
+        assert_eq!(event.details["track_key"], from_lastfm.details["track_key"]);
+        assert_eq!(event.details["album_key"], from_lastfm.details["album_key"]);
+        assert_eq!(from_lastfm.details.get("played_ms"), None);
+    }
+
+    #[test]
+    fn a_listen_without_artist_is_kept_with_no_item_to_invent() {
+        for artist in [json!(null), json!(""), json!("  ")] {
+            let mut payload = apple_row(0, 200_000, 200_000, 200_000);
+            payload["artist"] = artist;
+            let event = single_event(apple_play_history_row(&record(payload)).unwrap());
+            assert_eq!(event.details["artist"], Value::Null);
+            assert_eq!(event.details["track"], "Titre fictif");
+            assert_eq!(event.details["track_key"], Value::Null);
+            assert_eq!(event.details["played_ms"], 200_000);
+            assert!(event.items.is_empty());
+        }
+    }
+
+    #[test]
+    fn an_unusable_apple_row_is_an_error_that_cites_nothing() {
+        for payload in [
+            json!({}),
+            json!(null),
+            json!({"song": "T"}),
+            json!({"play_duration_ms": 3}),
+        ] {
+            assert!(apple_play_history_row(&record(payload)).is_err());
+        }
+        let without_positions = json!({"song": "T", "play_duration_ms": 3});
+        assert_eq!(
+            apple_play_history_row(&record(without_positions)).unwrap(),
+            vec![]
+        );
     }
 }

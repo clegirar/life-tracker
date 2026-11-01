@@ -247,7 +247,7 @@ async fn an_empty_day_and_a_day_without_any_duration() {
     let empty = app.music("2026-10-10").await;
     assert_eq!(
         empty,
-        json!({"date": "2026-10-10", "listens": 0, "minutes": null, "listens_without_duration": 0,
+        json!({"date": "2026-10-10", "listens": 0, "minutes": null, "listens_without_duration": 0, "listens_without_artist": 0,
                "artist_of_day": null, "tracks": [], "artists": [], "albums": [],
                "discoveries": 0, "first_listens": []})
     );

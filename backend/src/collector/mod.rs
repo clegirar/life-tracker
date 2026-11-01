@@ -9,26 +9,23 @@ pub mod lastfm;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Once;
 use std::time::Duration;
 
 use anyhow::Context;
 use chrono::{DateTime, SecondsFormat, Utc};
-use reqwest::Client;
-use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::watch;
 use tracing::{error, info, warn};
 
+pub use crate::ingest_client::install_tls;
+use crate::ingest_client::{IngestClient, IngestFailure, RecordOutcome, http_client};
 use crate::interpreters::lastfm_name;
 use crate::music;
-use lastfm::{Lastfm, RecentPage, ServiceError, network_reason};
+use lastfm::{Lastfm, RecentPage, ServiceError};
 
 const STATE_FILE: &str = "state.json";
-const TIMEOUT: Duration = Duration::from_secs(30);
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Chaque passage relit ces 48 h : le scrobbler rattrape en retard, avec des dates passées (voir
 /// l'architecture). Il en analyse l'historique deux fois par jour. Le dédoublonnage fait le reste.
 const OVERLAP_SECONDS: i64 = 48 * 3600;
@@ -63,6 +60,15 @@ pub enum TickError {
     State,
 }
 
+impl From<IngestFailure> for TickError {
+    fn from(failure: IngestFailure) -> Self {
+        Self::Ingest {
+            reason: failure.reason,
+            status: failure.status,
+        }
+    }
+}
+
 impl From<ServiceError> for TickError {
     fn from(err: ServiceError) -> Self {
         Self::Service(err)
@@ -95,15 +101,6 @@ struct State {
     enriched: BTreeSet<String>,
     /// Ceux dont elle reste à demander : un écart de plus de 48 h ne les ferait pas revenir.
     pending: BTreeMap<String, TrackName>,
-}
-
-/// reqwest sans fournisseur de cryptographie imposé : c'est `ring`, installé une fois par processus.
-pub fn install_tls() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        // Une erreur dirait qu'un fournisseur est déjà en place : il convient aussi.
-        let _ = rustls::crypto::ring::default_provider().install_default();
-    });
 }
 
 fn sha256_hex(text: &str) -> String {
@@ -216,7 +213,7 @@ fn log_failure(error: &TickError, failures: u32) {
 pub struct Collector {
     config: Config,
     lastfm: Lastfm,
-    http: Client,
+    ingest: IngestClient,
     state: State,
     /// Déjà accusés depuis le démarrage : les relire à chaque passage serait sans effet, sauf du
     /// travail pour la base. Limité aux clés de la dernière fenêtre.
@@ -225,16 +222,7 @@ pub struct Collector {
 
 impl Collector {
     pub fn new(config: Config) -> anyhow::Result<Self> {
-        install_tls();
-        let http = Client::builder()
-            .user_agent(concat!("life-tracker/", env!("CARGO_PKG_VERSION")))
-            .timeout(TIMEOUT)
-            .connect_timeout(CONNECT_TIMEOUT)
-            // Une redirection emporterait la clé d'API ailleurs ; aucun proxy implicite non plus.
-            .redirect(Policy::none())
-            .no_proxy()
-            .build()
-            .map_err(|_| anyhow::anyhow!("client HTTP impossible à construire"))?;
+        let http = http_client()?;
         let state = load_state(&config.state_dir)?;
         let lastfm = Lastfm {
             http: http.clone(),
@@ -242,10 +230,16 @@ impl Collector {
             api_key: config.api_key.clone(),
             user: config.user.clone(),
         };
+        let ingest = IngestClient::new(
+            http,
+            &config.ingest_url,
+            &config.token,
+            concat!("collector-", env!("CARGO_PKG_VERSION")),
+        );
         Ok(Self {
             config,
             lastfm,
-            http,
+            ingest,
             state,
             acknowledged: HashSet::new(),
         })
@@ -259,74 +253,13 @@ impl Collector {
         self.state.pending.len()
     }
 
-    fn post(&self, path: &str) -> reqwest::RequestBuilder {
-        self.http
-            .post(format!("{}{path}", self.config.ingest_url))
-            .bearer_auth(&self.config.token)
-            .header(
-                "X-Client-Version",
-                concat!("collector-", env!("CARGO_PKG_VERSION")),
-            )
-    }
-
-    /// Le résultat de chaque enregistrement. Toute autre réponse qu'un 200 complet laisse le lot à
-    /// renvoyer entier : l'idempotence garantit qu'aucun doublon n'en résulte.
     async fn send(&self, records: &[Value]) -> Result<Vec<RecordOutcome>, TickError> {
-        let response = self
-            .post("/v1/records")
-            .json(&json!({ "records": records }))
-            .send()
-            .await
-            .map_err(|err| TickError::Ingest {
-                reason: network_reason(&err),
-                status: None,
-            })?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(TickError::Ingest {
-                reason: "status",
-                status: Some(status.as_u16()),
-            });
-        }
-        let body: Option<IngestResponse> = response.json().await.ok();
-        let body = body
-            .filter(|body| body.results.len() == records.len())
-            .ok_or(TickError::Ingest {
-                reason: "body",
-                status: None,
-            })?;
-        // Un type non déclaré est une erreur de configuration, pas un défaut de l'enregistrement : rien
-        // n'est mis de côté, et tout repart seul une fois le droit accordé.
-        if body
-            .results
-            .iter()
-            .any(|r| r.reason.as_deref() == Some("kind_not_declared"))
-        {
-            return Err(TickError::Ingest {
-                reason: "kind_not_declared",
-                status: None,
-            });
-        }
-        Ok(body.results.iter().map(RecordOutcome::of).collect())
+        let results = self.ingest.send(records).await?;
+        Ok(results.iter().map(RecordOutcome::of).collect())
     }
 
     async fn heartbeat(&self) -> Result<(), TickError> {
-        let response =
-            self.post("/v1/heartbeat")
-                .send()
-                .await
-                .map_err(|err| TickError::Ingest {
-                    reason: network_reason(&err),
-                    status: None,
-                })?;
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            Err(TickError::Ingest {
-                reason: "status",
-                status: Some(response.status().as_u16()),
-            })
-        }
+        Ok(self.ingest.heartbeat().await?)
     }
 
     /// Envoie une page puis note le curseur : une coupure après l'accusé n'envoie rien en double,
@@ -515,36 +448,6 @@ impl TickReport {
                 self.rejected += 1;
                 warn!("listen rejected, set aside");
             }
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct IngestResponse {
-    results: Vec<IngestResult>,
-}
-
-#[derive(Deserialize)]
-struct IngestResult {
-    status: String,
-    reason: Option<String>,
-}
-
-/// Un rejet est définitif, sauf type non déclaré (voir `send`) : il est mis de côté, compté par le
-/// serveur, et la suite continue.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RecordOutcome {
-    Accepted,
-    Duplicate,
-    Rejected,
-}
-
-impl RecordOutcome {
-    fn of(result: &IngestResult) -> Self {
-        match result.status.as_str() {
-            "accepted" => Self::Accepted,
-            "duplicate" => Self::Duplicate,
-            _ => Self::Rejected,
         }
     }
 }

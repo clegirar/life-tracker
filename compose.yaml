@@ -137,6 +137,27 @@ services:
     security_opt: ["no-new-privileges:true"]
     logging: *logging
 
+  # À la main, une fois : docs/deploiement.md. L'archive en lecture seule, le token sur l'entrée standard.
+  # Sur `collect` seulement : ni la base, ni Internet.
+  apple-import:
+    profiles: [import]
+    image: ${TRACKER_IMAGE_PREFIX:?}/backend:${TRACKER_TAG:?}
+    entrypoint: ["life-tracker", "import-apple"]
+    restart: "no"
+    environment:
+      INGEST_URL: http://backend:8080
+      APPLE_ARCHIVE_DIR: /archive
+    depends_on:
+      - backend
+    networks: [collect]
+    volumes:
+      - ./imports/apple:/archive:ro
+    mem_limit: 128m
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+
 networks:
   # La base et ceux qui ont un rôle : ni sortie, ni web.
   data:

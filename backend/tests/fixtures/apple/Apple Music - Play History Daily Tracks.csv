@@ -1,0 +1,4 @@
+Country,Track Identifier,Media type,Date Played,Hours,Play Duration Milliseconds,End Reason Type,Source Type,Play Count,Skip Count,Ignore For Recommendations,Track Reference,Track Description
+FR,1,AUDIO,20230302,"9, 10",200000,NATURAL_END_OF_TRACK,ORIGINATING_DEVICE,1,0,,1,Groupe Quotidien - Titre du jour
+FR,2,AUDIO,20230303,8,200000,NATURAL_END_OF_TRACK,ORIGINATING_DEVICE,1,0,,2,Groupe Un - Titre ambigu
+FR,3,AUDIO,20230303,8,200000,NATURAL_END_OF_TRACK,ORIGINATING_DEVICE,1,0,,3,Groupe Deux - Titre ambigu

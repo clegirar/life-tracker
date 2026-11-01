@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM core.source_precedence WHERE metric = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "32527ba818dfc272091592cf09097ee0ae9c2e7f14b956b1b834001a6d4168e3"
+}

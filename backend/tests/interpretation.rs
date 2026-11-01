@@ -3,7 +3,7 @@
 
 mod common;
 use common::*;
-use life_tracker::engine::{self, Target, backoff, ensure_active, pass};
+use life_tracker::engine::{self, Target, backoff, ensure_active, pass, pass_batch};
 use life_tracker::interpreters::{
     Event, INTERPRETERS, InterpretError, Interpreter, Item, Output, Record,
 };
@@ -345,6 +345,70 @@ async fn a_failure_before_commit_leaves_no_partial_output() {
     assert!(errors(&db).await.is_empty());
 }
 
+/// Le lot du worker : tout ou rien par enregistrement, et une panne reprend tout le lot au curseur.
+#[tokio::test]
+async fn a_batch_isolates_each_record_and_a_failure_restarts_from_the_cursor() {
+    let db = TestDb::new().await;
+    let (source, _) = db.source("ios", KINDS).await;
+    let mut seqs = Vec::new();
+    for key in ["a", "b", "c", "d"] {
+        seqs.push(db.insert(source, "coffee.cup", key, json!({})).await);
+    }
+    let bad = db
+        .insert(source, "record.cancel", "x", json!({"s": SENTINEL}))
+        .await;
+    let last = seqs[3];
+    TestDb::exec(
+        &db.owner,
+        &format!(
+            "CREATE FUNCTION derived.inject() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION 'injected' USING ERRCODE = '57P03'; END $$;
+         CREATE TRIGGER inject BEFORE UPDATE ON derived.cursors FOR EACH ROW
+           WHEN (NEW.last_seq = {last}) EXECUTE FUNCTION derived.inject();"
+        ),
+    )
+    .await;
+    ensure_active(&db.app, INTERPRETERS).await.unwrap();
+    assert!(
+        pass_batch(&db.app, INTERPRETERS, Target::Active, 100)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        db.count("SELECT count(*) FROM derived.cursors WHERE last_seq > 0")
+            .await,
+        0,
+        "le curseur n'a pas bougé"
+    );
+    assert_eq!(db.count("SELECT count(*) FROM derived.events").await, 0);
+
+    sqlx::query("DROP TRIGGER inject ON derived.cursors")
+        .execute(&db.owner)
+        .await
+        .unwrap();
+    assert!(
+        pass_batch(&db.app, INTERPRETERS, Target::Active, 3)
+            .await
+            .unwrap()
+            >= 3
+    );
+    assert_eq!(
+        live_seqs(&db).await,
+        seqs[..3],
+        "la limite du lot est tenue"
+    );
+    while pass_batch(&db.app, INTERPRETERS, Target::Active, 3)
+        .await
+        .unwrap()
+        > 0
+    {}
+    assert_eq!(live_seqs(&db).await, seqs);
+    assert_eq!(cursor(&db, "coffee.cup").await, last);
+    let stored = errors(&db).await;
+    assert_eq!(stored.len(), 1, "l'erreur n'arrête pas le reste");
+    assert_eq!(stored[0].0, bad);
+}
+
 fn test_interpreter(interpret: fn(&Record) -> Result<Vec<Output>, InterpretError>) -> Interpreter {
     Interpreter {
         kind: "lastfm.track_info",
@@ -530,7 +594,7 @@ async fn concurrent_starters_establish_one_active_generation() {
     assert_eq!(
         serde_json::from_str::<Value>(&versions).unwrap(),
         json!({"coffee.cup": 1, "record.cancel": 1, "lastfm.scrobble": 1, "lastfm.track_info": 1,
-               "music.mark_known": 1})
+               "music.mark_known": 1, "apple.play_history_row": 1})
     );
 }
 

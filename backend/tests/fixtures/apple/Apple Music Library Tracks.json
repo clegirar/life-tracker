@@ -1,0 +1,6 @@
+[
+  {"Title": "Titre fictif", "Artist": "Artiste Fictif", "Album": "Album fictif", "Album Artist": "Artiste Fictif", "Track Duration": 200000, "Apple Music Track Identifier": 1},
+  {"Title": "Titre repris", "Artist": "ARTISTE FICTIF feat. Invité", "Album": "Album fictif", "Track Duration": 200000},
+  {"Title": "Ignoré sans artiste", "Album": "Album fictif"},
+  {"Title": 3, "Artist": "Type inattendu"}
+]

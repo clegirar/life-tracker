@@ -169,10 +169,12 @@ test('un serveur en retard ne contredit pas l’écran, et l’attente se dit', 
   // Le worker ne suit pas : le serveur continue de répondre « aucun café ».
   await page.route('**/v1/days/**', (route) => route.fulfill({ json: { date: today, count: 0, cups: [] } }))
   await add(page).click()
-  await expect(page.getByRole('status')).toContainText("C'est bien enregistré", { timeout: 20_000 })
+  // Le texte précis : l'alerte de la musique, selon les écoutes déjà reçues, porte le même rôle.
+  const waiting = page.getByRole('status').filter({ hasText: "C'est bien enregistré" })
+  await expect(waiting).toBeVisible({ timeout: 20_000 })
   await expect(count(page)).toHaveText('1')
   await page.unroute('**/v1/days/**')
-  await expect(page.getByRole('status')).toHaveCount(0, { timeout: 10_000 })
+  await expect(waiting).toHaveCount(0, { timeout: 10_000 })
   await expect(count(page)).toHaveText('1')
 })
 

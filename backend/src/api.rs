@@ -25,6 +25,7 @@ use uuid::Uuid;
 use crate::admin::{generate_token, token_hash};
 use crate::auth;
 use crate::ingest::{Envelope, RejectReason, Rejection, parse_envelope};
+use crate::music::fold;
 
 pub const MAX_RECORDS: usize = 500;
 pub const MAX_BODY_BYTES: usize = 1_000_000;
@@ -583,6 +584,8 @@ fn parse_day(value: &str) -> Option<NaiveDate> {
 }
 
 /// La vue choisit les événements ; le journal et le registre ne donnent que leur clé et leur source.
+/// Le fuseau en sous-requête et non en jointure : `core.settings`, jamais analysée, passe pour 1 250
+/// lignes, et le plan parcourrait alors tout le journal à chaque lecture (voir l'architecture).
 /// Le numéro de génération, redondant avec la vue, est ce qui ouvre l'index : sans lui, toute lecture
 /// d'un jour parcourt tous les événements (6 s pour 300 écoutes sur 60 000, voir l'architecture).
 /// Le jour demandé devient un intervalle UTC : minuit à minuit, 23 ou 25 heures au changement d'heure.
@@ -592,18 +595,17 @@ async fn get_day(
 ) -> Result<Json<DayResponse>, ApiError> {
     let date = parse_day(&date).ok_or(ApiError::InvalidDate)?;
     let cups = sqlx::query!(
-        r#"SELECT to_char(e.occurred_at AT TIME ZONE s.timezone, 'HH24:MI') AS "time!",
+        r#"SELECT to_char(e.occurred_at AT TIME ZONE (SELECT timezone FROM core.settings), 'HH24:MI') AS "time!",
                   e.occurred_at AS "occurred_at!",
                   src.name AS source,
                   r.key
            FROM derived.live_events e
            JOIN core.records r ON r.seq = e.seq
            JOIN core.sources src ON src.id = e.source_id
-           CROSS JOIN core.settings s
            WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
              AND e.metric = 'coffee'
-             AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE s.timezone)
-             AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE s.timezone)
+             AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+             AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
            ORDER BY e.occurred_at, e.seq"#,
         date,
     )
@@ -628,7 +630,8 @@ async fn get_day(
 #[derive(Serialize)]
 struct MusicTrack {
     name: String,
-    artist: String,
+    /// `null` : l'export Apple ne permet pas de dire de qui est ce titre, et rien n'est inventé.
+    artist: Option<String>,
     listens: i64,
 }
 
@@ -680,6 +683,8 @@ struct DayMusic {
     minutes: Option<i64>,
     /// Écoutes sans durée connue : le temps affiché les ignore, et cela doit se voir.
     listens_without_duration: usize,
+    /// Écoutes sans artiste attribuable : absentes des artistes, des albums et des découvertes.
+    listens_without_artist: usize,
     artist_of_day: Option<ArtistOfDay>,
     tracks: Vec<MusicTrack>,
     artists: Vec<MusicArtist>,
@@ -701,14 +706,13 @@ async fn first_listens(pool: &PgPool, date: NaiveDate) -> Result<Vec<FirstListen
                     e.generation, i.level, i.item_key, i.display,
                     e.details->>'artist' AS artist,
                     min(e.occurred_at) OVER (PARTITION BY i.level, i.item_key) AS first_at,
-                    ($1::date::timestamp AT TIME ZONE s.timezone) AS day_start
+                    ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings)) AS day_start
              FROM derived.live_events e
-             CROSS JOIN core.settings s
-             JOIN derived.event_items i USING (generation, seq, ordinal)
+               JOIN derived.event_items i USING (generation, seq, ordinal)
              WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
                AND e.metric = 'music.listen'
-               AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE s.timezone)
-               AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE s.timezone)
+               AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+               AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
              ORDER BY i.level, i.item_key, e.occurred_at DESC, e.seq DESC
            )
            SELECT l.level, l.item_key, l.display AS name, l.artist AS "artist!",
@@ -759,7 +763,7 @@ async fn first_listens(pool: &PgPool, date: NaiveDate) -> Result<Vec<FirstListen
 /// le nom gardé est le dernier vu, car une même clé peut couvrir plusieurs orthographes.
 struct Tally {
     name: String,
-    artist: String,
+    artist: Option<String>,
     listens: i64,
     tracks: HashSet<String>,
 }
@@ -768,16 +772,16 @@ fn tally<'a>(
     lists: &'a mut HashMap<String, Tally>,
     key: String,
     name: &str,
-    artist: &str,
+    artist: Option<&str>,
 ) -> &'a mut Tally {
     let entry = lists.entry(key).or_insert_with(|| Tally {
         name: String::new(),
-        artist: String::new(),
+        artist: None,
         listens: 0,
         tracks: HashSet::new(),
     });
     entry.name = name.to_owned();
-    entry.artist = artist.to_owned();
+    entry.artist = artist.map(str::to_owned);
     entry.listens += 1;
     entry
 }
@@ -802,15 +806,14 @@ async fn get_day_music(
 ) -> Result<Json<DayMusic>, ApiError> {
     let date = parse_day(&date).ok_or(ApiError::InvalidDate)?;
     let rows = sqlx::query!(
-        r#"SELECT e.details->>'artist' AS "artist!",
-                  e.details->>'artist_key' AS "artist_key!",
+        r#"SELECT e.details->>'artist' AS artist,
+                  e.details->>'artist_key' AS artist_key,
                   e.details->>'album' AS album,
                   e.details->>'album_key' AS album_key,
                   e.details->>'track' AS "track!",
-                  e.details->>'track_key' AS "track_key!",
+                  e.details->>'track_key' AS track_key,
                   COALESCE((e.details->>'played_ms')::numeric / 1000, d.value)::float8 AS seconds
            FROM derived.live_events e
-           CROSS JOIN core.settings s
            LEFT JOIN LATERAL (
              SELECT known.value
              FROM derived.event_items i
@@ -823,8 +826,8 @@ async fn get_day_music(
            ) d ON true
            WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
              AND e.metric = 'music.listen'
-             AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE s.timezone)
-             AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE s.timezone)
+             AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+             AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
            ORDER BY e.occurred_at, e.seq"#,
         date,
     )
@@ -835,14 +838,24 @@ async fn get_day_music(
     let listens = rows.len();
     let known: Vec<f64> = rows.iter().filter_map(|row| row.seconds).collect();
     let minutes = (!known.is_empty()).then(|| (known.iter().sum::<f64>() / 60.0).round() as i64);
+    let listens_without_artist = rows.iter().filter(|row| row.artist.is_none()).count();
     let (mut tracks, mut artists, mut albums) = (HashMap::new(), HashMap::new(), HashMap::new());
     for row in rows {
-        tally(&mut tracks, row.track_key.clone(), &row.track, &row.artist);
-        tally(&mut artists, row.artist_key, &row.artist, &row.artist)
-            .tracks
-            .insert(row.track_key);
-        if let (Some(key), Some(album)) = (row.album_key, row.album) {
-            tally(&mut albums, key, &album, &row.artist);
+        let artist = row.artist.as_deref();
+        // Sans artiste, pas de clé : le même nom se regroupe, sans se mêler à un titre attribué.
+        let track_key = row
+            .track_key
+            .clone()
+            .unwrap_or_else(|| format!("\u{0}{}", fold(&row.track)));
+        tally(&mut tracks, track_key, &row.track, artist);
+        let Some(artist) = artist else { continue };
+        if let (Some(key), Some(track_key)) = (row.artist_key, row.track_key) {
+            tally(&mut artists, key, artist, Some(artist))
+                .tracks
+                .insert(track_key);
+        }
+        if let (Some(key), Some(album)) = (row.album_key, row.album.as_deref()) {
+            tally(&mut albums, key, album, Some(artist));
         }
     }
     let artists: Vec<MusicArtist> = ranked(artists)
@@ -858,6 +871,7 @@ async fn get_day_music(
         listens,
         minutes,
         listens_without_duration: listens - known.len(),
+        listens_without_artist,
         artist_of_day: artists.first().map(|a| ArtistOfDay {
             name: a.name.clone(),
             listens: a.listens,
@@ -875,7 +889,7 @@ async fn get_day_music(
             .into_iter()
             .map(|t| MusicAlbum {
                 name: t.name,
-                artist: t.artist,
+                artist: t.artist.unwrap_or_default(),
                 listens: t.listens,
             })
             .collect(),
@@ -903,6 +917,16 @@ struct MetricHealth {
     freshness_threshold_seconds: f64,
     /// Aucune nouvelle donnée depuis le seuil : à vérifier, pas une erreur.
     stale: bool,
+    /// Ce que chaque source couvre : un jour entre deux couvertures n'a pas de données, ce n'est pas
+    /// un jour sans activité.
+    coverage: Vec<SourceCoverage>,
+}
+
+#[derive(Serialize)]
+struct SourceCoverage {
+    source: String,
+    first_at: DateTime<Utc>,
+    last_at: DateTime<Utc>,
 }
 
 #[derive(Serialize)]
@@ -934,10 +958,27 @@ async fn get_sources_health(
            FROM core.metrics m
            CROSS JOIN LATERAL (
              SELECT min(e.occurred_at) AS first_at, max(e.occurred_at) AS last_at
-             FROM derived.live_events e WHERE e.metric = m.metric
+             FROM derived.live_events e
+             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+               AND e.metric = m.metric
            ) seen
            WHERE m.freshness_threshold IS NOT NULL
            ORDER BY m.metric"#,
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    // La vue, donc ce que la lecture montre vraiment : une source qui ne fait plus foi s'arrête là où
+    // la suivante commence, sans faux trou.
+    let coverage = sqlx::query!(
+        r#"SELECT e.metric AS "metric!", src.name AS source,
+                  min(e.occurred_at) AS "first_at!", max(e.occurred_at) AS "last_at!"
+           FROM derived.live_events e
+           JOIN core.sources src ON src.id = e.source_id
+           JOIN core.metrics m ON m.metric = e.metric
+           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+             AND m.freshness_threshold IS NOT NULL
+           GROUP BY e.metric, src.name
+           ORDER BY 3"#,
     )
     .fetch_all(&state.pool)
     .await?;
@@ -954,11 +995,20 @@ async fn get_sources_health(
         metrics: metrics
             .into_iter()
             .map(|m| MetricHealth {
-                metric: m.metric,
                 first_event_at: m.first_at,
                 last_event_at: m.last_at,
                 freshness_threshold_seconds: m.threshold,
                 stale: m.stale,
+                coverage: coverage
+                    .iter()
+                    .filter(|c| c.metric == m.metric)
+                    .map(|c| SourceCoverage {
+                        source: c.source.clone(),
+                        first_at: c.first_at,
+                        last_at: c.last_at,
+                    })
+                    .collect(),
+                metric: m.metric,
             })
             .collect(),
     }))

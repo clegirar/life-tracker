@@ -1,10 +1,12 @@
 pub mod admin;
 pub mod api;
+pub mod apple;
 pub mod auth;
 pub mod collector;
 pub mod db;
 pub mod engine;
 pub mod ingest;
+pub mod ingest_client;
 pub mod interpreters;
 pub mod music;
 pub mod replay;

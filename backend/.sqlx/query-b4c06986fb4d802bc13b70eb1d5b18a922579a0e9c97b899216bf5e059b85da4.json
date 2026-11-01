@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT to_char(e.occurred_at AT TIME ZONE s.timezone, 'HH24:MI') AS \"time!\",\n                  e.occurred_at AS \"occurred_at!\",\n                  src.name AS source,\n                  r.key\n           FROM derived.live_events e\n           JOIN core.records r ON r.seq = e.seq\n           JOIN core.sources src ON src.id = e.source_id\n           CROSS JOIN core.settings s\n           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND e.metric = 'coffee'\n             AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE s.timezone)\n             AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE s.timezone)\n           ORDER BY e.occurred_at, e.seq",
+  "query": "SELECT to_char(e.occurred_at AT TIME ZONE (SELECT timezone FROM core.settings), 'HH24:MI') AS \"time!\",\n                  e.occurred_at AS \"occurred_at!\",\n                  src.name AS source,\n                  r.key\n           FROM derived.live_events e\n           JOIN core.records r ON r.seq = e.seq\n           JOIN core.sources src ON src.id = e.source_id\n           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND e.metric = 'coffee'\n             AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n             AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n           ORDER BY e.occurred_at, e.seq",
   "describe": {
     "columns": [
       {
@@ -55,5 +55,5 @@
       false
     ]
   },
-  "hash": "ecdbf050bf57b08e5a24e6a2bac2871c9cb18988095da2bb4c4a502bce63c263"
+  "hash": "b4c06986fb4d802bc13b70eb1d5b18a922579a0e9c97b899216bf5e059b85da4"
 }

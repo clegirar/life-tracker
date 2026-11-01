@@ -1,6 +1,7 @@
 //! Outil d'administration : tourne en tracker_admin, jamais dans le serveur.
 
 use anyhow::{Result, bail};
+use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
@@ -8,6 +9,9 @@ use crate::auth;
 
 /// En dessous, le mot de passe protège mal : le compte n'a pas de limite de tentatives pendant le POC.
 const MIN_PASSWORD_CHARS: usize = 12;
+/// Une première écoute séparée de la suivante par plus que cela n'est pas un démarrage : c'est une date
+/// ancienne, un test ou un import, et elle ne doit pas donner la priorité sur tout ce qui la suit.
+const MAX_START_GAP_DAYS: i64 = 7;
 
 /// SHA-256 du token, tel que stocké dans core.sources.token_hash.
 pub fn token_hash(token: &str) -> Vec<u8> {
@@ -119,4 +123,95 @@ pub async fn set_password(pool: &PgPool, username: &str, password: &str) -> Resu
         .await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// Ce qu'une source a produit pour une métrique, et que rien n'a jamais masqué : toute la génération
+/// active, y compris ce qu'une priorité écarte. Des nombres et des dates, jamais de contenu.
+#[derive(Debug, PartialEq)]
+pub struct SourceCoverage {
+    pub source: String,
+    pub events: i64,
+    pub first_at: DateTime<Utc>,
+    pub last_at: DateTime<Utc>,
+    /// La deuxième donnée : un grand écart avec la première dit que celle-ci est isolée.
+    pub second_at: Option<DateTime<Utc>>,
+}
+
+pub async fn coverage(pool: &PgPool, metric: &str) -> Result<Vec<SourceCoverage>> {
+    let rows = sqlx::query!(
+        r#"SELECT src.name AS source, count(*) AS "events!",
+                  min(e.occurred_at) AS "first_at!", max(e.occurred_at) AS "last_at!",
+                  (array_agg(e.occurred_at ORDER BY e.occurred_at))[2] AS second_at
+           FROM derived.events e
+           JOIN derived.generations g ON g.id = e.generation AND g.state = 'active'
+           JOIN core.sources src ON src.id = e.source_id
+           WHERE e.metric = $1
+           GROUP BY src.name
+           ORDER BY min(e.occurred_at)"#,
+        metric,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| SourceCoverage {
+            source: row.source,
+            events: row.events,
+            first_at: row.first_at,
+            last_at: row.last_at,
+            second_at: row.second_at,
+        })
+        .collect())
+}
+
+/// `source` fait foi pour `metric` à partir de `from` (voir la réconciliation dans l'architecture). Sans
+/// date, sa première donnée : refusé si cette donnée est isolée, car elle ferait disparaître tout ce
+/// qu'une autre source sait de la période. Remplace la priorité déclarée pour cette métrique, sans
+/// toucher au journal ni aux événements : les vues suivent à la prochaine lecture. Renvoie la date.
+pub async fn set_precedence(
+    pool: &PgPool,
+    metric: &str,
+    source: &str,
+    from: Option<DateTime<Utc>>,
+) -> Result<DateTime<Utc>> {
+    let from = match from {
+        Some(from) => from,
+        None => {
+            let covered = coverage(pool, metric).await?;
+            let Some(own) = covered.iter().find(|c| c.source == source) else {
+                bail!("aucune donnée de {source} pour {metric} : préciser --from");
+            };
+            let isolated = own
+                .second_at
+                .is_some_and(|next| (next - own.first_at).num_days() > MAX_START_GAP_DAYS);
+            if isolated {
+                bail!(
+                    "la première donnée de {source} ({}) est isolée : préciser --from",
+                    own.first_at.format("%Y-%m-%d")
+                );
+            }
+            own.first_at
+        }
+    };
+    let mut tx = pool.begin().await?;
+    sqlx::query!(
+        "DELETE FROM core.source_precedence WHERE metric = $1",
+        metric
+    )
+    .execute(&mut *tx)
+    .await?;
+    let written = sqlx::query!(
+        "INSERT INTO core.source_precedence (metric, source_id, valid_during)
+         SELECT $1, s.id, tstzrange($3, NULL, '[)') FROM core.sources s WHERE s.name = $2",
+        metric,
+        source,
+        from,
+    )
+    .execute(&mut *tx)
+    .await?;
+    if written.rows_affected() == 0 {
+        bail!("source inconnue : {source}");
+    }
+    tx.commit().await?;
+    Ok(from)
 }

@@ -98,7 +98,8 @@ export function newKey(): string {
 
 export interface MusicRow {
   name: string
-  artist: string
+  /** `null` : un titre de l'historique dont l'artiste n'est pas attribuable. */
+  artist: string | null
   listens: number
 }
 
@@ -128,6 +129,8 @@ export interface DayMusic {
   /** `null` : aucune durée connue, ce qui n'est pas zéro minute. */
   minutes: number | null
   listens_without_duration: number
+  /** Écoutes de l'historique Apple sans artiste attribuable : aucun n'est inventé. */
+  listens_without_artist: number
   artist_of_day: { name: string; listens: number } | null
   tracks: MusicRow[]
   artists: MusicArtist[]
@@ -149,6 +152,8 @@ export interface MetricHealth {
   last_event_at: string | null
   freshness_threshold_seconds: number
   stale: boolean
+  /** Ce que chaque source couvre, de la plus ancienne à la plus récente. */
+  coverage: { source: string; first_at: string; last_at: string }[]
 }
 
 export interface SourcesHealth {

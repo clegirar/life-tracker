@@ -31,7 +31,7 @@ export function MusicCard({ date, today, state }: Props) {
     ? []
     : tab === 'artists'
       ? music.artists.map((a) => ({ name: a.name, detail: plural(a.tracks, 'titre'), listens: a.listens }))
-      : (tab === 'tracks' ? music.tracks : music.albums).map((r) => ({ name: r.name, detail: r.artist, listens: r.listens }))
+      : (tab === 'tracks' ? music.tracks : music.albums).map((r) => ({ name: r.name, detail: r.artist ?? 'Artiste inconnu', listens: r.listens }))
 
   return (
     <section className="card card-music" aria-labelledby="titre-musique" data-testid="music">
@@ -59,6 +59,11 @@ export function MusicCard({ date, today, state }: Props) {
               <dd className="stat-value" data-testid="listens">
                 {music.listens}
               </dd>
+              {music.listens_without_artist > 0 && (
+                <dd className="stat-note" data-testid="without-artist">
+                  dont {music.listens_without_artist} sans artiste connu.
+                </dd>
+              )}
             </div>
             <div>
               <dt>Temps estimé</dt>
@@ -143,7 +148,9 @@ export function MusicCard({ date, today, state }: Props) {
           </div>
 
           {rows.length === 0 ? (
-            <p className="empty">Aucun album indiqué par la source.</p>
+            <p className="empty">
+              {tab === 'albums' ? 'Aucun album indiqué par la source.' : 'Aucun artiste connu pour ces écoutes.'}
+            </p>
           ) : (
             <ul className="rows">
               {rows.map((row) => (

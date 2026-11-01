@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.metric AS \"metric!\", src.name AS source,\n                  min(e.occurred_at) AS \"first_at!\", max(e.occurred_at) AS \"last_at!\"\n           FROM derived.live_events e\n           JOIN core.sources src ON src.id = e.source_id\n           JOIN core.metrics m ON m.metric = e.metric\n           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND m.freshness_threshold IS NOT NULL\n           GROUP BY e.metric, src.name\n           ORDER BY 3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "metric!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "metric"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "source",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.sources",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "first_at!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "last_at!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "5a6fa5c6fbe5c56c9e31957c7f54127f38de4535713707d0a63ea392145a46bc"
+}

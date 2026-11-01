@@ -14,6 +14,7 @@ Runbook de l'étape 4. Tout s'exécute à la main : rien n'automatise le déploi
 | `web` | nginx : app statique et proxy de `/v1` et `/health` | aucun secret | `front`, `edge` |
 | `collector` | Interroge Last.fm, écrit par l'API d'ingestion ; curseur dans le volume `life-tracker-prod-collector-state` | `secrets/collector.env` (clé, utilisateur, token) | `collect`, `egress` |
 | `admin` | Profil `admin`, lancé à la main | `secrets/admin.env` (`tracker_admin`) | `data` |
+| `apple-import` | Profil `import`, lancé à la main : l'import de l'export Apple | Le token sur l'entrée standard, l'archive en lecture seule | `collect` |
 
 Seul `web` publie un port, sur `127.0.0.1:18080` par défaut. `data`, `front` et `collect` n'ont aucune sortie, et `data` n'a aucune adresse côté hôte. `egress` est la seule sortie vers Internet, et seul le collecteur y est : il ne voit pas la base, et le backend ne voit pas Internet. Docker ne filtre pas par destination : le collecteur pourrait joindre autre chose que Last.fm, ce que limitent l'absence de secret de base, `read_only` et l'absence de tout port entrant. Il ne connaît que ce qu'il envoie déjà.
 
@@ -330,6 +331,127 @@ Seulement alors, marquer l'étape 6 « Fait » dans `docs/poc.md`.
 
 **Retour arrière.** Sans migration : l'ancien `TRACKER_TAG`, `pull` et `up -d` suffisent. Les marquages restent au journal et leur curseur s'arrête ; ils ne sont simplement plus lus. Un `rebuild` de l'ancienne image verrait alors une différence, et demanderait `--allow-differences`. En revenant à la nouvelle image, le worker reprend là où il s'était arrêté.
 
+## Mise à jour vers l'étape 7 (historique Apple)
+
+À faire une fois, sur le NAS déjà en service, après un workflow vert. Rien n'a encore été joué sur le NAS ; le temps ci-dessous est extrapolé. **Pas de nouvelle migration** : `_sqlx_migrations` reste à 2 lignes. **Pas de `rebuild` obligatoire** : le nouvel interprète n'a rien à relire, et les écoutes existantes ne changent pas. Dans chaque `docker compose run -T`, `</dev/null` évite d'avaler la ligne collée suivante.
+
+**Ce qu'il faut attendre.** Essai de la vraie archive sur le Mac, base limitée à 0,5 CPU : envoi en 5 s, interprétation de 28 295 lignes en 145 s environ. Le Celeron et ses disques ne sont pas ce Mac : compter de 3 à 15 minutes, sans mesure, et lire la progression à l'étape 5. Pendant ce temps, café, Last.fm et lectures continuent : sur le Mac, un scrobble était écrit en 50 ms et interprété en moins d'une seconde.
+
+1. Sur le Mac, préparer un dossier avec **les trois seuls fichiers lus**. `ARCHIVE` est le dossier `Apple Music Activity` de l'export. Ils contiennent IP, villes et identifiants : pas de `/tmp`, qu'un autre compte du NAS pourrait voir.
+
+   ```sh
+   mkdir -m 700 ~/apple-import
+   cp "$ARCHIVE/Apple Music Play Activity.csv" "$ARCHIVE/Apple Music - Play History Daily Tracks.csv" ~/apple-import/
+   unzip -j "$ARCHIVE/Apple Music Library Tracks.json.zip" -d ~/apple-import/
+   ls ~/apple-import   # trois fichiers, dont « Apple Music Library Tracks.json »
+   ssh NAS 'umask 077; mkdir -p ~/apple-import'
+   scp -O ~/apple-import/* NAS:apple-import/
+   scp -O compose.yaml NAS:apple-import/
+   ```
+
+2. Sur le NAS, en root dans le dossier en `700`. `HOME_NAS` est le dossier de mon compte. La nouvelle image et le nouveau fichier :
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   HOME_NAS=/var/services/homes/MON_COMPTE
+   mv "$HOME_NAS/apple-import/compose.yaml" .
+   chown root:root compose.yaml
+   chmod 600 compose.yaml
+   sed -i 's/^TRACKER_TAG=.*/TRACKER_TAG=NOUVEAU_SHA/' .env
+   sudo docker compose config -q
+   sudo docker compose pull
+   sudo docker compose up -d
+   sudo docker compose ps -a
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select (select count(*) from _sqlx_migrations), (select count(*) from derived.interpretation_errors)" </dev/null   # 2|0
+   ```
+
+3. La source `apple` et son seul droit. Le token reste dans un fichier en `600` : l'import le lit sur l'entrée standard, il n'apparaît ni dans `ps` ni dans `docker inspect`. Un futur export devra passer par cette même source pour retomber sur les mêmes clés : ne pas la révoquer, ne pas perdre ce fichier.
+
+   ```sh
+   (umask 077; sudo docker compose run --rm -T admin create-source apple </dev/null > secrets/apple-import.token)
+   [ "$(wc -c < secrets/apple-import.token)" = 65 ] && echo "token ok" || echo "ÉCHEC : ne pas continuer"
+   sudo docker compose run --rm -T admin grant-kind apple apple.play_history_row </dev/null
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select k.kind from core.source_kinds k join core.sources s on s.id = k.source_id where s.name = 'apple' and k.revoked_at is null" </dev/null   # apple.play_history_row, seul
+   ```
+
+4. L'archive, lisible par le seul utilisateur du conteneur (`10001`), montée en lecture seule :
+
+   ```sh
+   mkdir -p imports/apple
+   chmod 700 imports
+   mv "$HOME_NAS"/apple-import/*.csv "$HOME_NAS"/apple-import/*.json imports/apple/
+   rmdir "$HOME_NAS/apple-import"
+   chown -R 10001:10001 imports/apple
+   chmod 500 imports/apple
+   chmod 400 imports/apple/*
+   sudo docker compose run --rm -T --entrypoint sh apple-import -c 'id -u; ls /archive | wc -l; touch /archive/x 2>&1 | head -1; getent hosts db || echo "base inconnue"' </dev/null   # 10001, 3, refus d'écriture, base inconnue
+   ```
+
+5. L'import. La sortie ne contient que des nombres, des motifs et les empreintes de l'archive : elle se garde, c'est la note d'empreinte que demande le POC. Une coupure ? Relancer la même commande : ce qui est passé revient en `duplicate`.
+
+   ```sh
+   sudo docker compose run --rm -T apple-import < secrets/apple-import.token | tee imports/apple-import-1.txt
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select count(*) filter (where seq > coalesce((select max(last_seq) from derived.cursors c join derived.generations g on g.id = c.generation and g.state = 'active' where c.kind = 'apple.play_history_row'), 0)) from core.records where kind = 'apple.play_history_row'" </dev/null   # à relancer jusqu'à 0
+   ```
+
+   Attendu pour cette archive : 60 720 lignes lues, 28 295 `accepted`, 0 `rejected`, 32 425 ignorées (`play_start` 22 959, `lyric_display` 8 717, `no_playback` 456, `no_start_timestamp` 247, `video` 33, `no_song_name` 13).
+
+6. Vérifier le critère **« réimporter ne donne que des `duplicate` »**, l'absence d'erreur, et **qu'aucune colonne hors liste n'est au journal** :
+
+   ```sh
+   sudo docker compose run --rm -T apple-import < secrets/apple-import.token | grep -E '^(accepted|duplicate|rejected)'   # 0, 28295, 0
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select k, count(*) from core.records r, jsonb_object_keys(r.payload) k where r.kind = 'apple.play_history_row' group by 1 order by 1" </dev/null
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select count(*) filter (where details->>'artist' is null), count(*) from derived.events e join core.records r using (seq) where r.kind = 'apple.play_history_row' and e.generation = (select id from derived.generations where state = 'active')" </dev/null   # 99|20682
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select count(*) from derived.interpretation_errors" </dev/null   # 0
+   ```
+
+   La deuxième commande doit lister exactement ces 16 champs, chacun 28 295 fois : `album`, `archive_sha256`, `artist`, `artist_source`, `end_position_ms`, `end_reason`, `ended_at`, `item_type`, `media_duration_ms`, `media_type`, `offline`, `play_duration_ms`, `song`, `start_position_ms`, `started_at`, `utc_offset_seconds`.
+
+7. Regarder la jonction **avant** de déclarer la priorité, et trancher :
+
+   ```sh
+   sudo docker compose run --rm -T admin coverage music.listen </dev/null
+   ```
+
+   La sortie donne les dates de chaque source, l'écart entre les deux premières données, et `trou` ou `chevauchement`. Si la première écoute de `lastfm` est à quelques jours de la suivante :
+
+   ```sh
+   sudo docker compose run --rm -T admin set-precedence music.listen lastfm </dev/null
+   ```
+
+   Si elle est isolée (ancien scrobble), la commande refuse : donner le vrai démarrage, `--from 2026-10-20T00:00:00+02:00` par exemple. **Trou** : les jours non couverts afficheront « Pas de données musicales à cette date » et rien ne les invente. Le signaler pour décider ensuite ; un export Apple plus récent, importé par la même source, le comblera sans doublon.
+
+   Comparer ensuite Apple et Last.fm sur le chevauchement, en nombres seulement. C'est la seule mesure de normalisation que le Mac n'a pas pu faire : la première ligne donne les titres Last.fm aussi vus par Apple sous la même clé, la seconde ceux qui existent chez Apple sous un autre artiste.
+
+   ```sh
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "with g as (select id from derived.generations where state = 'active'), l as (select distinct item_key k from derived.event_items i join derived.events e using (generation, seq, ordinal) join core.sources s on s.id = e.source_id where i.generation = (select id from g) and i.level = 'track' and i.metric = 'music.listen' and s.name = 'lastfm'), a as (select distinct item_key k from derived.event_items i join derived.events e using (generation, seq, ordinal) join core.sources s on s.id = e.source_id where i.generation = (select id from g) and i.level = 'track' and i.metric = 'music.listen' and s.name = 'apple') select count(*), count(*) filter (where k in (select k from a)), count(*) filter (where k not in (select k from a) and split_part(k, chr(9), 2) in (select split_part(k, chr(9), 2) from a)) from l" </dev/null
+   ```
+
+   Un troisième nombre élevé dirait que les noms d'artistes diffèrent entre les deux sources : le signaler avant de marquer l'étape, car une découverte Last.fm n'aurait alors pas reculé.
+
+8. Sur l'iPhone : un jour de 2023 montre ses écoutes, avec les découvertes de ce jour-là, et si besoin « dont N sans artiste connu » ; un artiste déjà écouté en 2023 n'est plus découvert en octobre 2026 ; une journée récente correspond toujours à Last.fm, sans double compte. Critères **« le chevauchement reste au journal »** et **« les vues l'ignorent »** :
+
+   ```sh
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select (select count(*) from core.records r join core.source_precedence p on p.valid_during @> r.occurred_at where r.kind = 'apple.play_history_row'), (select count(*) from derived.live_events e join core.sources s on s.id = e.source_id join core.source_precedence p on p.valid_during @> e.occurred_at where s.name = 'apple' and e.metric = 'music.listen')" </dev/null   # N|0
+   ```
+
+9. Le contrôle à 0 différence, puis le ménage. Sur le Mac, 130 s à 0,5 CPU ; la page reste servie. **Supprimer l'archive du NAS**, recommandé : elle contient IP, villes et identifiants, et reste retéléchargeable. `imports/apple-import-1.txt` ne contient que des nombres et des empreintes : le garder. Retirer le droit : il se redonne au prochain export.
+
+   ```sh
+   sudo docker compose run --rm -T admin rebuild </dev/null
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select count(*) from derived.interpretation_errors" </dev/null   # 0
+   rm -rf imports/apple
+   sudo docker compose run --rm -T admin revoke-kind apple apple.play_history_row </dev/null
+   exit
+   ```
+
+   Sur le Mac : `rm -rf ~/apple-import`.
+
+Seulement alors, marquer l'étape 7 « Fait » dans `docs/poc.md`.
+
+**Retour arrière.** Sans migration : l'ancien `compose.yaml`, l'ancien `TRACKER_TAG`, `pull`, `up -d`. Le journal garde les lignes Apple, qui ne sont plus interprétées. Pour annuler seulement la priorité, relancer `set-precedence` avec une autre date ; retirer la ligne demande `psql` : `delete from core.source_precedence where metric = 'music.listen'`, sans rejeu. Effacer les lignes Apple elles-mêmes demande une purge, à ne décider que si elles n'auraient jamais dû entrer.
+
 ## Vérifier les critères « Terminé quand »
 
 **Un café saisi depuis l'iPhone, par la web app comme par le raccourci, apparaît.**
@@ -413,6 +535,7 @@ Reste à confirmer :
 - la persistance de `tailscale serve` après un redémarrage du NAS ;
 - l'import du projet dans l'interface de Container Manager, facultatif ;
 - l'accès refusé depuis un autre compte du NAS, si un compte non administrateur existe ;
+- tout l'étape 7 sur le NAS : l'image, le service `apple-import` (droits `10001`, lecture seule, réseau), le temps réel, et la jonction entre l'export et Last.fm. Vérifié sur le Mac par le binaire natif et `compose config`, pas par l'image construite ;
 - tout le collecteur sur le NAS : sortie vers Last.fm, vraies réponses, et le critère de l'étape 5. Vérifié seulement en local, en compose, contre `example.com` et sans clé réelle.
 
 `cpus` n'est pas utilisé dans `compose.yaml` : de mémoire, le noyau de Synology refuse cette limite, sans que j'aie pu le vérifier. Seule la mémoire est limitée.

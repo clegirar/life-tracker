@@ -5,6 +5,7 @@ export const PASSWORD = process.env.E2E_PASSWORD!
 export const API_URL = process.env.E2E_API_URL!
 export const IOS_TOKEN = process.env.E2E_IOS_TOKEN!
 export const LASTFM_TOKEN = process.env.E2E_LASTFM_TOKEN!
+export const APPLE_TOKEN = process.env.E2E_APPLE_TOKEN!
 
 export function parisToday(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date())
@@ -86,9 +87,9 @@ export interface Listen {
   album?: string
 }
 
-export async function send(request: APIRequestContext, records: unknown[]) {
+export async function send(request: APIRequestContext, records: unknown[], token = LASTFM_TOKEN) {
   const response = await request.post(`${API_URL}/v1/records`, {
-    headers: { Authorization: `Bearer ${LASTFM_TOKEN}` },
+    headers: { Authorization: `Bearer ${token}` },
     data: { records },
   })
   expect(response.status()).toBe(200)
