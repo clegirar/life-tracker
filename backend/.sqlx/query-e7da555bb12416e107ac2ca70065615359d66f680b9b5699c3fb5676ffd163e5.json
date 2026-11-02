@@ -1,0 +1,51 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH timed AS (\n             SELECT e.occurred_at AT TIME ZONE (SELECT timezone FROM core.settings) AS local,\n                    COALESCE((e.details->>'played_ms')::numeric / 1000, d.value)::float8 AS seconds\n             FROM derived.live_events e\n             LEFT JOIN derived.event_items it\n               ON it.generation = e.generation AND it.seq = e.seq AND it.ordinal = e.ordinal\n              AND it.level = $7\n             LEFT JOIN LATERAL (\n               SELECT known.value\n               FROM derived.event_items i\n               JOIN derived.live_events known USING (generation, seq, ordinal)\n               WHERE i.generation = e.generation AND i.metric = $6 AND i.level = $7\n                 AND i.item_key = it.item_key\n               ORDER BY i.occurred_at DESC, i.seq DESC\n               LIMIT 1\n             ) d ON true\n             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n               AND e.metric = $1\n               AND e.occurred_at >= ($2::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n               AND e.occurred_at < (($3::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n               AND ($4::text IS NULL OR (e.seq, e.ordinal) IN (\n                     SELECT i.seq, i.ordinal FROM derived.event_items i\n                     WHERE i.generation = e.generation AND i.metric = $1\n                       AND i.level = $4 AND i.item_key = $5))\n           )\n           SELECT CASE $8::text\n                    WHEN 'day' THEN to_char(local, 'YYYY-MM-DD')\n                    WHEN 'week' THEN to_char(date_trunc('week', local), 'IYYY-\"W\"IW')\n                    ELSE to_char(local, 'YYYY-MM')\n                  END AS \"period!\",\n                  count(*) AS \"events!\",\n                  count(seconds) AS \"known!\",\n                  sum(seconds) AS seconds\n           FROM timed\n           GROUP BY 1\n           ORDER BY 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "period!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "events!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "known!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "seconds",
+        "type_info": "Float8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Date",
+        "Date",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "e7da555bb12416e107ac2ca70065615359d66f680b9b5699c3fb5676ffd163e5"
+}

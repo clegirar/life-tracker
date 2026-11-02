@@ -16,7 +16,7 @@ Hors POC : les messages et l'agent Mac, l'annuaire côté interface, les autres 
 
 Seul ce qui existe aujourd'hui est listé ; ajouter ici les commandes de chaque nouveau composant.
 
-- Tout le dépôt : `./test.sh` (base, qualité et tests du backend, web app ; conteneurs jetables, Docker requis).
+- Tout le dépôt : `./test.sh` (base, qualité et tests du backend, web app, serveur MCP ; conteneurs jetables, Docker requis).
 - Tests de la base : `db/test/run.sh` (conteneurs jetables, Docker requis).
 - Base de développement : `cp .env.example .env && docker compose -f compose.dev.yaml up -d` (port 54329).
 - Tests du backend : `backend/test.sh [arguments de cargo test]` (conteneur jetable, Docker requis ; Rust figé par `backend/rust-toolchain.toml`).
@@ -25,7 +25,9 @@ Seul ce qui existe aujourd'hui est listé ; ajouter ici les commandes de chaque 
 - Web app : `web/test.sh [arguments de playwright test]` lance lint, types, tests unitaires, build, puis Playwright contre le vrai backend et un PostgreSQL 18.6 jetable (Docker requis ; télécharge Chromium au premier passage). Captures et logs dans `web/e2e-artifacts/`, ignoré par git.
 - Dans `web/` : `npm ci`, puis `npm run dev` (proxy de `/v1` vers `API_TARGET`, par défaut `http://127.0.0.1:8080`), `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`.
 
-- Images de production, linux/amd64 : `docker buildx build --platform linux/amd64 --load -t <nom> backend` (de même pour `web`). Sur GitHub : `.github/workflows/images.yml`.
+- Serveur MCP : `mcp/test.sh [arguments de node --test]` lance types, build, tests OAuth, puis de bout en bout contre le vrai backend et un PostgreSQL 18.6 jetable (Docker requis). Dans `mcp/` : `npm ci`, `npm run typecheck`, `npm run build`, `npm test` (sans backend, les tests de bout en bout sont sautés).
+- Lancer le MCP en développement, depuis `mcp/` après `npm run build` : `MCP_PUBLIC_URL=https://localhost:8443 MCP_BACKEND_URL=http://127.0.0.1:8080 MCP_SERVICE_TOKEN=<jeton de développement> MCP_LOGIN_HASH=<sortie de hash-password> MCP_LISTEN=127.0.0.1:8787 MCP_STATE_DIR=<dossier> node dist/main.js serve`. Le haché : `printf '%s\n' "$SECRET" | node dist/main.js hash-password` (16 caractères au moins, lu sur l'entrée standard, sortie déjà encodée pour un fichier d'environnement). Jamais de jeton ni de secret de production en développement.
+- Images de production, linux/amd64 : `docker buildx build --platform linux/amd64 --load -t <nom> backend` (de même pour `web` et `mcp`). Sur GitHub : `.github/workflows/images.yml`.
 - Production : `compose.yaml`, à lancer sur le NAS et jamais depuis le dépôt ; secrets et commandes dans `docs/deploiement.md`.
 
 Depuis `backend/`, après `set -a && . ../.env && set +a` (chaque commande lit sa propre URL) :
@@ -33,7 +35,7 @@ Depuis `backend/`, après `set -a && . ../.env && set +a` (chaque commande lit s
 - Migrations : `cargo run -- migrate` (`MIGRATE_DATABASE_URL`, `tracker_owner`).
 - API et interprètes : `cargo run -- serve` (`DATABASE_URL`, `tracker_app` ; `LISTEN_ADDR`, `RUST_LOG`).
 - Collecteur : `cargo run -- collect` (`LASTFM_API_KEY`, `LASTFM_USER`, `COLLECTOR_TOKEN` : le token d'une source de développement, `INGEST_URL`, `COLLECTOR_STATE_DIR` ; facultatifs `LASTFM_API_URL`, `COLLECT_INTERVAL_SECONDS`). Ne connaît pas la base. Jamais de token ni de clé de production en développement.
-- Administration (`ADMIN_DATABASE_URL`, `tracker_admin`) : `cargo run -- admin create-source <nom> [--silence-threshold "6 hours"]` (affiche le token une seule fois), `admin revoke-source <nom>`, `admin grant-kind <source> <type>`, `admin revoke-kind <source> <type>`, `admin rebuild [--allow-differences]` (génération à côté, comparaison, bascule), `admin retry-errors`, `admin set-password <identifiant>` (crée le compte web ou change son mot de passe, lu au clavier ou sur l'entrée standard, et ferme les sessions), `admin coverage <métrique>` (par source : nombre et dates, trou ou chevauchement), `admin set-precedence <métrique> <source> [--from <RFC 3339>]` (la source fait foi à partir de cette date ; sans date, sa première donnée, refusée si elle est isolée).
+- Administration (`ADMIN_DATABASE_URL`, `tracker_admin`) : `cargo run -- admin create-source <nom> [--silence-threshold "6 hours"]` (affiche le token une seule fois), `admin revoke-source <nom>`, `admin create-service-token <nom>` (jeton de service de l'API de lecture, pour le MCP : lecture seule, pseudonymes ; affiché une seule fois), `admin revoke-service-token <nom>`, `admin grant-kind <source> <type>`, `admin revoke-kind <source> <type>`, `admin rebuild [--allow-differences]` (génération à côté, comparaison, bascule), `admin retry-errors`, `admin set-password <identifiant>` (crée le compte web ou change son mot de passe, lu au clavier ou sur l'entrée standard, et ferme les sessions), `admin coverage <métrique>` (par source : nombre et dates, trou ou chevauchement), `admin set-precedence <métrique> <source> [--from <RFC 3339>]` (la source fait foi à partir de cette date ; sans date, sa première donnée, refusée si elle est isolée).
 
 Import Apple, depuis `backend/` : `INGEST_URL=http://127.0.0.1:8080 cargo run -- import-apple --archive <dossier> < <fichier du token>` (dossier des trois fichiers lus, voir `docs/deploiement.md` ; aucun accès à la base, relancer reprend). Jamais de vraie archive dans le dépôt : les fixtures de `backend/tests/fixtures/apple/` sont fictives.
 

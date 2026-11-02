@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT o.seq, o.ordinal, o.level, o.display\n           FROM derived.event_items o\n           JOIN unnest($1::bigint[], $2::smallint[]) AS w(seq, ordinal)\n             ON w.seq = o.seq AND w.ordinal = o.ordinal\n           WHERE o.generation = (SELECT id FROM derived.generations WHERE state = 'active')",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "seq",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "derived.event_items",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "ordinal",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "derived.event_items",
+            "name": "ordinal"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "level",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.event_items",
+            "name": "level"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "display",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.event_items",
+            "name": "display"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array",
+        "Int2Array"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "4e4b1df6867595656f0904e5afc375fc65b0167b379c7155f211dbafa0a8b199"
+}

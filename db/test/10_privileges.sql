@@ -16,6 +16,16 @@ SELECT t.check(NOT has_column_privilege('tracker_admin', 'core.records', 'key', 
                'tracker_admin ne peut modifier aucune autre colonne du journal');
 SELECT t.check(NOT has_table_privilege('tracker_admin', 'core.records', 'DELETE'), 'tracker_admin n''a pas DELETE sur le journal');
 
+SELECT t.check(has_table_privilege('tracker_app', 'core.service_tokens', 'SELECT')
+           AND NOT has_table_privilege('tracker_app', 'core.service_tokens', 'INSERT')
+           AND NOT has_table_privilege('tracker_app', 'core.service_tokens', 'UPDATE')
+           AND NOT has_table_privilege('tracker_app', 'core.service_tokens', 'DELETE'),
+               'tracker_app lit les jetons de service sans pouvoir en créer ni en révoquer');
+SELECT t.check(has_table_privilege('tracker_admin', 'core.service_tokens', 'INSERT')
+           AND has_table_privilege('tracker_admin', 'core.service_tokens', 'UPDATE')
+           AND NOT has_table_privilege('tracker_admin', 'core.service_tokens', 'DELETE'),
+               'tracker_admin crée et révoque les jetons de service, sans les supprimer');
+
 SELECT t.check(cache_size = 1, 'séquence du journal en CACHE 1')
 FROM pg_sequences
 WHERE format('%I.%I', schemaname, sequencename) = pg_get_serial_sequence('core.records', 'seq');

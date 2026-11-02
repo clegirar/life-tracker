@@ -1,0 +1,143 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT metric, label, shape::text AS \"shape!\", unit, domain,\n                  daily_aggregation::text AS \"aggregation!\", item_levels, discovery, applies_to,\n                  duration_from, extract(epoch FROM freshness_threshold)::float8 AS freshness,\n                  description\n           FROM core.metrics ORDER BY metric",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "metric",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.metrics",
+            "name": "metric"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "label",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.metrics",
+            "name": "label"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "shape!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "unit",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.metrics",
+            "name": "unit"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "domain",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.metrics",
+            "name": "domain"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "aggregation!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "item_levels",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "core.metrics",
+            "name": "item_levels"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "discovery",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.metrics",
+            "name": "discovery"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "applies_to",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.metrics",
+            "name": "applies_to"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "duration_from",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.metrics",
+            "name": "duration_from"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "freshness",
+        "type_info": "Float8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 11,
+        "name": "description",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.metrics",
+            "name": "description"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      true,
+      false,
+      null,
+      false,
+      false,
+      true,
+      true,
+      null,
+      true
+    ]
+  },
+  "hash": "869b433afd316de6482211b5dbc4487e8d268a16c5144b590c6841d3269c8080"
+}

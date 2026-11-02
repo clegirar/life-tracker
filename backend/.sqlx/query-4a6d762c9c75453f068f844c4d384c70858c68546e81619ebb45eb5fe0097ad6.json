@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE core.service_tokens SET revoked_at = now() WHERE name = $1 AND revoked_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4a6d762c9c75453f068f844c4d384c70858c68546e81619ebb45eb5fe0097ad6"
+}

@@ -56,7 +56,7 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-    networks: [data, front, collect]
+    networks: [data, front, collect, read]
     healthcheck:
       # Le 503 d'une base en panne rend le conteneur « unhealthy » sans le redémarrer :
       # `restart` ne réagit qu'à la fin du processus, et le backend attend le retour de la base.
@@ -120,6 +120,40 @@ services:
     security_opt: ["no-new-privileges:true"]
     logging: *logging
 
+  # Le serveur MCP, seul exposé sur Internet (Tailscale Funnel, port 8443) : OAuth, lecture seule, par
+  # l'API de lecture avec son jeton de service. Ni la base, ni sortie vers Internet.
+  mcp:
+    image: ${TRACKER_IMAGE_PREFIX:?}/mcp:${TRACKER_TAG:?}
+    restart: unless-stopped
+    env_file: ./secrets/mcp.env
+    environment:
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:?}
+      MCP_BACKEND_URL: http://backend:8080
+      MCP_LISTEN: 0.0.0.0:8080
+      MCP_STATE_DIR: /var/lib/life-tracker-mcp
+    depends_on:
+      - backend
+    networks: [read, mcp-edge]
+    ports:
+      - "127.0.0.1:${MCP_HTTP_PORT:-18443}:8080"
+    volumes:
+      - mcp-state:/var/lib/life-tracker-mcp
+    healthcheck:
+      # Les métadonnées OAuth, servies sans jeton, avec le nom public qu'exige le contrôle de l'en-tête
+      # Host. Le wget de busybox plutôt qu'un second Node, qui doublerait la mémoire.
+      test: ["CMD-SHELL", "wget -q -O /dev/null --header \"Host: $${MCP_PUBLIC_URL#https://}\" http://127.0.0.1:8080/.well-known/oauth-authorization-server"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    mem_limit: 128m
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+
   # À la main : docker compose run --rm admin <commande>
   admin:
     profiles: [admin]
@@ -177,6 +211,15 @@ networks:
       com.docker.network.bridge.enable_icc: "false"
   # Le seul réseau qui porte un port publié.
   edge:
+  # Le MCP et le backend, sans autre accès : le jeton de service ne passe que par ici.
+  read:
+    internal: true
+  # Le port publié du MCP. Sans NAT sortant : le port reste joignable depuis l'hôte, mais le conteneur
+  # ne sort pas vers Internet (un réseau interne ne peut pas publier de port).
+  mcp-edge:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+      com.docker.network.bridge.enable_icc: "false"
 
 volumes:
   db-data:
@@ -185,3 +228,6 @@ volumes:
   # Le curseur du collecteur. Le perdre ne coûte qu'un rattrapage, sans doublon.
   collector-state:
     name: life-tracker-prod-collector-state
+  # Les jetons OAuth du MCP, hachés. Le perdre ne coûte qu'une nouvelle connexion depuis Claude.
+  mcp-state:
+    name: life-tracker-prod-mcp-state

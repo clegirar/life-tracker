@@ -15,8 +15,9 @@ Runbook de l'étape 4. Tout s'exécute à la main : rien n'automatise le déploi
 | `collector` | Interroge Last.fm, écrit par l'API d'ingestion ; curseur dans le volume `life-tracker-prod-collector-state` | `secrets/collector.env` (clé, utilisateur, token) | `collect`, `egress` |
 | `admin` | Profil `admin`, lancé à la main | `secrets/admin.env` (`tracker_admin`) | `data` |
 | `apple-import` | Profil `import`, lancé à la main : l'import de l'export Apple | Le token sur l'entrée standard, l'archive en lecture seule | `collect` |
+| `mcp` | Serveur MCP (étape 9) : OAuth et outils en lecture seule ; jetons OAuth hachés dans le volume `life-tracker-prod-mcp-state` | `secrets/mcp.env` (jeton de service, haché du secret de connexion) | `read`, `mcp-edge` |
 
-Seul `web` publie un port, sur `127.0.0.1:18080` par défaut. `data`, `front` et `collect` n'ont aucune sortie, et `data` n'a aucune adresse côté hôte. `egress` est la seule sortie vers Internet, et seul le collecteur y est : il ne voit pas la base, et le backend ne voit pas Internet. Docker ne filtre pas par destination : le collecteur pourrait joindre autre chose que Last.fm, ce que limitent l'absence de secret de base, `read_only` et l'absence de tout port entrant. Il ne connaît que ce qu'il envoie déjà.
+`web` publie un port, sur `127.0.0.1:18080` par défaut, et `mcp` le sien, sur `127.0.0.1:18443` (Tailscale Funnel). `read` relie le seul MCP au backend, sans sortie ; `mcp-edge` ne porte que le port publié du MCP, sans NAT sortant : le MCP ne joint ni la base ni Internet. `data`, `front` et `collect` n'ont aucune sortie, et `data` n'a aucune adresse côté hôte. `egress` est la seule sortie vers Internet, et seul le collecteur y est : il ne voit pas la base, et le backend ne voit pas Internet. Docker ne filtre pas par destination : le collecteur pourrait joindre autre chose que Last.fm, ce que limitent l'absence de secret de base, `read_only` et l'absence de tout port entrant. Il ne connaît que ce qu'il envoie déjà.
 
 ## Ce que je fais à la main
 
@@ -519,6 +520,187 @@ Seulement alors, marquer l'étape 8 « Fait » dans `docs/poc.md`.
 
 **Retour arrière.** Sans migration : l'ancien `TRACKER_TAG`, `pull` et `up -d`. Rien n'a été écrit ni au journal ni dans `derived` ; la page du jour perd seulement le lien vers le mois.
 
+## Mise à jour vers l'étape 9 (serveur MCP)
+
+À faire une fois, sur le NAS déjà en service, après un workflow vert (qui construit maintenant trois images : `backend`, `web`, `mcp`). Préparé et vérifié sur le Mac seulement : tests, images `linux/amd64` construites, et un essai du compose avec l'image du MCP (santé, port publié, aucune sortie, base inconnue). **Une nouvelle migration** : `_sqlx_migrations` passe à 3 lignes (`core.service_tokens`), donc pas de retour à l'ancienne image (voir « Retour arrière » plus bas). **Pas de `rebuild`** : aucun interprète ne change. Dans chaque `docker compose run -T` ou `exec -T`, `</dev/null` évite d'avaler la ligne collée suivante.
+
+**Le principe.** Le MCP est le seul service sur Internet, par Tailscale Funnel sur le port **8443** ; la web app reste en `tailscale serve` privé sur 443. Sur Internet ne répondent que `/mcp` (jeton OAuth exigé), `/token` et `/.well-known/*`. La page de connexion (`/authorize`) refuse toute requête arrivée par Funnel (en-tête `Tailscale-Funnel-Request`, posé par Tailscale et retiré s'il vient du client) : on se connecte depuis un appareil du tailnet, Tailscale actif. Même adresse dans les deux cas : depuis le tailnet, MagicDNS résout `<nas>.<tailnet>.ts.net` vers l'adresse 100.x du NAS, et la requête arrive en direct, sans passer par les relais de Funnel ni porter l'en-tête (d'après le code de `tailscaled`, `ipn/ipnlocal/serve.go`, à confirmer au point 7). Le secret de connexion est propre au MCP, différent du mot de passe web, et ne vit que dans le gestionnaire de mots de passe ; le NAS n'en garde que le haché Argon2id.
+
+**À ne jamais faire : `tailscale funnel` sur le port 443.** La web app y est servie : elle deviendrait publique. Seule exception, le repli du point 0 a, qui déplace d'abord la web app.
+
+0. **Trois points incertains, à lever d'abord.** Si l'un échoue, s'arrêter et le noter.
+
+   a. **Une URL de connecteur avec le port 8443** : rien dans la documentation de Claude ne l'interdit ni ne le promet. Elle se vérifie aux points 8 et 9 : si Claude refuse l'adresse ou n'atteint pas le serveur, repli ci-dessous.
+
+   b. **Le serveur du SDK v2 face à Claude.ai** : le SDK sert l'ère 2026-07-28 et, par défaut, les clients de l'ère 2025 en mode sans état (page « Support legacy clients » de sa documentation). Les tests le vérifient avec le client officiel dans les deux ères, jamais avec Claude.ai lui-même : c'est le point 9.
+
+   c. **Funnel sur le paquet Tailscale de Synology** : `serve` y fonctionne depuis l'étape 4 ; Funnel n'y a jamais été essayé. Version 1.52 au moins :
+
+      ```sh
+      sudo tailscale version
+      sudo tailscale funnel status
+      ```
+
+   **Repli si le port 8443 est refusé par Claude** : le MCP sur 443 par Funnel, la web app déplacée sur 8443 en privé. Dans cet ordre, pour que 443 ne serve jamais la web app en public :
+
+   ```sh
+   sudo tailscale serve --https=443 off
+   sudo tailscale serve --bg --https=8443 http://127.0.0.1:18080
+   sudo tailscale funnel --bg --https=443 http://127.0.0.1:18443
+   sudo tailscale funnel status   # 443 → 18443 (Funnel on), 8443 → 18080 (tailnet only)
+   ```
+
+   Puis `MCP_PUBLIC_URL=https://<nas>.<tailnet>.ts.net` (sans port) dans `.env`, `sudo docker compose up -d mcp`, et la web app s'ouvre à `https://<nas>.<tailnet>.ts.net:8443`. Retirer le connecteur de Claude et le recréer avec la nouvelle URL.
+
+1. Sur le Mac, à la racine du dépôt :
+
+   ```sh
+   shasum -a 256 compose.yaml   # 55ddcc01bcfeeb96d75a482354735f85a5eef4f4de349fc22c7c054668fadb14
+   scp -O compose.yaml NAS:/tmp/
+   ```
+
+2. Sur le NAS, en root dans le dossier en `700`. Le nom du NAS dans le tailnet (celui de l'adresse de la web app), puis `.env`, un `secrets/mcp.env` vide pour que Compose accepte le fichier, le nouveau `compose.yaml` et la nouvelle version :
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   tailscale serve status   # l'adresse https://<nas>.<tailnet>.ts.net de la web app
+   NAS_HOST=nas.TAILNET.ts.net   # à remplacer, sans https:// ni port
+   printf 'MCP_PUBLIC_URL=https://%s:8443\nMCP_HTTP_PORT=18443\n' "$NAS_HOST" >> .env
+   grep -E '^MCP_' .env
+   (umask 077; : > secrets/mcp.env)
+   mv /tmp/compose.yaml .
+   chown root:root compose.yaml
+   chmod 600 compose.yaml
+   sha256sum compose.yaml   # 55ddcc01…fadb14, la même que sur le Mac
+   sed -i 's/^TRACKER_TAG=.*/TRACKER_TAG=NOUVEAU_SHA/' .env
+   sudo docker compose config -q
+   sudo docker compose pull
+   sudo docker compose up -d db migrate backend web collector
+   sudo docker compose ps -a
+   sudo docker compose logs migrate | tail -3
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select (select count(*) from _sqlx_migrations), (select count(*) from derived.interpretation_errors)" </dev/null   # 3|0
+   ```
+
+   Le MCP n'est pas démarré : sans secrets, il s'arrêterait aussitôt.
+
+3. Le jeton de service : lecture seule, niveau pseudonymes, refusé sur toute écriture. Il ne s'affiche qu'une fois et ne va que dans `secrets/mcp.env` ; le perdre se règle par `revoke-service-token mcp` puis un nouveau nom (`mcp-2`).
+
+   ```sh
+   TOKEN=$(sudo docker compose run --rm -T admin create-service-token mcp </dev/null)
+   [ "${#TOKEN}" = 64 ] && echo "jeton ok" || echo "ÉCHEC : ne pas continuer"
+   ```
+
+4. Le secret de connexion du MCP : 16 caractères au moins, **différent du mot de passe web**, créé dans le gestionnaire de mots de passe (une phrase de passe aléatoire). Il se lit sans écho ; l'image le hache sans réseau (`--network none`) et ne rend que le haché, déjà encodé pour le fichier d'environnement :
+
+   ```sh
+   read -rs MCP_SECRET   # le secret, sans écho
+   IMAGE="$(grep '^TRACKER_IMAGE_PREFIX=' .env | cut -d= -f2)/mcp:$(grep '^TRACKER_TAG=' .env | cut -d= -f2)"
+   HASH_LINE=$(printf '%s\n' "$MCP_SECRET" | sudo docker run --rm -i --network none "$IMAGE" hash-password)
+   unset MCP_SECRET
+   case "$HASH_LINE" in MCP_LOGIN_HASH=*) echo "haché ok" ;; *) echo "ÉCHEC : ne pas continuer" ;; esac
+   (umask 077; printf 'MCP_SERVICE_TOKEN=%s\n%s\n' "$TOKEN" "$HASH_LINE" > secrets/mcp.env)
+   unset TOKEN HASH_LINE
+   ls -l secrets/mcp.env   # -rw-------
+   ```
+
+   Changer le secret plus tard : refaire ce point (avec le jeton déjà dans le fichier : `TOKEN=$(grep '^MCP_SERVICE_TOKEN=' secrets/mcp.env | cut -d= -f2)`), puis `sudo docker compose up -d mcp`. Une autorisation déjà donnée à Claude reste valable : pour la couper aussi, voir « Couper ».
+
+5. Démarrer le MCP et le vérifier depuis le NAS, avant toute exposition :
+
+   ```sh
+   sudo docker compose up -d
+   sudo docker compose ps mcp   # running (healthy) au bout de 30 s environ
+   H="Host: $NAS_HOST:8443"
+   curl -s -H "$H" http://127.0.0.1:18443/.well-known/oauth-protected-resource/mcp; echo   # "resource":"https://<nas>…:8443/mcp"
+   curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "$H" http://127.0.0.1:18443/mcp   # 401
+   curl -s -D - -o /dev/null -X POST -H "$H" http://127.0.0.1:18443/mcp | grep -i www-authenticate   # Bearer … resource_metadata="…"
+   curl -s -o /dev/null -w '%{http_code}\n' -H "$H" -H 'Tailscale-Funnel-Request: ?1' http://127.0.0.1:18443/authorize   # 403
+   curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18443/.well-known/oauth-authorization-server   # 403 : autre nom d'hôte
+   ```
+
+   L'isolement, et le jeton de service vu du backend (il lit, il n'écrit pas ; le jeton reste dans le conteneur, jamais sur la ligne de commande) :
+
+   ```sh
+   sudo docker compose exec -T mcp sh -c 'getent hosts db || echo "base inconnue"' </dev/null   # base inconnue
+   sudo docker compose exec -T mcp sh -c 'wget -q -T5 -O /dev/null https://www.last.fm && echo SORTIE || echo "pas de sortie"' </dev/null   # pas de sortie
+   sudo docker inspect "$(sudo docker compose ps -q mcp)" | grep -c -e DATABASE_URL -e tracker_   # 0
+   sudo docker compose exec -T mcp sh -c 'wget -q -O - --header "Authorization: Bearer $MCP_SERVICE_TOKEN" http://backend:8080/v1/inventory | head -c 120; echo' </dev/null   # {"timezone":"Europe/Paris",…
+   sudo docker compose exec -T mcp sh -c 'wget -q -O /dev/null --header "Authorization: Bearer $MCP_SERVICE_TOKEN" --post-data "{\"records\":[]}" http://backend:8080/v1/records && echo ÉCRIT || echo refusé' </dev/null   # refusé (401)
+   ```
+
+   Si `pas de sortie` ne s'affiche pas, l'option `enable_ip_masquerade` n'agit pas sur ce Docker : le noter, sans élargir quoi que ce soit, et en décider avant le point 6.
+
+6. **Activer Funnel.** Console Tailscale, *Access controls* : le fichier de politique doit donner l'attribut `funnel` au NAS. Par défaut, un bloc l'accorde à `autogroup:member` ; s'il manque, l'ajouter (et *HTTPS Certificates* reste activé depuis l'étape 4) :
+
+   ```json
+   "nodeAttrs": [
+     { "target": ["autogroup:member"], "attr": ["funnel"] }
+   ]
+   ```
+
+   Puis, sur le NAS, **le port 8443 seulement** :
+
+   ```sh
+   sudo tailscale funnel --bg --https=8443 http://127.0.0.1:18443
+   sudo tailscale funnel status   # https://<nas>…:8443 (Funnel on) → 127.0.0.1:18443 ; https://<nas>… (tailnet only) → 127.0.0.1:18080
+   exit
+   ```
+
+   Si `funnel status` montre 443 en « Funnel on » : `sudo tailscale funnel --https=443 off` aussitôt, puis `sudo tailscale serve --bg --https=443 http://127.0.0.1:18080`. La première publication d'un nom par Funnel peut prendre quelques minutes (DNS public).
+
+7. **Depuis Internet** : un appareil hors du tailnet, par exemple l'iPhone en 4G avec Tailscale coupé, ou un service de `curl` en ligne. `NAS_HOST` comme au point 2 :
+
+   ```sh
+   curl -s https://$NAS_HOST:8443/.well-known/oauth-protected-resource/mcp; echo                  # le JSON
+   curl -s https://$NAS_HOST:8443/.well-known/oauth-authorization-server; echo                     # issuer, S256, sans registration_endpoint
+   curl -s -o /dev/null -w '%{http_code}\n' -X POST https://$NAS_HOST:8443/mcp                      # 401
+   curl -s -o /dev/null -w '%{http_code}\n' "https://$NAS_HOST:8443/authorize"                      # 403 : connexion refusée par Funnel
+   curl -s -o /dev/null -w '%{http_code}\n' https://$NAS_HOST:8443/v1/inventory                     # 404
+   curl -s -m 10 -o /dev/null -w '%{http_code}\n' https://$NAS_HOST/ || echo "injoignable"         # injoignable : la web app reste privée
+   ```
+
+   **Depuis le tailnet** (le Mac, Tailscale actif, MagicDNS activé) : `curl -s -o /dev/null -w '%{http_code}\n' "https://$NAS_HOST:8443/authorize"` doit donner **400** (« Client inconnu ») et non 403 : la requête arrive en direct, sans Funnel. Si c'est 403, le Mac passe par Funnel (MagicDNS désactivé dans Tailscale, ou résolveur forcé) : régler le DNS du Mac avant le point 8. Et la web app répond toujours sur `https://$NAS_HOST`.
+
+8. **Le connecteur dans Claude**, sur claude.ai dans le navigateur d'un appareil du tailnet (le Mac) : *Réglages → Connecteurs → Ajouter un connecteur personnalisé*. Nom `Life tracker`, URL `https://<nas>.<tailnet>.ts.net:8443/mcp`, sans identifiant ni secret OAuth dans les réglages avancés. *Se connecter* ouvre la page du NAS « Autoriser Claude à lire le Life tracker ? », qui montre l'hôte de retour (`claude.ai`) : saisir le secret du point 4, *Autoriser*. Retour sur Claude, connecteur relié. Le connecteur vaut ensuite aussi dans l'app iPhone, sans nouvelle connexion : ce sont les serveurs de Claude qui appellent le MCP.
+
+   Cinq échecs de secret en quinze minutes bloquent toute connexion pendant ce temps, même avec le bon secret (« Trop d'essais »). Si la page dit « Connexion depuis le tailnet », le navigateur est passé par Funnel : voir le point 7.
+
+9. **Les questions de démo**, dans une nouvelle conversation, le connecteur activé (adapter les noms à de vraies écoutes) :
+
+   - « Combien de fois ai-je écouté *Titre* ces 30 derniers jours ? »
+   - « Combien de minutes de musique ai-je écoutées cette semaine ? »
+   - « Quand ai-je découvert *Artiste* ? »
+   - « Depuis quand n'ai-je pas écouté l'album *Album* ? »
+   - « À quelle heure je prends mon premier café en moyenne ? »
+
+   Claude doit appeler `inventory`, puis `search`, `occurrences`, `cumulative_duration`, `discovery`, `last_time`. Comparer avec la web app : le nombre d'écoutes d'un jour, les minutes d'un jour, l'heure du premier café. Puis les journaux, qui ne doivent contenir ni jeton, ni code, ni adresse :
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   sudo docker compose logs mcp | tail -20   # POST /mcp 200, « tokens issued » ; jamais de jeton ni d'IP
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select name, revoked_at is null from core.service_tokens" </dev/null   # mcp|t
+   exit
+   ```
+
+   Seulement alors, marquer l'étape 9 « Fait » dans `docs/poc.md`, avec les réponses obtenues.
+
+**Couper.** Fermer Internet sans rien toucher d'autre : `sudo tailscale funnel --https=8443 off` (la web app sur 443 reste servie ; vérifier `sudo tailscale serve status`). Couper aussi l'accès de Claude : retirer le connecteur dans Claude, puis effacer les jetons OAuth et arrêter le serveur, et au besoin révoquer le jeton de service :
+
+```sh
+sudo -i
+cd /volume1/docker/life-tracker
+sudo docker compose rm -sf mcp
+sudo docker volume rm life-tracker-prod-mcp-state
+sudo docker compose run --rm -T admin revoke-service-token mcp </dev/null
+exit
+```
+
+Relancer ensuite demande un nouveau jeton de service (`mcp-2`) et `sudo docker compose up -d mcp`.
+
+**Retour arrière.** La migration de l'étape 9 ne se défait pas : l'ancienne image refuserait la base (`migrate` échoue, le backend ne démarre pas). Revenir en arrière, c'est donc couper (ci-dessus) et garder la nouvelle image : le backend ne change de comportement que pour les nouvelles routes de lecture et le jeton de service, et la web app est identique. La table `core.service_tokens` reste, vide ou révoquée, sans effet.
+
 ## Vérifier les critères « Terminé quand »
 
 **Un café saisi depuis l'iPhone, par la web app comme par le raccourci, apparaît.**
@@ -604,6 +786,7 @@ Reste à confirmer :
 - l'accès refusé depuis un autre compte du NAS, si un compte non administrateur existe ;
 - tout l'étape 7 sur le NAS : l'image, le service `apple-import` (droits `10001`, lecture seule, réseau), le temps réel, et la jonction entre l'export et Last.fm. Vérifié sur le Mac par le binaire natif et `compose config`, pas par l'image construite ;
 - tout l'étape 8 sur le NAS : la vue du mois sur les vraies données (écoutes depuis janvier 2022, cafés depuis le 31 oct. 2026, jonction du 12 octobre), son temps de réponse sur le Celeron, et le signal « en attente » après une vraie coupure du collecteur. Vérifié sur le Mac par les tests et des données synthétiques, pas par l'image construite sur le NAS ;
-- tout le collecteur sur le NAS : sortie vers Last.fm, vraies réponses, et le critère de l'étape 5. Vérifié seulement en local, en compose, contre `example.com` et sans clé réelle.
+- tout le collecteur sur le NAS : sortie vers Last.fm, vraies réponses, et le critère de l'étape 5. Vérifié seulement en local, en compose, contre `example.com` et sans clé réelle ;
+- tout l'étape 9 sur le NAS : Funnel sur le paquet Synology, une URL de connecteur sur le port 8443 acceptée par Claude.ai, le serveur du SDK v2 face au vrai client de Claude.ai, l'arrivée directe (sans Funnel) d'une requête du tailnet sur le même nom, `enable_ip_masquerade` sur le Docker de DSM, et les temps de réponse des nouvelles lectures sur le Celeron. Vérifié sur le Mac par les tests (OAuth, outils contre le vrai backend, client officiel du SDK dans les deux ères) et un essai du compose avec l'image du MCP sur Docker Desktop.
 
 `cpus` n'est pas utilisé dans `compose.yaml` : de mémoire, le noyau de Synology refuse cette limite, sans que j'aie pu le vérifier. Seule la mémoire est limitée.

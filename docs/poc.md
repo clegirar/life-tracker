@@ -19,7 +19,7 @@ Le POC couvre le compteur de cafés et les écoutes de musique (Last.fm en direc
 | 6 | Découvertes et « déjà connu » | Fait |
 | 7 | Historique Apple | Fait |
 | 8 | Calendrier et complétude | Fait |
-| 9 | Serveur MCP | À faire |
+| 9 | Serveur MCP | Préparé, à confirmer sur le NAS |
 | 10 | Peaufiner l'interface | À faire |
 
 ## Étape 0 : schéma de la base
@@ -186,7 +186,9 @@ Fait le 2 nov. 2026 sur le vrai NAS, en suivant [le runbook](deploiement.md) : r
 
 ## Étape 9 : serveur MCP
 
-**Prérequis :** trancher l'authentification du MCP (OAuth et jeton de service).
+Préparé le 2 nov. 2026, à confirmer sur le NAS en suivant [le runbook](deploiement.md) : rien n'a encore tourné sur le NAS ni face à Claude.ai. Une nouvelle migration (`core.service_tokens`), sans `rebuild`. Chaque critère a ses tests. **Aucun appel MCP ne peut écrire** : côté backend (`backend/tests/read_api.rs`), le jeton de service est refusé sur toute route d'écriture (café, annulation, « déjà connu », signal de vie, déconnexion, et toute méthode autre que GET sur les routes de lecture), sans repli sur la session, et le journal ne bouge pas ; côté MCP, les dix outils sont tous annotés en lecture seule et `mcp/test.sh` vérifie que le journal ne contient que le jeu de données après tous les appels. **Le serveur ne répond à rien sans OAuth** (`mcp/test/oauth.test.ts`) : 401 et `WWW-Authenticate` sans jeton, jeton expiré, autre audience, client inconnu, retour hors liste, PKCE faux ou absent, code et rafraîchissement rejoués, connexion refusée par Funnel, CSRF, limitation des essais. **Les questions** (`mcp/test/e2e.test.ts`) : le flux OAuth complet, puis le client officiel du SDK, dans l'ère 2025 comme dans l'ère 2026-07-28, répond aux quatre questions sur la musique et au premier café moyen, contre le vrai backend et un PostgreSQL jetable. Reste le critère tel qu'écrit, avec le vrai Claude.ai : le point 9 du runbook. Les choix (exposition, OAuth, jeton de service, lectures génériques) sont au journal des décisions de [l'architecture](architecture.md).
+
+**Prérequis :** trancher l'authentification du MCP (OAuth et jeton de service). Tranché le 2 nov. 2026 : voir le journal des décisions de [l'architecture](architecture.md).
 
 **Contenu**
 

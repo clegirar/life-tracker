@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use axum::body::Bytes;
 use axum::extract::rejection::BytesRejection;
-use axum::extract::{DefaultBodyLimit, FromRequestParts, MatchedPath, Path, Request, State};
+use axum::extract::{DefaultBodyLimit, FromRequestParts, MatchedPath, Path, Query, Request, State};
 use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, SET_COOKIE, WWW_AUTHENTICATE};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
@@ -27,6 +27,7 @@ use crate::auth;
 use crate::calendar;
 use crate::ingest::{Envelope, RejectReason, Rejection, parse_envelope};
 use crate::music::fold;
+use crate::read::{self, Period, ReadError};
 
 pub const MAX_RECORDS: usize = 500;
 pub const MAX_BODY_BYTES: usize = 1_000_000;
@@ -65,6 +66,32 @@ struct RequestId(Uuid);
 #[derive(Clone, Copy)]
 struct SessionAuth;
 
+/// Les routes que le jeton de service peut lire, en GET seulement : une liste fermée. Toute autre route,
+/// et toute écriture, le refuse (`guard`), y compris celles qu'on ajoutera.
+pub const READ_ROUTES: [&str; 11] = [
+    "/v1/days/{date}",
+    "/v1/days/{date}/music",
+    "/v1/months/{month}",
+    "/v1/sources/health",
+    "/v1/inventory",
+    "/v1/search",
+    "/v1/occurrences",
+    "/v1/durations",
+    "/v1/item",
+    "/v1/top",
+    "/v1/discoveries",
+];
+
+/// Les deux niveaux de visibilité de l'API de lecture (voir l'architecture), posés par `guard` : les
+/// noms de l'annuaire pour la session de la web app, les pseudonymes seuls pour le jeton de service.
+/// Aucune réponse du POC ne lit l'annuaire : les deux niveaux rendent aujourd'hui la même chose, et
+/// une route qui nommera un contact devra s'en tenir au pseudonyme sous `Pseudonyms`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Visibility {
+    Names,
+    Pseudonyms,
+}
+
 pub fn router(pool: PgPool) -> Router {
     router_with(pool, Config::default())
 }
@@ -89,6 +116,13 @@ fn routes() -> Router<AppState> {
         .route("/v1/days/{date}/music", get(get_day_music))
         .route("/v1/months/{month}", get(get_month))
         .route("/v1/sources/health", get(get_sources_health))
+        .route("/v1/inventory", get(get_inventory))
+        .route("/v1/search", get(get_search))
+        .route("/v1/occurrences", get(get_occurrences))
+        .route("/v1/durations", get(get_durations))
+        .route("/v1/item", get(get_item))
+        .route("/v1/top", get(get_top))
+        .route("/v1/discoveries", get(get_discoveries))
         .route("/health", get(health))
 }
 
@@ -132,6 +166,21 @@ async fn guard(
         return Ok(next.run(request).await);
     }
 
+    // Le jeton de service du MCP : une lecture, sur une route de lecture, et rien d'autre. Ailleurs,
+    // un `Authorization` est refusé sans repli sur le cookie, comme pour l'ingestion.
+    if headers.contains_key(AUTHORIZATION) {
+        let reads = matches!(*request.method(), Method::GET | Method::HEAD);
+        if !reads || !READ_ROUTES.contains(&route) {
+            return Err(ApiError::Unauthorized);
+        }
+        let token = bearer_token(headers).ok_or(ApiError::Unauthorized)?;
+        if !service_token_is_valid(&state.pool, token).await? {
+            return Err(ApiError::Unauthorized);
+        }
+        request.extensions_mut().insert(Visibility::Pseudonyms);
+        return Ok(next.run(request).await);
+    }
+
     let token = auth::session_token(headers).ok_or(ApiError::Unauthorized)?;
     if !auth::session_is_valid(&state.pool, token).await? {
         return Err(ApiError::Unauthorized);
@@ -140,7 +189,19 @@ async fn guard(
         return Err(ApiError::CsrfRejected);
     }
     request.extensions_mut().insert(SessionAuth);
+    request.extensions_mut().insert(Visibility::Names);
     Ok(next.run(request).await)
+}
+
+async fn service_token_is_valid(pool: &PgPool, token: &str) -> Result<bool, sqlx::Error> {
+    let hash = token_hash(token);
+    sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM core.service_tokens
+                          WHERE token_hash = $1 AND revoked_at IS NULL) AS "valid!""#,
+        hash,
+    )
+    .fetch_one(pool)
+    .await
 }
 
 /// Identifiant de requête, et le seul journal d'accès : jamais d'en-tête ni de corps.
@@ -180,6 +241,8 @@ enum ApiError {
     InvalidCredentials,
     CsrfRejected,
     InvalidDate,
+    InvalidParameter(&'static str),
+    NotFound,
     InvalidJson,
     BatchTooLarge,
     Internal,
@@ -187,12 +250,18 @@ enum ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        if let Self::InvalidParameter(field) = self {
+            let body = json!({ "error": "invalid_parameter", "field": field });
+            return (StatusCode::BAD_REQUEST, Json(body)).into_response();
+        }
         let (status, code) = match &self {
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             // Le même refus quelle qu'en soit la cause : mauvais identifiant, mauvais mot de passe, pas de compte.
             Self::InvalidCredentials => (StatusCode::UNAUTHORIZED, "invalid_credentials"),
             Self::CsrfRejected => (StatusCode::FORBIDDEN, "csrf_rejected"),
             Self::InvalidDate => (StatusCode::BAD_REQUEST, "invalid_date"),
+            Self::InvalidParameter(_) => (StatusCode::BAD_REQUEST, "invalid_parameter"),
+            Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             Self::InvalidJson => (StatusCode::BAD_REQUEST, "invalid_json"),
             Self::BatchTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "batch_too_large"),
             Self::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
@@ -215,6 +284,16 @@ impl From<sqlx::Error> for ApiError {
             None => error!(error = %err, "database unavailable"),
         }
         Self::Internal
+    }
+}
+
+impl From<ReadError> for ApiError {
+    fn from(err: ReadError) -> Self {
+        match err {
+            ReadError::Invalid(field) => Self::InvalidParameter(field),
+            ReadError::NotFound => Self::NotFound,
+            ReadError::Db(err) => err.into(),
+        }
     }
 }
 
@@ -1032,4 +1111,149 @@ async fn get_sources_health(
             })
             .collect(),
     }))
+}
+
+// ─── Lectures génériques (outils du MCP, voir `read`) ────────────────────────
+
+/// Les paramètres des lectures génériques, tous facultatifs ici : chaque route dit ce qu'elle exige,
+/// et une erreur ne nomme que le paramètre, jamais sa valeur.
+#[derive(Deserialize)]
+struct ReadParams {
+    metric: Option<String>,
+    level: Option<String>,
+    key: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
+    form: Option<String>,
+    group: Option<String>,
+    limit: Option<String>,
+    q: Option<String>,
+}
+
+impl ReadParams {
+    fn period(&self) -> Result<Period, ApiError> {
+        Ok(Period::parse(self.from.as_deref(), self.to.as_deref())?)
+    }
+
+    async fn metric(&self, pool: &PgPool) -> Result<read::Metric, ApiError> {
+        let name = self
+            .metric
+            .as_deref()
+            .ok_or(ApiError::InvalidParameter("metric"))?;
+        Ok(read::metric(pool, name).await?)
+    }
+
+    fn required(value: &Option<String>, field: &'static str) -> Result<String, ApiError> {
+        value
+            .as_deref()
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned)
+            .ok_or(ApiError::InvalidParameter(field))
+    }
+}
+
+/// Une requête mal formée (paramètre répété, encodage) est un paramètre invalide, sans plus de détail.
+type ReadQuery = Result<Query<ReadParams>, axum::extract::rejection::QueryRejection>;
+
+fn params(query: ReadQuery) -> Result<ReadParams, ApiError> {
+    query
+        .map(|Query(p)| p)
+        .map_err(|_| ApiError::InvalidParameter("query"))
+}
+
+async fn get_inventory(State(state): State<AppState>) -> Result<Json<read::Inventory>, ApiError> {
+    Ok(Json(read::inventory(&state.pool).await?))
+}
+
+async fn get_search(
+    State(state): State<AppState>,
+    query: ReadQuery,
+) -> Result<Json<Vec<read::Found>>, ApiError> {
+    let p = params(query)?;
+    let q = ReadParams::required(&p.q, "q")?;
+    if let Some(metric) = p.metric.as_deref() {
+        let metric = read::metric(&state.pool, metric).await?;
+        if let Some(level) = p.level.as_deref() {
+            metric.check_level(level)?;
+        }
+    }
+    let limit = read::parse_limit(p.limit.as_deref(), 10, read::MAX_SEARCH, "limit")?;
+    Ok(Json(
+        read::search(
+            &state.pool,
+            &q,
+            p.metric.as_deref(),
+            p.level.as_deref(),
+            limit,
+        )
+        .await?,
+    ))
+}
+
+async fn get_occurrences(
+    State(state): State<AppState>,
+    query: ReadQuery,
+) -> Result<Json<read::Occurrences>, ApiError> {
+    let p = params(query)?;
+    let metric = p.metric(&state.pool).await?;
+    let period = p.period()?;
+    let (level, key) = read::item_filter(&metric, p.level.as_deref(), p.key.as_deref())?;
+    let form = p.form.as_deref().unwrap_or("list");
+    let limit = read::parse_limit(p.limit.as_deref(), 100, read::MAX_LIST, "limit")?;
+    Ok(Json(
+        read::occurrences(&state.pool, &metric, period, level, key, form, limit).await?,
+    ))
+}
+
+async fn get_durations(
+    State(state): State<AppState>,
+    query: ReadQuery,
+) -> Result<Json<read::Durations>, ApiError> {
+    let p = params(query)?;
+    let metric = p.metric(&state.pool).await?;
+    let period = p.period()?;
+    let (level, key) = read::item_filter(&metric, p.level.as_deref(), p.key.as_deref())?;
+    let group = p.group.as_deref().unwrap_or("day");
+    Ok(Json(
+        read::durations(&state.pool, &metric, period, level, key, group).await?,
+    ))
+}
+
+async fn get_item(
+    State(state): State<AppState>,
+    query: ReadQuery,
+) -> Result<Json<read::Item>, ApiError> {
+    let p = params(query)?;
+    let metric = p.metric(&state.pool).await?;
+    let level = ReadParams::required(&p.level, "level")?;
+    let key = ReadParams::required(&p.key, "key")?;
+    Ok(Json(read::item(&state.pool, &metric, &level, &key).await?))
+}
+
+async fn get_top(
+    State(state): State<AppState>,
+    query: ReadQuery,
+) -> Result<Json<read::Top>, ApiError> {
+    let p = params(query)?;
+    let metric = p.metric(&state.pool).await?;
+    let level = ReadParams::required(&p.level, "level")?;
+    let period = p.period()?;
+    let limit = read::parse_limit(p.limit.as_deref(), 20, read::MAX_TOP, "limit")?;
+    Ok(Json(
+        read::top(&state.pool, &metric, &level, period, limit).await?,
+    ))
+}
+
+async fn get_discoveries(
+    State(state): State<AppState>,
+    query: ReadQuery,
+) -> Result<Json<read::Discoveries>, ApiError> {
+    let p = params(query)?;
+    let metric = p.metric(&state.pool).await?;
+    let level = ReadParams::required(&p.level, "level")?;
+    let period = p.period()?;
+    let limit = read::parse_limit(p.limit.as_deref(), 100, read::MAX_LIST, "limit")?;
+    Ok(Json(
+        read::discoveries(&state.pool, &metric, &level, period, limit).await?,
+    ))
 }

@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT metric, shape::text AS \"shape!\", item_levels, discovery, duration_from\n           FROM core.metrics WHERE metric = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "metric",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.metrics",
+            "name": "metric"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "shape!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "item_levels",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "core.metrics",
+            "name": "item_levels"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "discovery",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "core.metrics",
+            "name": "discovery"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "duration_from",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.metrics",
+            "name": "duration_from"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "34e1c20ac5ee7ee353af0608ff7548cdb5e36a4c8430b1613e5990967efa1730"
+}

@@ -1,0 +1,59 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.metric AS \"metric!\", src.name AS source, count(*) AS \"events!\",\n                  min(e.occurred_at) AS \"first_at!\", max(e.occurred_at) AS \"last_at!\"\n           FROM derived.live_events e\n           JOIN core.sources src ON src.id = e.source_id\n           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n           GROUP BY e.metric, src.name\n           ORDER BY 1, 4",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "metric!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "metric"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "source",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.sources",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "events!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "first_at!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "last_at!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true,
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "f34181a59d370a6476ae68874b1dafeb34894b876dfc87b1ec3b7d38d84a2d3e"
+}

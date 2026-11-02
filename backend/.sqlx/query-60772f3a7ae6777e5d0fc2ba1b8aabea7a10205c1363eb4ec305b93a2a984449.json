@@ -1,0 +1,45 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT timezone, launch_date,\n                  (now() AT TIME ZONE timezone)::date AS \"today!\"\n           FROM core.settings",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "timezone",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.settings",
+            "name": "timezone"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "launch_date",
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "core.settings",
+            "name": "launch_date"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "today!",
+        "type_info": "Date",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true,
+      null
+    ]
+  },
+  "hash": "60772f3a7ae6777e5d0fc2ba1b8aabea7a10205c1363eb4ec305b93a2a984449"
+}

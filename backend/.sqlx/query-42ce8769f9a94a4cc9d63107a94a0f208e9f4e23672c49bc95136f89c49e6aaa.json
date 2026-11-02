@@ -1,0 +1,74 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT count(*) AS \"occurrences!\", min(x.occurred_at) AS first_at,\n                  max(x.occurred_at) AS last_at,\n                  to_char(min(x.occurred_at) AT TIME ZONE (SELECT timezone FROM core.settings), 'YYYY-MM-DD HH24:MI') AS first_local,\n                  to_char(max(x.occurred_at) AT TIME ZONE (SELECT timezone FROM core.settings), 'YYYY-MM-DD HH24:MI') AS last_local,\n                  (array_agg(x.display ORDER BY x.occurred_at DESC, x.seq DESC))[1] AS name,\n                  (array_agg(x.seq ORDER BY x.occurred_at DESC, x.seq DESC))[1] AS seq,\n                  (array_agg(x.ordinal ORDER BY x.occurred_at DESC, x.seq DESC))[1] AS ordinal\n           FROM derived.live_event_items x\n           WHERE x.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND x.metric = $1 AND x.level = $2 AND x.item_key = $3",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "occurrences!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "first_at",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "last_at",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "first_local",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "last_local",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "name",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "seq",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "ordinal",
+        "type_info": "Int2",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "42ce8769f9a94a4cc9d63107a94a0f208e9f4e23672c49bc95136f89c49e6aaa"
+}

@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.seq AS \"seq!\", e.ordinal AS \"ordinal!\", e.occurred_at AS \"occurred_at!\",\n                          to_char(e.occurred_at AT TIME ZONE (SELECT timezone FROM core.settings),\n                                  'YYYY-MM-DD HH24:MI') AS \"local!\",\n                          count(*) OVER () AS \"total!\"\n                   FROM derived.live_events e\n                   WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n                     AND e.metric = $1\n                     AND e.occurred_at >= ($2::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n                     AND e.occurred_at < (($3::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n                     AND ($4::text IS NULL OR (e.seq, e.ordinal) IN (\n                           SELECT i.seq, i.ordinal FROM derived.event_items i\n                           WHERE i.generation = e.generation AND i.metric = $1\n                             AND i.level = $4 AND i.item_key = $5))\n                   ORDER BY e.occurred_at, e.seq\n                   LIMIT $6",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "seq!",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "ordinal!",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "ordinal"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "occurred_at!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "local!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "total!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Date",
+        "Date",
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "c16e834a40fcf99d9c0e7fc7367cb5e289e4d2fec62c582c28f1d2de3587a332"
+}

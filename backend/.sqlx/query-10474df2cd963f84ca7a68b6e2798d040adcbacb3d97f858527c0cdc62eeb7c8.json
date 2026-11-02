@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT launch_date FROM core.settings",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "launch_date",
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "core.settings",
+            "name": "launch_date"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "10474df2cd963f84ca7a68b6e2798d040adcbacb3d97f858527c0cdc62eeb7c8"
+}

@@ -57,6 +57,34 @@ pub async fn revoke_source(pool: &PgPool, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Crée un jeton de service de l'API de lecture (le serveur MCP) et le renvoie : seul son haché est
+/// conservé. Il ne lit qu'au niveau « pseudonymes » et n'ouvre aucune écriture (voir `api::guard`).
+pub async fn create_service_token(pool: &PgPool, name: &str) -> Result<String> {
+    let token = generate_token()?;
+    let hash = token_hash(&token);
+    sqlx::query!(
+        "INSERT INTO core.service_tokens (name, token_hash) VALUES ($1, $2)",
+        name,
+        hash,
+    )
+    .execute(pool)
+    .await?;
+    Ok(token)
+}
+
+pub async fn revoke_service_token(pool: &PgPool, name: &str) -> Result<()> {
+    let revoked = sqlx::query!(
+        "UPDATE core.service_tokens SET revoked_at = now() WHERE name = $1 AND revoked_at IS NULL",
+        name,
+    )
+    .execute(pool)
+    .await?;
+    if revoked.rows_affected() == 0 {
+        bail!("jeton de service inconnu ou déjà révoqué : {name}");
+    }
+    Ok(())
+}
+
 /// Déclare un type pour une source ; une déclaration révoquée redevient active.
 pub async fn grant_kind(pool: &PgPool, source: &str, kind: &str) -> Result<()> {
     let granted = sqlx::query!(

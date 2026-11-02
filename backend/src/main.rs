@@ -93,6 +93,11 @@ enum AdminCommand {
     },
     /// Révoque une source et son token
     RevokeSource { name: String },
+    /// Crée un jeton de service de l'API de lecture (serveur MCP, niveau pseudonymes, sans écriture) ;
+    /// il n'est affiché qu'à cette occasion
+    CreateServiceToken { name: String },
+    /// Révoque un jeton de service
+    RevokeServiceToken { name: String },
     /// Déclare un type de donnée pour une source
     GrantKind { source: String, kind: String },
     /// Retire un type de donnée à une source
@@ -302,6 +307,15 @@ async fn run_admin(database_url: &str, command: AdminCommand) -> Result<()> {
         AdminCommand::RevokeSource { name } => {
             admin::revoke_source(&pool, &name).await?;
             eprintln!("source {name} révoquée");
+        }
+        AdminCommand::CreateServiceToken { name } => {
+            let token = admin::create_service_token(&pool, &name).await?;
+            println!("{token}");
+            eprintln!("jeton de service {name} créé ; conservez-le, il ne sera plus affiché");
+        }
+        AdminCommand::RevokeServiceToken { name } => {
+            admin::revoke_service_token(&pool, &name).await?;
+            eprintln!("jeton de service {name} révoqué");
         }
         AdminCommand::GrantKind { source, kind } => {
             admin::grant_kind(&pool, &source, &kind).await?;

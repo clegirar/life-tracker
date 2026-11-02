@@ -47,6 +47,7 @@ PostgreSQL 18, version majeure figée (`postgres:18.6`). Deux extensions : `pg_t
 | `people`, `pseudonyms` | L'annuaire : une personne et son nom affiché, ses pseudonymes (numéro, e-mail). |
 | `settings` | Une ligne : date de mise en ligne, fuseau des journées (`Europe/Paris`). |
 | `account`, `sessions` | Le compte unique de la web app et ses sessions. |
+| `service_tokens` | Les jetons de service de l'API de lecture (le serveur MCP) : nom, SHA-256 du jeton, création, révocation. |
 
 ### `derived` : recalculable
 
@@ -97,8 +98,8 @@ Les messages sont hors POC depuis le 31 oct. 2026 : leur type et leur métrique 
 | Rôle | Sert à | Peut |
 | --- | --- | --- |
 | `tracker_owner` | Les migrations, et rien d'autre | Tout, sauf ce que les triggers refusent |
-| `tracker_app` | Le backend à l'exécution | Ajouter et lire le journal ; mettre à jour le dernier contact et les rejets des sources ; gérer l'annuaire et les sessions ; tout dans `derived` |
-| `tracker_admin` | L'outil d'administration, sur le NAS uniquement | Lire tout `core` ; gérer les registres ; rédiger une purge (charge utile et référence seulement) ; tout dans `derived` |
+| `tracker_app` | Le backend à l'exécution | Ajouter et lire le journal ; mettre à jour le dernier contact et les rejets des sources ; gérer l'annuaire et les sessions ; lire les jetons de service ; tout dans `derived` |
+| `tracker_admin` | L'outil d'administration, sur le NAS uniquement | Lire tout `core` ; gérer les registres et les jetons de service ; rédiger une purge (charge utile et référence seulement) ; tout dans `derived` |
 
 Les rôles et la base sont créés par `db/init/01-roles.sh` à la création du volume ; les mots de passe viennent de l'environnement.
 
@@ -123,6 +124,10 @@ Les rôles et la base sont créés par `db/init/01-roles.sh` à la création du 
 **Lecture d'un jour.** Le jour devient un intervalle UTC d'après `core.settings.timezone`, lu en sous-requête et jamais en jointure (cette table d'une ligne, jamais analysée, ferait choisir un mauvais plan), puis `derived.live_events` donne les événements. La jointure avec `core.records` et `core.sources` n'apporte que la clé et le nom de la source, pour annuler : jamais la charge utile ni le choix des événements.
 
 **Lecture des découvertes.** Calculée à chaque lecture dans `GET /v1/days/{date}/music`, jamais stockée. Pour chaque élément écouté ce jour-là : aucune écoute vivante du même niveau et de la même clé avant minuit, heure de Paris. Le champ `first_listens` liste ces éléments avec leurs `known_marks` ; c'est une découverte si cette liste est vide (`discoveries` les compte). Toutes les lectures fixent le numéro de génération active, ce qui ouvre les index, et le pool coupe le JIT : voir le journal des décisions de l'architecture.
+
+**Jetons de service** (étape 9, migration `20261102120000_service_tokens.sql`). Le serveur MCP lit l'API de lecture avec un jeton à lui, au niveau « pseudonymes ». Une table à part plutôt qu'une source à token : une source écrit au journal et a un dernier contact, un jeton de service ne fait que lire, et rien ne doit pouvoir lui accorder un type. `admin create-service-token` le crée (seul le SHA-256 est gardé, comme les tokens de source) ; `revoke-service-token` pose `revoked_at`. `tracker_app` ne peut que le lire : le backend vérifie un jeton, sans jamais en créer.
+
+**Lectures génériques** (étape 9, `backend/src/read.rs`). Inventaire, recherche, occurrences, durée cumulée, un élément, classement, découvertes : calculées à chaque lecture sur `derived.live_*`, comme le reste, la métrique en paramètre et ses niveaux, sa découverte et la source de sa durée lues dans `core.metrics`. La recherche passe par l'index `gin_trgm_ops` de `event_items` (clé qui contient le texte normalisé, ou mots proches) ; les autres par l'index `(generation, metric, level, item_key, occurred_at)`. Pas de table ni d'index de plus.
 
 **Lecture d'un mois** (`GET /v1/months/{AAAA-MM}`). Calculée à chaque lecture, jamais stockée, sans table ni index de plus. Les valeurs du mois groupent `derived.live_events` par jour de Paris (`occurred_at AT TIME ZONE`, donc des jours de 23 et 25 heures justes) ; les erreurs du jour viennent de `derived.interpretation_errors` joint au journal par son numéro, pour la date de l'enregistrement ; la couverture de chaque métrique, source par source, est le minimum et le maximum de ses événements vivants ; les sources muettes suivent la règle de `/v1/sources/health`. Le détail des règles est dans le journal des décisions de l'architecture. Pas de migration à l'étape 8.
 
@@ -149,4 +154,4 @@ Les migrations y sont appliquées par `psql`, une transaction par fichier. `back
 
 ## Hors POC
 
-Stockage de fichiers et références par empreinte, jalons et notifications (avec leur mémoire de ce qui a déjà été signalé), catalogue de titres, jeton de service et OAuth du serveur MCP, snapshots, export complet.
+Stockage de fichiers et références par empreinte, jalons et notifications (avec leur mémoire de ce qui a déjà été signalé), catalogue de titres, snapshots, export complet. Les jetons OAuth du serveur MCP ne sont pas dans la base : seul le backend la touche, et ils vivent hachés dans le volume du conteneur MCP.

@@ -1,0 +1,54 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT k.occurred_at AS \"at!\", src.name AS \"source!\",\n                  k.display AS \"display!\"\n           FROM derived.live_event_items k\n           JOIN core.records r ON r.seq = k.seq\n           JOIN core.sources src ON src.id = r.source_id\n           WHERE k.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND k.metric IN (SELECT m.metric FROM core.metrics m\n                              WHERE m.applies_to = $1 AND m.shape = 'declaration')\n             AND k.level = $2 AND k.item_key = $3\n           ORDER BY k.occurred_at, k.seq",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "at!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "derived.live_event_items",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "source!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.sources",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "display!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.live_event_items",
+            "name": "display"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "e5623e59b061cecaec23a9705e04cf3f7605d54bcc8a954cbbc26ef2d553a621"
+}

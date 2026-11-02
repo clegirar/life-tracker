@@ -1,0 +1,48 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT (e.occurred_at AT TIME ZONE (SELECT timezone FROM core.settings))::date AS \"day!\",\n                          count(*) AS \"count!\",\n                          to_char(min(e.occurred_at) AT TIME ZONE (SELECT timezone FROM core.settings), 'HH24:MI') AS \"first!\",\n                          to_char(max(e.occurred_at) AT TIME ZONE (SELECT timezone FROM core.settings), 'HH24:MI') AS \"last!\"\n                   FROM derived.live_events e\n                   WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n                     AND e.metric = $1\n                     AND e.occurred_at >= ($2::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n                     AND e.occurred_at < (($3::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n                     AND ($4::text IS NULL OR (e.seq, e.ordinal) IN (\n                           SELECT i.seq, i.ordinal FROM derived.event_items i\n                           WHERE i.generation = e.generation AND i.metric = $1\n                             AND i.level = $4 AND i.item_key = $5))\n                   GROUP BY 1\n                   ORDER BY 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "day!",
+        "type_info": "Date",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "first!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "last!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Date",
+        "Date",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "189f98b5523ae21a17795ae9d20b1bc54f85b941daed5fbe79f98947110c567d"
+}
