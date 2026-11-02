@@ -333,7 +333,7 @@ Seulement alors, marquer l'étape 6 « Fait » dans `docs/poc.md`.
 
 ## Mise à jour vers l'étape 7 (historique Apple)
 
-À faire une fois, sur le NAS déjà en service, après un workflow vert. Rien n'a encore été joué sur le NAS ; le temps ci-dessous est extrapolé. **Pas de nouvelle migration** : `_sqlx_migrations` reste à 2 lignes. **Pas de `rebuild` obligatoire** : le nouvel interprète n'a rien à relire, et les écoutes existantes ne changent pas. Dans chaque `docker compose run -T`, `</dev/null` évite d'avaler la ligne collée suivante.
+À faire une fois, sur le NAS déjà en service, après un workflow vert. Joué le 2 nov. 2026 : interprétation finie en moins de 15 minutes sur le NAS, sans mesure plus fine. **Pas de nouvelle migration** : `_sqlx_migrations` reste à 2 lignes. **Pas de `rebuild` obligatoire** : le nouvel interprète n'a rien à relire, et les écoutes existantes ne changent pas. Dans chaque `docker compose run -T`, `</dev/null` évite d'avaler la ligne collée suivante.
 
 **Ce qu'il faut attendre.** Essai de la vraie archive sur le Mac, base limitée à 0,5 CPU : envoi en 5 s, interprétation de 28 295 lignes en 145 s environ. Le Celeron et ses disques ne sont pas ce Mac : compter de 3 à 15 minutes, sans mesure, et lire la progression à l'étape 5. Pendant ce temps, café, Last.fm et lectures continuent : sur le Mac, un scrobble était écrit en 50 ms et interprété en moins d'une seconde.
 

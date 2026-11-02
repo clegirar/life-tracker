@@ -17,7 +17,7 @@ Le POC couvre le compteur de cafés et les écoutes de musique (Last.fm en direc
 | 4 | Déploiement sur le NAS | Fait, raccourci iOS reporté |
 | 5 | Musique en direct (Last.fm) | Fait |
 | 6 | Découvertes et « déjà connu » | Fait |
-| 7 | Historique Apple | Préparé, à confirmer sur le NAS |
+| 7 | Historique Apple | Fait |
 | 8 | Calendrier et complétude | À faire |
 | 9 | Serveur MCP | À faire |
 | 10 | Peaufiner l'interface | À faire |
@@ -149,7 +149,7 @@ Fait le 1er nov. 2026 sur le vrai NAS : marquage, annulation et indépendance de
 
 ## Étape 7 : historique Apple
 
-Préparé le 1er nov. 2026, vérifié par des tests sur des fixtures fictives et par un essai complet de la vraie archive sur un PostgreSQL jetable du Mac (voir le journal des décisions de [l'architecture](architecture.md)). Rien n'a tourné sur le NAS : à moi de le confirmer en suivant [le runbook](deploiement.md), puis de marquer l'étape « Fait ».
+Fait le 2 nov. 2026 sur le vrai NAS, en suivant [le runbook](deploiement.md) : 60 720 lignes lues, 28 295 acceptées, 0 rejetée, et un réimport ne donne que des `duplicate` ; 16 champs au journal, 20 682 écoutes dont 99 sans artiste, aucune erreur. Last.fm fait foi depuis le 12 oct. 2026 à 11:11 UTC : 2,1 jours de chevauchement, 121 lignes Apple gardées au journal et ignorées par les vues. Sur 219 titres Last.fm, 113 sont connus d'Apple sous la même clé et 7 seulement sous un autre artiste. Découvertes reculées vérifiées dans la web app, `admin rebuild` à 0 différence (génération 4), archive supprimée du NAS et droit révoqué. Empreintes des trois fichiers dans `imports/apple-import-1.txt`, sur le NAS. Préparé la veille, sur des fixtures fictives et un essai de la vraie archive sur un PostgreSQL jetable du Mac (voir le journal des décisions de [l'architecture](architecture.md)).
 
 **Prérequis :** avoir l'export réel, pour connaître ses colonnes.
 
