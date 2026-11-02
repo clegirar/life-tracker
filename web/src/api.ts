@@ -159,6 +159,34 @@ export interface MetricHealth {
 export interface SourcesHealth {
   sources: SourceHealth[]
   metrics: MetricHealth[]
+  /** Le compteur global : enregistrements en erreur d'interprétation. */
+  errors: number
+}
+
+export interface MonthMetric {
+  metric: string
+  label: string
+  unit: string | null
+}
+
+/** Un jour de la vue du mois. */
+export interface MonthDay {
+  date: string
+  /** Par métrique : l'agrégat du jour, ou `null` quand il n'y a pas de données, ce qui n'est pas zéro. */
+  values: Record<string, number | null>
+  /** Enregistrements de ce jour en erreur : la journée est incomplète. */
+  errors: number
+  /** Sources muettes qui n'ont pas encore couvert ce jour. */
+  pending: string[]
+  /** Métriques sans nouvelle donnée depuis leur seuil de fraîcheur. */
+  to_check: string[]
+}
+
+export interface Month {
+  month: string
+  today: string
+  metrics: MonthMetric[]
+  days: MonthDay[]
 }
 
 async function read<T>(path: string): Promise<T> {
@@ -169,4 +197,5 @@ async function read<T>(path: string): Promise<T> {
 }
 
 export const fetchDayMusic = (date: string) => read<DayMusic>(`/v1/days/${date}/music`)
+export const fetchMonth = (month: string) => read<Month>(`/v1/months/${month}`)
 export const fetchSourcesHealth = () => read<SourcesHealth>('/v1/sources/health')

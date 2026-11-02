@@ -2,6 +2,7 @@ pub mod admin;
 pub mod api;
 pub mod apple;
 pub mod auth;
+pub mod calendar;
 pub mod collector;
 pub mod db;
 pub mod engine;

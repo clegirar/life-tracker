@@ -14,7 +14,7 @@ SERVER_PID=""
 
 cleanup() {
   [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true
-  docker rm -f "$C" >/dev/null 2>&1 || true
+  docker rm -f -v "$C" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -92,6 +92,8 @@ done
 [ -n "${up:-}" ] || { cat "$LOG" >&2; echo "ÉCHEC : le backend n'a pas démarré" >&2; exit 1; }
 
 export E2E_API_URL="http://127.0.0.1:$API_PORT"
+# Le conteneur jetable : un test de complétude y simule une source muette, rien d'autre.
+export E2E_DB_CONTAINER="$C"
 export API_TARGET="$E2E_API_URL"
 E2E_WEB_PORT="$(free_port)"
 export E2E_WEB_PORT

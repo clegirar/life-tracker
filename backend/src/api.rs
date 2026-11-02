@@ -24,6 +24,7 @@ use uuid::Uuid;
 
 use crate::admin::{generate_token, token_hash};
 use crate::auth;
+use crate::calendar;
 use crate::ingest::{Envelope, RejectReason, Rejection, parse_envelope};
 use crate::music::fold;
 
@@ -86,6 +87,7 @@ fn routes() -> Router<AppState> {
         .route("/v1/auth/logout", post(logout))
         .route("/v1/days/{date}", get(get_day))
         .route("/v1/days/{date}/music", get(get_day_music))
+        .route("/v1/months/{month}", get(get_month))
         .route("/v1/sources/health", get(get_sources_health))
         .route("/health", get(health))
 }
@@ -901,6 +903,15 @@ async fn get_day_music(
     }))
 }
 
+/// Le mois, jour par jour : valeurs, erreurs, journées en attente ou à vérifier (voir `calendar`).
+async fn get_month(
+    State(state): State<AppState>,
+    Path(month): Path<String>,
+) -> Result<Json<calendar::Month>, ApiError> {
+    let start = calendar::parse_month(&month).ok_or(ApiError::InvalidDate)?;
+    Ok(Json(calendar::month(&state.pool, start).await?))
+}
+
 #[derive(Serialize)]
 struct SourceHealth {
     name: String,
@@ -933,6 +944,8 @@ struct SourceCoverage {
 struct SourcesHealth {
     sources: Vec<SourceHealth>,
     metrics: Vec<MetricHealth>,
+    /// Le compteur global : enregistrements en erreur d'interprétation dans la génération active.
+    errors: i64,
 }
 
 /// Générique : tout vient des seuils des registres. Une source est jugée sur son dernier contact
@@ -982,7 +995,14 @@ async fn get_sources_health(
     )
     .fetch_all(&state.pool)
     .await?;
+    let errors = sqlx::query_scalar!(
+        r#"SELECT count(*) AS "errors!" FROM derived.interpretation_errors
+           WHERE generation = (SELECT id FROM derived.generations WHERE state = 'active')"#,
+    )
+    .fetch_one(&state.pool)
+    .await?;
     Ok(Json(SourcesHealth {
+        errors,
         sources: sources
             .into_iter()
             .map(|s| SourceHealth {

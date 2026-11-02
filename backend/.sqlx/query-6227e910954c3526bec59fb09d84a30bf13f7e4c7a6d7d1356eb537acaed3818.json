@@ -1,0 +1,33 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT name,\n                  (COALESCE(last_seen_at, created_at) AT TIME ZONE (SELECT timezone FROM core.settings))::date AS \"since!\"\n           FROM core.sources\n           WHERE silence_threshold IS NOT NULL AND revoked_at IS NULL\n             AND now() - COALESCE(last_seen_at, created_at) > silence_threshold\n           ORDER BY name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.sources",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "since!",
+        "type_info": "Date",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "6227e910954c3526bec59fb09d84a30bf13f7e4c7a6d7d1356eb537acaed3818"
+}

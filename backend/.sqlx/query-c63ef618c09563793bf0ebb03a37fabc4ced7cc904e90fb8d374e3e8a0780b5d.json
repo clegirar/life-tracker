@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT count(*) AS \"errors!\" FROM derived.interpretation_errors\n           WHERE generation = (SELECT id FROM derived.generations WHERE state = 'active')",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "errors!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "c63ef618c09563793bf0ebb03a37fabc4ced7cc904e90fb8d374e3e8a0780b5d"
+}

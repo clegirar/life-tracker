@@ -452,6 +452,73 @@ Seulement alors, marquer l'étape 7 « Fait » dans `docs/poc.md`.
 
 **Retour arrière.** Sans migration : l'ancien `compose.yaml`, l'ancien `TRACKER_TAG`, `pull`, `up -d`. Le journal garde les lignes Apple, qui ne sont plus interprétées. Pour annuler seulement la priorité, relancer `set-precedence` avec une autre date ; retirer la ligne demande `psql` : `delete from core.source_precedence where metric = 'music.listen'`, sans rejeu. Effacer les lignes Apple elles-mêmes demande une purge, à ne décider que si elles n'auraient jamais dû entrer.
 
+## Mise à jour vers l'étape 8 (calendrier et complétude)
+
+À faire une fois, sur le NAS déjà en service, après un workflow vert. **Pas de nouvelle migration** : `_sqlx_migrations` reste à 2 lignes. **Pas de `rebuild`** : aucun interprète ne change, la vue du mois se calcule à la lecture. **Pas de secret ni de droit nouveau.** Dans chaque `docker compose run -T` ou `exec -T`, `</dev/null` évite d'avaler la ligne collée suivante.
+
+**`compose.yaml` ne change pas** depuis l'étape 7. Le vérifier plutôt que le supposer : sur le Mac, `shasum -a 256 compose.yaml` à la racine du dépôt doit donner `514ac3a37119cfac3779bf0356b6292a40559524287cf3229bf7e4a634bc5865`, et la même empreinte sur le NAS (étape 1). Si elle diffère sur le NAS, le remplacer comme à l'étape 7 (`scp -O compose.yaml NAS:/tmp/`, puis `mv`, `chown root:root`, `chmod 600`) avant de continuer, et revérifier l'empreinte.
+
+1. Sur le NAS, en root dans le dossier en `700` :
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   sha256sum compose.yaml   # 514ac3a3…bc5865, la même que sur le Mac
+   sed -i 's/^TRACKER_TAG=.*/TRACKER_TAG=NOUVEAU_SHA/' .env
+   sudo docker compose config -q
+   sudo docker compose pull
+   sudo docker compose up -d
+   sudo docker compose ps -a
+   sudo docker compose logs migrate | tail -3
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select (select count(*) from _sqlx_migrations), (select count(*) from derived.interpretation_errors)" </dev/null   # 2|0
+   ```
+
+2. La nouvelle route exige la session, comme les autres. Sans cookie, par le même nginx que l'iPhone :
+
+   ```sh
+   sudo docker compose exec -T web wget -S -q -O /dev/null http://127.0.0.1:8080/v1/months/2026-10 </dev/null 2>&1 | grep -E 'HTTP/|Cache-Control'   # 401 et no-store
+   exit
+   ```
+
+3. Sur l'iPhone, page du jour : « ‹ Novembre » en haut à gauche ouvre le mois. Attendu avec les vraies données :
+   - novembre et octobre 2026 : un chiffre d'écoutes (rose) chaque jour, un chiffre de cafés (brun) à partir du 31 octobre seulement ; avant, la ligne des cafés est vide, sans 0 ni marque ;
+   - « Aucun enregistrement en erreur » sous les chevrons, et aucune marque si tout va bien ;
+   - en reculant mois par mois : des écoutes de l'historique Apple jusqu'en janvier 2022, des 0 gris les jours sans écoute, et rien avant la première écoute (« Sans chiffre : pas de données ») ; ni trou ni double compte autour du 12 octobre 2026 ;
+   - toucher un jour ouvre sa page, et le « ‹ » suivi du nom du mois y ramène. Regarder en clair et en sombre.
+
+4. Vérifier le critère **« une source muette marque les journées non couvertes »**, sans rien casser : couper le collecteur, attendre le seuil, regarder, relancer.
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   sudo docker compose stop collector
+   exit
+   ```
+
+   Plus de 6 h après le dernier passage réussi, le mois montre « Last.fm ne répond plus » et un anneau sur aujourd'hui (et sur la veille si le dernier contact y était) ; le libellé d'un jour dit « en attente de Last.fm ». Les jours d'avant n'en ont pas. Puis :
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   sudo docker compose start collector
+   sudo docker compose logs collector | tail -3   # « collect pass completed »
+   exit
+   ```
+
+   Au passage suivant, recharger : plus aucun anneau, et les écoutes de la coupure arrivent d'elles-mêmes (relecture des 48 dernières heures). Pour ne pas attendre 6 h, ce contrôle peut se faire sur le Mac : il est couvert par `backend/tests/calendar.rs` et `web/e2e/calendar.spec.ts`.
+
+5. Le critère **« un enregistrement en erreur marque sa journée »** n'est pas à provoquer sur la production : le journal est à vie, et une erreur fabriquée y resterait. Il est couvert par les tests ; sur le NAS, seulement vérifier que le compteur suit la base :
+
+   ```sh
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select count(*) from derived.interpretation_errors e join derived.generations g on g.id = e.generation and g.state = 'active'" </dev/null   # le nombre affiché par le mois
+   ```
+
+6. Le critère **« les journées passées ne sont jamais mises en cache définitif »** : noter un café à une heure passée sur un jour d'il y a quelques jours, depuis sa page, puis revenir au mois : la case le compte aussitôt. L'annuler ensuite. Aucune réponse de `/v1/` n'est gardée (`no-store`, étape 2), et l'app n'a pas de service worker.
+
+Seulement alors, marquer l'étape 8 « Fait » dans `docs/poc.md`.
+
+**Retour arrière.** Sans migration : l'ancien `TRACKER_TAG`, `pull` et `up -d`. Rien n'a été écrit ni au journal ni dans `derived` ; la page du jour perd seulement le lien vers le mois.
+
 ## Vérifier les critères « Terminé quand »
 
 **Un café saisi depuis l'iPhone, par la web app comme par le raccourci, apparaît.**
@@ -536,6 +603,7 @@ Reste à confirmer :
 - l'import du projet dans l'interface de Container Manager, facultatif ;
 - l'accès refusé depuis un autre compte du NAS, si un compte non administrateur existe ;
 - tout l'étape 7 sur le NAS : l'image, le service `apple-import` (droits `10001`, lecture seule, réseau), le temps réel, et la jonction entre l'export et Last.fm. Vérifié sur le Mac par le binaire natif et `compose config`, pas par l'image construite ;
+- tout l'étape 8 sur le NAS : la vue du mois sur les vraies données (écoutes depuis janvier 2022, cafés depuis le 31 oct. 2026, jonction du 12 octobre), son temps de réponse sur le Celeron, et le signal « en attente » après une vraie coupure du collecteur. Vérifié sur le Mac par les tests et des données synthétiques, pas par l'image construite sur le NAS ;
 - tout le collecteur sur le NAS : sortie vers Last.fm, vraies réponses, et le critère de l'étape 5. Vérifié seulement en local, en compose, contre `example.com` et sans clé réelle.
 
 `cpus` n'est pas utilisé dans `compose.yaml` : de mémoire, le noyau de Synology refuse cette limite, sans que j'aie pu le vérifier. Seule la mémoire est limitée.

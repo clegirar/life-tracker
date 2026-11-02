@@ -10,7 +10,7 @@ ROOT="$(dirname "$BACKEND")"
 IMAGE="postgres:18.6"
 C="lt-backend-test-$$"
 
-cleanup() { docker rm -f "$C" >/dev/null 2>&1 || true; }
+cleanup() { docker rm -f -v "$C" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 docker run -d --rm --name "$C" \

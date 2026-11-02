@@ -17,6 +17,7 @@
   --music: #c8102e;
   --on-music: #ffffff;
   --segment-on: #ffffff;
+  --check: #c98500;
   /* Ressort échantillonné : amortissement 0,72, léger dépassement. */
   --spring: linear(0, 0.13, 0.383, 0.632, 0.822, 0.944, 1.009, 1.035, 1.038, 1.031, 1.021, 1.012, 1.005, 1.001, 1);
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -40,6 +41,7 @@
     --music: #ff7a8a;
     --on-music: #2a0509;
     --segment-on: #636366;
+    --check: #ffcc4d;
   }
 }
 
@@ -590,7 +592,215 @@ button:disabled {
   gap: 12px;
 }
 
+/* Le retour au mois, comme le « ‹ Novembre » du Calendrier d'iOS. */
+.back {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -8px 0 -12px -6px;
+  padding-right: 8px;
+  font-size: 17px;
+  color: var(--accent);
+  transition: opacity 120ms var(--ease-out);
+}
+
+.back:active {
+  opacity: 0.5;
+}
+
+.status-quiet {
+  padding: 0 4px;
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--muted);
+}
+
+/* La vue du mois : sept colonnes de 48 px environ à 390 px, assez pour un doigt. */
+.month-card {
+  padding: 8px 6px 10px;
+  transform-origin: top center;
+  transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out);
+}
+
+/* L'arrivée depuis la page du jour : le mois se pose, sans glisser. Une seule fois par ouverture. */
+@starting-style {
+  .month-card {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+.weekdays,
+.month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.weekdays {
+  padding-bottom: 4px;
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--muted);
+}
+
+.month-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Un filet par semaine, comme le mois du Calendrier d'iOS : chaque chiffre reste sous son jour. */
+.month-grid > li {
+  padding-top: 2px;
+  border-top: 0.5px solid var(--separator);
+}
+
+.cell {
+  position: relative;
+  width: 100%;
+  min-height: 62px;
+  padding: 2px 0 4px;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  transition: transform 300ms var(--spring);
+}
+
+.cell:active:not(:disabled) {
+  transform: scale(0.94);
+  transition: transform 100ms var(--ease-out);
+}
+
+.cell:disabled {
+  color: var(--control-disabled);
+}
+
+.cell-number {
+  width: 30px;
+  height: 30px;
+  border-radius: 15px;
+  font-size: 17px;
+  line-height: 30px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.cell[aria-pressed='true'] .cell-number {
+  background: var(--control);
+  font-weight: 600;
+}
+
+.cell[aria-current='date'] .cell-number {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.cell-values {
+  display: flex;
+  margin-top: -2px;
+  flex-direction: column;
+  font-size: 11px;
+  line-height: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.v-coffee {
+  color: var(--accent);
+}
+
+.v-music {
+  color: var(--music);
+}
+
+/* Un vrai zéro se lit, mais en retrait : l'œil va aux jours qui ont quelque chose. */
+.cell-value.is-zero {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.mark {
+  position: absolute;
+  top: 6px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+/* Trois formes, pas seulement trois couleurs : plein, anneau, losange. */
+.mark-incomplete {
+  background: var(--error);
+}
+
+.mark-pending {
+  border: 1.5px solid var(--muted);
+}
+
+.mark-check {
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  background: var(--check);
+  transform: rotate(45deg);
+}
+
+.mark-inline {
+  position: static;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.legend {
+  padding: 0 4px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted);
+}
+
+.legend-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.legend-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Une barre, pas un point : les points sont réservés aux marques de complétude. */
+.legend-swatch {
+  width: 12px;
+  height: 4px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.legend-note {
+  margin-top: 6px;
+}
+
 @media (hover: hover) and (pointer: fine) {
+  .cell:hover:not(:disabled) {
+    background: var(--field);
+  }
+  .back:hover {
+    text-decoration: underline;
+  }
   .round:hover:not(:disabled),
   .primary:hover:not(:disabled),
   .add:hover {
@@ -621,6 +831,15 @@ button:disabled {
   }
   .segment {
     transition: none;
+  }
+  .cell,
+  .cell:active {
+    transform: none;
+    transition: none;
+  }
+  .month-card {
+    transform: none;
+    transition: opacity 150ms linear;
   }
   .known-pill,
   .known:active .known-pill {

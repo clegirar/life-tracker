@@ -350,7 +350,11 @@ async fn invalid_dates_are_refused() {
 #[tokio::test]
 async fn both_read_routes_require_a_session() {
     let app = App::new().await;
-    for path in ["/v1/days/2026-10-16/music", "/v1/sources/health"] {
+    for path in [
+        "/v1/days/2026-10-16/music",
+        "/v1/sources/health",
+        "/v1/months/2026-10",
+    ] {
         let url = format!("{}{path}", app.base);
         assert_eq!(
             app.http.get(&url).send().await.unwrap().status(),

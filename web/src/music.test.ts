@@ -18,6 +18,7 @@ function health(overrides: { silent?: boolean; stale?: boolean; first?: string |
         coverage: first && connected ? [{ source: 'lastfm', first_at: first, last_at: first }] : [],
       },
     ],
+    errors: 0,
   }
 }
 

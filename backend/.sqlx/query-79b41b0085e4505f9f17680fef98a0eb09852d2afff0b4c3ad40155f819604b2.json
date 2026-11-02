@@ -1,0 +1,49 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.metric AS \"metric!\",\n                  (min(e.occurred_at) AT TIME ZONE (SELECT timezone FROM core.settings))::date AS \"first_day!\",\n                  (max(e.occurred_at) AT TIME ZONE (SELECT timezone FROM core.settings))::date AS \"last_day!\",\n                  max(e.occurred_at) AS \"last_at!\"\n           FROM derived.live_events e\n           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND e.metric = ANY($1)\n           GROUP BY e.metric, e.source_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "metric!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "metric"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "first_day!",
+        "type_info": "Date",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "last_day!",
+        "type_info": "Date",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "last_at!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      true,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "79b41b0085e4505f9f17680fef98a0eb09852d2afff0b4c3ad40155f819604b2"
+}

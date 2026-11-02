@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT (r.occurred_at AT TIME ZONE (SELECT timezone FROM core.settings))::date AS \"day!\",\n                  count(*) AS \"errors!\"\n           FROM derived.interpretation_errors x\n           JOIN core.records r ON r.seq = x.seq\n           WHERE x.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND r.occurred_at >= ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n             AND r.occurred_at < ($2::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n           GROUP BY 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "day!",
+        "type_info": "Date",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "errors!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date",
+        "Date"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "5e85d1d74d8cb419ea94a99bf9cb7c1a9e4ce32f08ac08f29032d84c9e3fcb07"
+}

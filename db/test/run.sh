@@ -11,7 +11,7 @@ C2="lt-schema-restore-$$"
 DUMP="$(mktemp)"
 SQL_TESTS=(10_privileges 20_dedup 30_purge 50_anonymization 60_generations 70_days_dst)
 
-cleanup() { docker rm -f "$C1" "$C2" >/dev/null 2>&1 || true; rm -f "$DUMP"; }
+cleanup() { docker rm -f -v "$C1" "$C2" >/dev/null 2>&1 || true; rm -f "$DUMP"; }
 trap cleanup EXIT
 
 start() {

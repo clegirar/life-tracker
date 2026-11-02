@@ -1,4 +1,6 @@
 import { useRef, useState } from 'react'
+import type { MonthDay } from './api'
+import { monthName, monthOf } from './calendar'
 import type { Op } from './reconcile'
 import { isAdd } from './reconcile'
 import { musicAlert } from './music'
@@ -11,6 +13,9 @@ interface Props {
   date: string
   today: string
   onSelect: (date: string) => void
+  onShowMonth: () => void
+  /** La journée vue par le mois : ses erreurs. `null` tant que le mois n'est pas lu. */
+  calendarDay: MonthDay | null
   coffee: ReturnType<typeof useCoffee>
   music: ReturnType<typeof useMusic>
   onLogout: () => void
@@ -34,7 +39,7 @@ function failureText(op: Op, date: string, today: string): string {
     : `${what} de ${when} n'a pas été enregistré${e}.`
 }
 
-export function DayPage({ date, today, onSelect, coffee, music, onLogout }: Props) {
+export function DayPage({ date, today, onSelect, onShowMonth, calendarDay, coffee, music, onLogout }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [picked, setPicked] = useState('12:00')
   const [pickError, setPickError] = useState<string | null>(null)
@@ -78,6 +83,10 @@ export function DayPage({ date, today, onSelect, coffee, music, onLogout }: Prop
 
   return (
     <main className="page">
+      <button type="button" className="back" onClick={onShowMonth} aria-label={`Voir le mois : ${monthName(monthOf(date)).toLowerCase()}`}>
+        <Chevron d="M15 5l-7 7 7 7" />
+        {monthName(monthOf(date))}
+      </button>
       <header className="header">
         <div className="header-text">
           <p className="subtitle">{longDate(date, today)}</p>
@@ -119,6 +128,17 @@ export function DayPage({ date, today, onSelect, coffee, music, onLogout }: Prop
       {coffee.slow && (
         <p className="notice" role="status">
           C'est bien enregistré. Le décompte sera confirmé dès que le serveur l'aura traité.
+        </p>
+      )}
+
+      {calendarDay && calendarDay.errors > 0 && (
+        <p className="notice notice-block" role="status" data-testid="day-incomplete">
+          <span>
+            <strong>Journée incomplète.</strong>{' '}
+            {calendarDay.errors > 1
+              ? `${calendarDay.errors} enregistrements de ce jour sont en erreur : gardés au journal, ils ne sont pas encore comptés.`
+              : 'Un enregistrement de ce jour est en erreur : gardé au journal, il n’est pas encore compté.'}
+          </span>
         </p>
       )}
 

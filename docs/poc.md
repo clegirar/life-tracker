@@ -18,7 +18,7 @@ Le POC couvre le compteur de cafés et les écoutes de musique (Last.fm en direc
 | 5 | Musique en direct (Last.fm) | Fait |
 | 6 | Découvertes et « déjà connu » | Fait |
 | 7 | Historique Apple | Fait |
-| 8 | Calendrier et complétude | À faire |
+| 8 | Calendrier et complétude | Préparé, à confirmer sur le NAS |
 | 9 | Serveur MCP | À faire |
 | 10 | Peaufiner l'interface | À faire |
 
@@ -168,6 +168,8 @@ Fait le 2 nov. 2026 sur le vrai NAS, en suivant [le runbook](deploiement.md) : 6
 - Les découvertes reculent aux dates de l'historique.
 
 ## Étape 8 : calendrier et complétude
+
+Préparé le 2 nov. 2026, à confirmer sur le NAS en suivant [le runbook](deploiement.md) : sans migration, sans `rebuild` et sans changement de `compose.yaml`. Chaque critère a son test : côté backend (`backend/tests/calendar.rs`) l'erreur qui marque son jour de Paris, la source muette qui met en attente les jours non couverts jusqu'à son battement, les jours sans données avant une métrique ou entre deux sources, la métrique à vérifier, les jours de 23 et 25 heures, et un jour passé qui suit les données tardives sous `no-store` ; côté web (`web/e2e/calendar.spec.ts`) les mêmes signaux à l'écran et un mois relu après un café tardif. Affichage vérifié à 390 px sous Chromium, en clair et en sombre. Les choix (couverture, attente par source, compteur sans les rejets) sont au journal des décisions de [l'architecture](architecture.md).
 
 **Contenu**
 
