@@ -122,6 +122,8 @@ describe('connexion', () => {
   test('le formulaire posté par un navigateur, avec sa propre origine, passe', async () => {
     const response = await fetch(`${h.base}/authorize?${authorizeParams().query}`, { headers: TAILNET });
     assert.equal(response.headers.get('referrer-policy'), 'same-origin');
+    // Une balise no-referrer ferait poster le formulaire avec « Origin: null » (vu dans Chromium sur le NAS).
+    assert.ok(!(await response.text()).includes('no-referrer'));
     const form = await openConsent(h, authorizeParams());
     const post = await submitConsent(h, form, {}, { origin: PUBLIC_ORIGIN });
     assert.equal(post.status, 303);

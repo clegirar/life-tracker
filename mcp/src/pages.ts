@@ -12,7 +12,7 @@ function page(title: string, body: string): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<meta name="referrer" content="no-referrer">
+<meta name="referrer" content="same-origin">
 <title>${escape(title)}</title>
 <style>
 :root { --bg: #f5f5f7; --card: #fff; --text: #1d1d1f; --muted: #6e6e73; --accent: #0071e3; --danger: #d70015; }
