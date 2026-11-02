@@ -18,7 +18,7 @@ Le POC couvre le compteur de cafés et les écoutes de musique (Last.fm en direc
 | 5 | Musique en direct (Last.fm) | Fait |
 | 6 | Découvertes et « déjà connu » | Fait |
 | 7 | Historique Apple | Fait |
-| 8 | Calendrier et complétude | Préparé, à confirmer sur le NAS |
+| 8 | Calendrier et complétude | Fait |
 | 9 | Serveur MCP | À faire |
 | 10 | Peaufiner l'interface | À faire |
 
@@ -169,7 +169,7 @@ Fait le 2 nov. 2026 sur le vrai NAS, en suivant [le runbook](deploiement.md) : 6
 
 ## Étape 8 : calendrier et complétude
 
-Préparé le 2 nov. 2026, à confirmer sur le NAS en suivant [le runbook](deploiement.md) : sans migration, sans `rebuild` et sans changement de `compose.yaml`. Chaque critère a son test : côté backend (`backend/tests/calendar.rs`) l'erreur qui marque son jour de Paris, la source muette qui met en attente les jours non couverts jusqu'à son battement, les jours sans données avant une métrique ou entre deux sources, la métrique à vérifier, les jours de 23 et 25 heures, et un jour passé qui suit les données tardives sous `no-store` ; côté web (`web/e2e/calendar.spec.ts`) les mêmes signaux à l'écran et un mois relu après un café tardif. Affichage vérifié à 390 px sous Chromium, en clair et en sombre. Les choix (couverture, attente par source, compteur sans les rejets) sont au journal des décisions de [l'architecture](architecture.md).
+Fait le 2 nov. 2026 sur le vrai NAS, en suivant [le runbook](deploiement.md) : route du mois refusée sans session (401), vue du mois vérifiée depuis le Mac sur les vraies données (cafés depuis le 31 oct., écoutes depuis janv. 2022, jonction du 12 oct. sans trou ni double compte, losange « à vérifier » depuis le 1er nov.), et un café tardif sur un jour passé compté aussitôt puis annulé. La source muette et l'erreur qui marque sa journée ne sont vérifiées que par les tests : pas de coupure de 6 h du collecteur, et pas d'erreur fabriquée dans le journal de production. Préparé le même jour : sans migration, sans `rebuild` et sans changement de `compose.yaml`. Chaque critère a son test : côté backend (`backend/tests/calendar.rs`) l'erreur qui marque son jour de Paris, la source muette qui met en attente les jours non couverts jusqu'à son battement, les jours sans données avant une métrique ou entre deux sources, la métrique à vérifier, les jours de 23 et 25 heures, et un jour passé qui suit les données tardives sous `no-store` ; côté web (`web/e2e/calendar.spec.ts`) les mêmes signaux à l'écran et un mois relu après un café tardif. Affichage vérifié à 390 px sous Chromium, en clair et en sombre. Les choix (couverture, attente par source, compteur sans les rejets) sont au journal des décisions de [l'architecture](architecture.md).
 
 **Contenu**
 
