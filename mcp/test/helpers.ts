@@ -119,6 +119,9 @@ export function authorizeParams(overrides: Record<string, string | null> = {}): 
   return { verifier, state, query };
 }
 
+/** Ce que tailscaled ajoute pour un utilisateur du tailnet ; absent par Funnel. */
+export const TAILNET = { 'tailscale-user-login': 'moi@example.com' };
+
 export interface ConsentForm {
   requestId: string;
   csrf: string;
@@ -126,7 +129,7 @@ export interface ConsentForm {
 }
 
 export async function openConsent(h: Harness, params: AuthorizeParams): Promise<ConsentForm> {
-  const response = await fetch(`${h.base}/authorize?${params.query}`, { redirect: 'manual' });
+  const response = await fetch(`${h.base}/authorize?${params.query}`, { redirect: 'manual', headers: TAILNET });
   if (response.status !== 200) {
     throw new Error(`consentement : ${response.status}`);
   }
@@ -146,7 +149,7 @@ export function submitConsent(
   return fetch(`${h.base}/authorize`, {
     method: 'POST',
     redirect: 'manual',
-    headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: form.cookie, ...headers },
+    headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: form.cookie, ...TAILNET, ...headers },
     body,
   });
 }

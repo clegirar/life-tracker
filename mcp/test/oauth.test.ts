@@ -11,6 +11,7 @@ import { decodeLoginHash } from '../src/config.js';
 import { hashSecret, verifySecret } from '../src/secret.js';
 import {
   authorizeParams,
+  TAILNET,
   type Harness,
   login,
   openConsent,
@@ -103,14 +104,27 @@ describe('connexion', () => {
   test('la page de connexion refuse Funnel, en GET comme en POST', async () => {
     const params = authorizeParams();
     const viaFunnel = await fetch(`${h.base}/authorize?${params.query}`, {
-      headers: { 'tailscale-funnel-request': '?1' },
+      headers: { ...TAILNET, 'tailscale-funnel-request': '?1' },
       redirect: 'manual',
     });
     assert.equal(viaFunnel.status, 403);
+    // Le paquet Tailscale du NAS ne pose pas l'en-tête de Funnel : sans identité du tailnet, refusé aussi.
+    const anonymous = await fetch(`${h.base}/authorize?${params.query}`, { redirect: 'manual' });
+    assert.equal(anonymous.status, 403);
     const form = await openConsent(h, params);
     const post = await submitConsent(h, form, {}, { 'tailscale-funnel-request': '?1' });
     assert.equal(post.status, 403);
     assert.equal(post.headers.get('location'), null);
+    const anonymousPost = await submitConsent(h, form, {}, { 'tailscale-user-login': '' });
+    assert.equal(anonymousPost.status, 403);
+  });
+
+  test('le formulaire posté par un navigateur, avec sa propre origine, passe', async () => {
+    const response = await fetch(`${h.base}/authorize?${authorizeParams().query}`, { headers: TAILNET });
+    assert.equal(response.headers.get('referrer-policy'), 'same-origin');
+    const form = await openConsent(h, authorizeParams());
+    const post = await submitConsent(h, form, {}, { origin: PUBLIC_ORIGIN });
+    assert.equal(post.status, 303);
   });
 
   test('un client inconnu ou un retour hors liste : refus sans redirection', async () => {
@@ -122,7 +136,7 @@ describe('connexion', () => {
       { redirect_uri: null },
     ];
     for (const overrides of cases) {
-      const response = await fetch(`${h.base}/authorize?${authorizeParams(overrides).query}`, { redirect: 'manual' });
+      const response = await fetch(`${h.base}/authorize?${authorizeParams(overrides).query}`, { redirect: 'manual', headers: TAILNET });
       assert.equal(response.status, 400, JSON.stringify(overrides));
       assert.equal(response.headers.get('location'), null);
     }
@@ -137,7 +151,7 @@ describe('connexion', () => {
       [{ resource: 'https://evil.example/mcp' }, 'invalid_target'],
     ] as const) {
       const params = authorizeParams(overrides);
-      const response = await fetch(`${h.base}/authorize?${params.query}`, { redirect: 'manual' });
+      const response = await fetch(`${h.base}/authorize?${params.query}`, { redirect: 'manual', headers: TAILNET });
       assert.equal(response.status, 303, JSON.stringify(overrides));
       const location = new URL(response.headers.get('location') ?? '');
       assert.equal(`${location.origin}${location.pathname}`, REDIRECT);
@@ -148,7 +162,7 @@ describe('connexion', () => {
   });
 
   test('la page montre l’hôte de retour et pose un cookie CSRF strict', async () => {
-    const response = await fetch(`${h.base}/authorize?${authorizeParams({ redirect_uri: REDIRECT_URIS[1]! }).query}`);
+    const response = await fetch(`${h.base}/authorize?${authorizeParams({ redirect_uri: REDIRECT_URIS[1]! }).query}`, { headers: TAILNET });
     assert.equal(response.status, 200);
     const html = await response.text();
     assert.ok(html.includes('claude.com'));

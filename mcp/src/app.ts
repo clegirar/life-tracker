@@ -31,6 +31,8 @@ export const CLIENT_ID = 'https://claude.ai/oauth/mcp-oauth-client-metadata';
 export const REDIRECT_URIS = ['https://claude.ai/api/mcp/auth_callback', 'https://claude.com/api/mcp/auth_callback'];
 export const SCOPES = ['read', 'offline_access'];
 export const FUNNEL_HEADER = 'tailscale-funnel-request';
+/** Posé par tailscaled pour un utilisateur du tailnet (et retiré s'il vient du client) ; absent par Funnel. */
+export const TAILNET_USER_HEADER = 'tailscale-user-login';
 export const CSRF_COOKIE = 'lt_mcp_csrf';
 export const LOGIN_MAX_FAILURES = 5;
 export const LOGIN_WINDOW_MS = 15 * 60 * 1000;
@@ -147,7 +149,9 @@ export function createApp(config: Config, deps: Deps): express.Express {
     res.set({
       'cache-control': 'no-store',
       'x-content-type-options': 'nosniff',
-      'referrer-policy': 'no-referrer',
+      // same-origin et non no-referrer : sinon le navigateur poste le formulaire avec « Origin: null »,
+      // que la protection contre le DNS rebinding refuse. Rien ne part vers une autre origine.
+      'referrer-policy': 'same-origin',
       'x-frame-options': 'DENY',
     });
     next();
@@ -164,8 +168,10 @@ export function createApp(config: Config, deps: Deps): express.Express {
 
   // ─── Connexion, depuis le tailnet seulement ────────────────────────────────
 
+  // Le paquet Tailscale du NAS ne pose pas l'en-tête de Funnel : on exige donc aussi l'identité qu'il
+  // ajoute pour un utilisateur du tailnet. Sans elle, la requête vient d'Internet.
   const fromFunnel = (req: Request, res: Response): boolean => {
-    if (req.headers[FUNNEL_HEADER] === undefined) {
+    if (req.headers[FUNNEL_HEADER] === undefined && (req.headers[TAILNET_USER_HEADER] ?? '') !== '') {
       return false;
     }
     res
