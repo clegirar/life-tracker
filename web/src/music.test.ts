@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SourcesHealth } from './api'
-import { formatMinutes, musicAlert, musicEmptyText, plural } from './music'
+import { discoveriesOf, formatMinutes, LIST_LIMIT, musicAlert, musicEmptyText, noDiscoveryText, plural, visibleRows } from './music'
 
 function health(overrides: { silent?: boolean; stale?: boolean; first?: string | null; connected?: boolean } = {}): SourcesHealth {
   const { silent = false, stale = false, first = '2026-10-01T10:00:00Z', connected = true } = overrides
@@ -112,5 +112,31 @@ describe('un historique importé', () => {
   })
   it('laisse Last.fm répondre après son démarrage', () => {
     expect(musicEmptyText('2026-10-25', today, withHistory())).toBe('Aucune écoute ce jour-là.')
+  })
+})
+
+describe('les listes de la carte', () => {
+  const rows = (levels: ('artist' | 'album' | 'track')[]) => levels.map((level, i) => ({ level, i }))
+
+  it("un onglet garde ses seules découvertes, dans l'ordre du serveur", () => {
+    const all = rows(['artist', 'album', 'track', 'artist', 'track'])
+    expect(discoveriesOf(all, 'tracks').map((r) => r.i)).toEqual([2, 4])
+    expect(discoveriesOf(all, 'artists').map((r) => r.i)).toEqual([0, 3])
+    expect(discoveriesOf(all, 'albums').map((r) => r.i)).toEqual([1])
+    expect(discoveriesOf([], 'albums')).toEqual([])
+  })
+
+  it('une liste longue montre dix lignes, puis tout une fois dépliée', () => {
+    const many = Array.from({ length: 23 }, (_, i) => i)
+    expect(visibleRows(many, false)).toEqual({ shown: many.slice(0, LIST_LIMIT), hidden: 13 })
+    expect(visibleRows(many, true)).toEqual({ shown: many, hidden: 0 })
+    expect(visibleRows(many.slice(0, 10), false)).toEqual({ shown: many.slice(0, 10), hidden: 0 })
+    expect(visibleRows(many.slice(0, 11), false).hidden).toBe(1)
+  })
+
+  it('le texte vide nomme le niveau', () => {
+    expect(noDiscoveryText('tracks')).toBe('Aucun titre découvert ce jour-là.')
+    expect(noDiscoveryText('artists')).toBe('Aucun artiste découvert ce jour-là.')
+    expect(noDiscoveryText('albums')).toBe('Aucun album découvert ce jour-là.')
   })
 })

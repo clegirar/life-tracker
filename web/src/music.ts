@@ -72,3 +72,30 @@ export function musicEmptyText(date: string, today: string, health: SourcesHealt
   if (date === addDays(today, -1)) return 'Aucune écoute hier.'
   return 'Aucune écoute ce jour-là.'
 }
+
+/** L'onglet de la carte : il trie les découvertes comme les écoutes. */
+export type MusicTab = 'tracks' | 'artists' | 'albums'
+
+const TAB_LEVEL = { tracks: 'track', artists: 'artist', albums: 'album' } as const
+
+/** Les découvertes d'un onglet, dans l'ordre du serveur. */
+export function discoveriesOf<T extends { level: 'artist' | 'album' | 'track' }>(rows: T[], tab: MusicTab): T[] {
+  return rows.filter((row) => row.level === TAB_LEVEL[tab])
+}
+
+/** Une liste longue montre ses premières lignes, puis « Tout afficher ». */
+export const LIST_LIMIT = 10
+
+/** Les lignes visibles, et combien restent cachées. */
+export function visibleRows<T>(rows: T[], expanded: boolean, limit = LIST_LIMIT): { shown: T[]; hidden: number } {
+  if (expanded || rows.length <= limit) return { shown: rows, hidden: 0 }
+  return { shown: rows.slice(0, limit), hidden: rows.length - limit }
+}
+
+const NO_DISCOVERY: Record<MusicTab, string> = {
+  tracks: 'Aucun titre découvert ce jour-là.',
+  artists: 'Aucun artiste découvert ce jour-là.',
+  albums: 'Aucun album découvert ce jour-là.',
+}
+
+export const noDiscoveryText = (tab: MusicTab) => NO_DISCOVERY[tab]

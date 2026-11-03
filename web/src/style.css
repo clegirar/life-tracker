@@ -216,10 +216,12 @@ button:disabled {
 }
 
 @media (min-width: 900px) {
+  /* La colonne de la barre est peinte sur toute la hauteur, même quand la page est plus longue que l'écran. */
   .shell {
     display: grid;
     grid-template-columns: 240px minmax(0, 1fr);
     align-items: start;
+    background: linear-gradient(to right, var(--sidebar-bg) 239.5px, var(--separator) 239.5px 240px, transparent 240px);
   }
   .sidebar {
     position: sticky;
@@ -388,9 +390,9 @@ button:disabled {
 
 .segments {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 2px;
-  margin-top: 20px;
   padding: 2px;
   border-radius: 10px;
   background: var(--control);
@@ -411,6 +413,11 @@ button:disabled {
 .segment[aria-pressed='true'] {
   background: var(--segment-on);
   font-weight: 600;
+}
+
+/* Le sélecteur trie les deux sections qui le suivent : il se place au-dessus d'elles. */
+.music-tabs {
+  margin-top: 20px;
 }
 
 .rows {
@@ -460,10 +467,36 @@ button:disabled {
 }
 
 .subsection-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   margin-top: 20px;
   font-size: 20px;
   line-height: 25px;
   font-weight: 600;
+}
+
+.subsection-count {
+  font-size: 17px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--music);
+}
+
+/* « Tout afficher » : la suite de la liste, dans sa couleur, séparée par le même filet que les lignes. */
+.more {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  border-top: 0.5px solid var(--separator);
+  font-size: 15px;
+  text-align: left;
+  color: var(--music);
+  transition: opacity 120ms var(--ease-out);
+}
+
+.more:active {
+  opacity: 0.5;
 }
 
 .finds {
@@ -962,6 +995,7 @@ button:disabled {
     opacity: 0.75;
   }
   .link:hover,
+  .more:hover,
   .cup-cancel:hover,
   .sidebar-logout:hover {
     text-decoration: underline;
