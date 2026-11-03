@@ -124,7 +124,7 @@ test('un jour passé n’est jamais gardé : une donnée tardive le change', asy
   await login(page)
   const day = await openMonthOf(page, date)
   const before = (await serverMonthDay(request, cookie, date)).values.coffee
-  await expect(day).toHaveAccessibleName(before === null ? /cafés : pas de données/ : new RegExp(`: ${before} cafés?,`))
+  await expect(day).toHaveAccessibleName(before === null ? /^[^:]+ : pas de données|cafés : pas de données/ : new RegExp(`: ${before} cafés?,`))
 
   // Un café noté après coup par le raccourci, pendant que le mois est à l'écran.
   const response = await request.post(`${API_URL}/v1/records`, {
@@ -138,7 +138,7 @@ test('un jour passé n’est jamais gardé : une donnée tardive le change', asy
   await day.click()
   await expect(page.getByTestId('count').locator('.count-value')).toHaveText('1')
   await page.getByRole('button', { name: /^Voir le mois/ }).click()
-  await expect(cell(page, date).locator('.v-coffee')).toHaveText('1')
+  await expect(cell(page, date)).toHaveAccessibleName(/: 1 café(,|$)/)
   expect(await serverDay(request, cookie, date)).toHaveLength(1)
   await clearDay(request, cookie, date)
 })
@@ -178,7 +178,8 @@ for (const colorScheme of ['light', 'dark'] as const) {
       for (let i = 0; i < monthsBetween(monthOf(today), monthOf(busy)); i++) {
         await page.getByRole('button', { name: 'Mois précédent' }).click()
       }
-      await expect(cell(page, busy).locator('.v-music')).toHaveText('140')
+      await expect(cell(page, busy)).toHaveAccessibleName(/140 écoutes/)
+      await expect(cell(page, busy).locator('.day-dot[data-metric="music.listen"]')).toHaveCount(1)
       await checkLayout(page)
       await shot('2-mois-precedent')
 

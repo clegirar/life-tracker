@@ -31,6 +31,8 @@
   --heat-3: 77%;
   --heat-4: 100%;
   --heat-empty: #c7c7cc;
+  /* Les filtres : la teinte douce d'une pastille choisie. */
+  --chip-tint: 16%;
   /* Ressort échantillonné : amortissement 0,72, léger dépassement. */
   --spring: linear(0, 0.13, 0.383, 0.632, 0.822, 0.944, 1.009, 1.035, 1.038, 1.031, 1.021, 1.012, 1.005, 1.001, 1);
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -67,6 +69,7 @@
     --heat-3: 79%;
     --heat-4: 100%;
     --heat-empty: #48484a;
+    --chip-tint: 26%;
   }
 }
 
@@ -893,29 +896,25 @@ button:disabled {
   font-weight: 600;
 }
 
+/* Plusieurs métriques : le numéro grisé d'un jour sans données, comme le contour de l'année. */
+.cell[data-nodata] .cell-number {
+  color: var(--heat-empty);
+}
+
 .cell[aria-current='date'] .cell-number {
   background: var(--accent);
   color: var(--on-accent);
   font-weight: 600;
 }
 
-.cell-values {
-  display: flex;
+.cell-value {
   margin-top: -2px;
-  flex-direction: column;
   font-size: 11px;
   line-height: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: center;
-}
-
-.v-coffee {
-  color: var(--accent);
-}
-
-.v-music {
-  color: var(--music);
+  color: var(--heat);
 }
 
 /* Un vrai zéro se lit, mais en retrait : l'œil va aux jours qui ont quelque chose. */
@@ -933,9 +932,12 @@ button:disabled {
   border-radius: 50%;
 }
 
-/* Trois formes, pas seulement trois couleurs : plein, anneau, losange. */
+/* Trois formes, pas seulement trois couleurs : triangle, anneau, losange. Le triangle ne se confond pas avec les points ronds des métriques. */
 .mark-incomplete {
+  width: 8px;
+  border-radius: 0;
   background: var(--error);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
 }
 
 .mark-pending {
@@ -978,12 +980,50 @@ button:disabled {
   gap: 6px;
 }
 
-/* Une barre, pas un point : les points sont réservés aux marques de complétude. */
+/* Une barre pour les chiffres ; les points de la légende sont ceux des jours, ou les marques. */
 .legend-swatch {
   width: 12px;
   height: 4px;
   border-radius: 2px;
-  background: currentColor;
+  background: var(--heat);
+}
+
+/* Les points d'une journée, façon Calendrier d'Apple : la présence d'une activité, pas son intensité. */
+.day-dots {
+  display: flex;
+  justify-content: center;
+}
+
+.day-dot {
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--heat);
+}
+
+/* Dans le mois : 7 px, quatre par ligne, puis « +N » au-delà de huit. */
+.day-dots-month {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  max-width: 37px;
+}
+
+.day-dots-month .day-dot {
+  width: 7px;
+  height: 7px;
+}
+
+.day-dots-more {
+  font-size: 10px;
+  line-height: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.legend-day-dot {
+  width: 8px;
+  height: 8px;
 }
 
 .legend-note {
@@ -1027,12 +1067,78 @@ button:disabled {
   display: flex;
 }
 
+/* La couleur d'une métrique : pastilles, filtres et rampes. */
 .heat-coffee {
   --heat: var(--accent);
 }
 
 .heat-music {
   --heat: var(--music);
+}
+
+.heat-neutral {
+  --heat: var(--muted);
+}
+
+/* Les filtres du calendrier : une pastille par métrique, plusieurs à la fois. La rangée défile sans
+   barre si un jour les trackers ne tiennent plus en largeur. */
+.filters {
+  display: flex;
+  gap: 8px;
+  margin: -2px;
+  padding: 2px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.filters::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px 0 14px;
+  border-radius: 22px;
+  background: var(--card);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: transform 160ms var(--ease-out), background-color 160ms var(--ease-out), color 160ms var(--ease-out);
+}
+
+.chip:active {
+  transform: scale(0.97);
+  transition: transform 100ms var(--ease-out), background-color 160ms var(--ease-out), color 160ms var(--ease-out);
+}
+
+/* Le point dit la couleur de la métrique ; plein, elle est choisie : une forme, pas seulement une teinte. */
+.chip-dot {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--heat);
+  transition: background-color 160ms var(--ease-out);
+}
+
+.chip[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--heat) var(--chip-tint), var(--card));
+  color: var(--heat);
+}
+
+.chip[aria-pressed='true'] .chip-dot {
+  background: var(--heat);
+}
+
+.ramp {
+  display: inline-flex;
+  gap: 3px;
 }
 
 /* Tout le mini-mois est la cible : il ouvre son mois. */
@@ -1114,6 +1220,71 @@ button:disabled {
   background: var(--heat);
 }
 
+/* Plusieurs métriques : le même zoom que l'intensité, chaque jour dans une case carrée comme une
+   pastille, avec son petit numéro et jusqu'à trois points de 4 px. */
+.year-grid.is-dots {
+  --heat: var(--accent);
+}
+
+.mini-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  aspect-ratio: 1;
+}
+
+.mini-day-number {
+  min-width: 13px;
+  height: 13px;
+  padding: 0 2px;
+  border-radius: 7px;
+  font-size: 10px;
+  line-height: 13px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pas de données : le numéro prend le gris du contour vide. Un jour connu sans activité reste lisible. */
+.mini-day[data-nodata] .mini-day-number {
+  color: var(--heat-empty);
+}
+
+.mini-day[data-today] .mini-day-number {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.day-dots-year {
+  gap: 1.5px;
+  height: 4px;
+}
+
+.day-dots-year .day-dot {
+  width: 4px;
+  height: 4px;
+}
+
+@media (min-width: 600px) {
+  .mini-day-number {
+    min-width: 14px;
+    height: 14px;
+    font-size: 11px;
+    line-height: 14px;
+  }
+  .day-dots-year {
+    gap: 2px;
+    height: 5px;
+  }
+  .day-dots-year .day-dot {
+    width: 5px;
+    height: 5px;
+  }
+}
+
 /* Aujourd'hui est entouré, comme dans le mois. */
 .dot[data-today] {
   outline: 1.5px solid var(--fg);
@@ -1134,6 +1305,9 @@ button:disabled {
 @media (hover: hover) and (pointer: fine) {
   .mini:hover:not(:disabled) {
     filter: brightness(0.97);
+  }
+  .chip[aria-pressed='false']:hover {
+    background: var(--control);
   }
   .cell:hover:not(:disabled) {
     background: var(--field);
@@ -1189,6 +1363,14 @@ button:disabled {
   .mini,
   .mini:active {
     transform: none;
+    transition: none;
+  }
+  .chip,
+  .chip:active {
+    transform: none;
+    transition: background-color 120ms linear, color 120ms linear;
+  }
+  .chip-dot {
     transition: none;
   }
   .known-pill,

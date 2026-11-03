@@ -4,6 +4,7 @@ import { fetchDay, logout, Unauthorized } from './api'
 import { monthOf } from './calendar'
 import { DayPage } from './DayPage'
 import { Login } from './Login'
+import { useMetricSelection } from './metrics'
 import { MonthPage } from './MonthPage'
 import { TODAY, routePath, useRoute, type Route } from './route'
 import { MenuButton, Sidebar, useWide } from './Sidebar'
@@ -26,6 +27,8 @@ export function App() {
   const [lastDay, setLastDay] = useState<string | null>(null)
   const date = (route.page === 'day' ? route.date : lastDay) ?? today
   const wide = useWide()
+  // Les métriques affichées : un seul choix pour le mois et l'année.
+  const metricSelection = useMetricSelection()
   const [menuOpen, setMenuOpen] = useState(false)
   const menuButton = useRef<HTMLButtonElement>(null)
 
@@ -92,6 +95,8 @@ export function App() {
         onYear={(next) => go({ page: 'year', year: next })}
         onOpenMonth={(month) => go({ page: 'month', month })}
         onReload={() => void year.reload()}
+        storedMetrics={metricSelection.stored}
+        onToggleMetric={metricSelection.toggle}
       />
     )
   } else if (route.page === 'month') {
@@ -108,6 +113,8 @@ export function App() {
         onMonth={(month) => go({ page: 'month', month })}
         onReload={() => void calendar.reload()}
         onOpenDay={openDay}
+        storedMetrics={metricSelection.stored}
+        onToggleMetric={metricSelection.toggle}
       />
     )
   } else {

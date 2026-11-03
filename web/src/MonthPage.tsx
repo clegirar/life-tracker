@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react'
 import type { Month, SourcesHealth } from './api'
 import { addMonths, cellLabel, compact, errorCountText, marker, MARKER_LABELS, monthGrid, monthName, monthOf, WEEKDAYS, type Marker } from './calendar'
+import { DayDots, MetricsLegend } from './DayDots'
+import { MetricFilters } from './MetricFilters'
+import { dayActivity, effectiveSelection, metricTone } from './metrics'
 import { musicAlert } from './music'
 
 interface Props {
@@ -17,6 +20,9 @@ interface Props {
   onMonth: (month: string) => void
   onOpenDay: (date: string) => void
   onReload: () => void
+  /** Le choix gardé, commun au mois et à l'année. */
+  storedMetrics: string[] | null
+  onToggleMetric: (metric: string, available: string[]) => void
 }
 
 function Chevron({ d }: { d: string }) {
@@ -27,13 +33,24 @@ function Chevron({ d }: { d: string }) {
   )
 }
 
-// Une couleur par métrique connue ; une métrique nouvelle prend la couleur neutre, sans code à changer.
-const METRIC_CLASS: Record<string, string> = { coffee: 'v-coffee', 'music.listen': 'v-music' }
+/** Le chiffre d'une seule métrique : sans chiffre, pas de données ; 0, rien ce jour-là. */
+function DayValue({ value, metric }: { value: number | null; metric: string }) {
+  return (
+    <span className={`cell-value ${metricTone(metric)} ${value === 0 ? 'is-zero' : ''}`} data-metric={metric} aria-hidden="true">
+      {value === null ? ' ' : compact(value)}
+    </span>
+  )
+}
 
-export function MonthPage({ menu, onShowYear, month, today, selected, data, loadFailed, health, onMonth, onOpenDay, onReload }: Props) {
+export function MonthPage({ menu, onShowYear, month, today, selected, data, loadFailed, health, onMonth, onOpenDay, onReload, storedMetrics, onToggleMetric }: Props) {
   const isCurrent = month === monthOf(today)
   const days = new Map((data?.month === month ? data.days : []).map((day) => [day.date, day]))
   const metrics = data?.metrics ?? []
+  const available = metrics.map((m) => m.metric)
+  const shownMetrics = effectiveSelection(storedMetrics, available)
+  const chosen = metrics.filter((m) => shownMetrics.includes(m.metric))
+  // Une métrique : son chiffre dans chaque case. Plusieurs : un point par métrique active.
+  const single = chosen.length === 1 ? chosen[0].metric : null
   const present = new Set<Marker>()
   for (const day of days.values()) {
     const m = marker(day)
@@ -64,6 +81,8 @@ export function MonthPage({ menu, onShowYear, month, today, selected, data, load
           </button>
         </nav>
       </header>
+
+      <MetricFilters metrics={metrics} selected={shownMetrics} onToggle={(metric) => onToggleMetric(metric, available)} />
 
       {loadFailed && (
         <div className="notice" role="alert">
@@ -103,6 +122,7 @@ export function MonthPage({ menu, onShowYear, month, today, selected, data, load
               const day = days.get(date)
               const future = date > today
               const mark = day ? marker(day) : null
+              const activity = day && !single && !future ? dayActivity(day, shownMetrics) : null
               return (
                 <li key={date}>
                   <button
@@ -110,24 +130,16 @@ export function MonthPage({ menu, onShowYear, month, today, selected, data, load
                     className="cell"
                     data-date={date}
                     data-marker={mark ?? undefined}
+                    data-nodata={activity?.noData ? '' : undefined}
                     aria-current={date === today ? 'date' : undefined}
                     aria-pressed={date === selected}
-                    aria-label={day && data ? cellLabel(day, metrics, today) : date}
+                    aria-label={day && data ? cellLabel(day, chosen, today) : date}
                     disabled={future}
                     onClick={() => onOpenDay(date)}
                   >
                     <span className="cell-number">{Number(date.slice(8))}</span>
-                    <span className="cell-values" aria-hidden="true">
-                      {!future &&
-                        metrics.map((metric) => {
-                          const value = day?.values[metric.metric] ?? null
-                          return (
-                            <span key={metric.metric} className={`cell-value ${METRIC_CLASS[metric.metric] ?? ''} ${value === 0 ? 'is-zero' : ''}`}>
-                              {value === null ? ' ' : compact(value)}
-                            </span>
-                          )
-                        })}
-                    </span>
+                    {single && !future && <DayValue value={day?.values[single] ?? null} metric={single} />}
+                    {activity && <DayDots active={activity.active} size="month" />}
                     {mark && <span className={`mark mark-${mark}`} aria-hidden="true" />}
                   </button>
                 </li>
@@ -136,25 +148,16 @@ export function MonthPage({ menu, onShowYear, month, today, selected, data, load
         </ol>
       </section>
 
-      <section className="legend" aria-label="Légende">
-        <ul className="legend-list">
-          {metrics.map((metric) => (
-            <li key={metric.metric}>
-              <span className={`legend-swatch ${METRIC_CLASS[metric.metric] ?? ''}`} aria-hidden="true" />
-              {metric.label}
+      <MetricsLegend metrics={chosen} mode={single ? 'values' : 'dots'}>
+        {(['incomplete', 'pending', 'check'] as const)
+          .filter((m) => present.has(m))
+          .map((m) => (
+            <li key={m}>
+              <span className={`mark mark-${m} mark-inline`} aria-hidden="true" />
+              {MARKER_LABELS[m]}
             </li>
           ))}
-          {(['incomplete', 'pending', 'check'] as const)
-            .filter((m) => present.has(m))
-            .map((m) => (
-              <li key={m}>
-                <span className={`mark mark-${m} mark-inline`} aria-hidden="true" />
-                {MARKER_LABELS[m]}
-              </li>
-            ))}
-        </ul>
-        <p className="legend-note">Sans chiffre : pas de données. 0 : rien ce jour-là.</p>
-      </section>
+      </MetricsLegend>
     </main>
   )
 }

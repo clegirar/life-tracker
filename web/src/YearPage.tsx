@@ -1,8 +1,10 @@
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import type { Year } from './api'
 import { monthGrid, monthName, monthOf } from './calendar'
-import { Segments } from './Segments'
-import { heatLevel, heatThresholds, monthSummary, yearMonths } from './year'
+import { DayDots, MetricsLegend } from './DayDots'
+import { HeatLegend, MetricFilters } from './MetricFilters'
+import { dayActivity, effectiveSelection, metricTone } from './metrics'
+import { heatLevel, monthSummary, periodThresholds, yearMonths } from './year'
 
 interface Props {
   /** Le bouton du tiroir, sur iPhone. */
@@ -14,6 +16,9 @@ interface Props {
   onYear: (year: string) => void
   onOpenMonth: (month: string) => void
   onReload: () => void
+  /** Le choix gardé, commun au mois et à l'année. */
+  storedMetrics: string[] | null
+  onToggleMetric: (metric: string, available: string[]) => void
 }
 
 function Chevron({ d }: { d: string }) {
@@ -24,43 +29,24 @@ function Chevron({ d }: { d: string }) {
   )
 }
 
-// La couleur de chaque métrique connue ; une métrique nouvelle prend la teinte neutre, sans code à changer.
-const HEAT_CLASS: Record<string, string> = { coffee: 'heat-coffee', 'music.listen': 'heat-music' }
-const STORAGE_KEY = 'year.metric'
-
 /** Six semaines pour chaque mois : les douze mini-mois ont la même hauteur et s'alignent. */
 function sixWeeks(month: string): (string | null)[] {
   const cells = monthGrid(month).flat()
   return [...cells, ...Array.from({ length: 42 - cells.length }, () => null)]
 }
 
-function storedMetric(): string | null {
-  try {
-    return window.localStorage.getItem(STORAGE_KEY)
-  } catch {
-    return null
-  }
-}
-
-export function YearPage({ menu, year, today, data, loadFailed, onYear, onOpenMonth, onReload }: Props) {
-  const [chosen, setChosen] = useState<string | null>(storedMetric)
+export function YearPage({ menu, year, today, data, loadFailed, onYear, onOpenMonth, onReload, storedMetrics, onToggleMetric }: Props) {
   const metrics = data?.metrics ?? []
-  const metric = metrics.find((m) => m.metric === chosen) ?? metrics[0]
+  const available = metrics.map((m) => m.metric)
+  const selected = effectiveSelection(storedMetrics, available)
+  const chosen = metrics.filter((m) => selected.includes(m.metric))
+  const single = chosen.length === 1 ? chosen[0].metric : null
   const shown = data && String(data.year) === year ? data : null
   const days = new Map((shown?.days ?? []).map((day) => [day.date, day]))
-  const values = metric ? [...days.values()].filter((day) => day.date <= today).map((day) => day.values[metric.metric] ?? null) : []
-  const thresholds = heatThresholds(values)
+  // Une métrique : l'intensité, par quartiles de l'année. Plusieurs : des points, comme dans le mois.
+  const thresholds = single ? periodThresholds(shown?.days ?? [], single, today) : []
   const isCurrent = year === today.slice(0, 4)
   const current = monthOf(today)
-
-  const choose = (next: string) => {
-    setChosen(next)
-    try {
-      window.localStorage.setItem(STORAGE_KEY, next)
-    } catch {
-      // Navigation privée : le choix vaut pour cette visite.
-    }
-  }
 
   return (
     <main className="page year-page">
@@ -88,11 +74,14 @@ export function YearPage({ menu, year, today, data, loadFailed, onYear, onOpenMo
         </div>
       )}
 
-      {metrics.length > 1 && metric && (
-        <Segments label="Métrique affichée" options={metrics.map((m) => [m.metric, m.label] as const)} value={metric.metric} onChange={choose} />
-      )}
+      <MetricFilters metrics={metrics} selected={selected} onToggle={(metric) => onToggleMetric(metric, available)} />
 
-      <ol className={`year-grid ${metric ? (HEAT_CLASS[metric.metric] ?? '') : ''}`} data-testid="year-grid" data-metric={metric?.metric}>
+      <ol
+        className={`year-grid ${single ? metricTone(single) : 'is-dots'}`}
+        data-testid="year-grid"
+        data-mode={single ? 'une' : 'plusieurs'}
+        data-metrics={selected.join(' ')}
+      >
         {yearMonths(year).map((month) => {
           const future = month > current
           const summaryId = `resume-${month}`
@@ -113,13 +102,28 @@ export function YearPage({ menu, year, today, data, loadFailed, onYear, onOpenMo
                   {sixWeeks(month).map((date, index) => {
                     // Les cases d'un autre mois et les jours futurs restent vides : rien n'y est encore arrivé.
                     if (!date || date > today) return <span key={`vide-${index}`} className="dot-slot" />
-                    const value = metric ? (days.get(date)?.values[metric.metric] ?? null) : null
+                    const day = days.get(date)
+                    if (!single) {
+                      const activity = shown ? dayActivity(day, selected) : null
+                      return (
+                        <span
+                          key={date}
+                          className="mini-day"
+                          data-date={date}
+                          data-today={date === today ? '' : undefined}
+                          data-nodata={activity?.noData ? '' : undefined}
+                        >
+                          <span className="mini-day-number">{Number(date.slice(8))}</span>
+                          <DayDots active={activity?.active ?? []} size="year" />
+                        </span>
+                      )
+                    }
                     return (
                       <span
                         key={date}
                         className="dot"
                         data-date={date}
-                        data-heat={shown ? heatLevel(value, thresholds) : undefined}
+                        data-heat={shown ? heatLevel(day?.values[single] ?? null, thresholds) : undefined}
                         data-today={date === today ? '' : undefined}
                       />
                     )
@@ -127,7 +131,7 @@ export function YearPage({ menu, year, today, data, loadFailed, onYear, onOpenMo
                 </span>
                 {shown && (
                   <span id={summaryId} hidden>
-                    {monthSummary(month, (shown.days ?? []).filter((day) => monthOf(day.date) === month), metric, today)}
+                    {monthSummary(month, shown.days.filter((day) => monthOf(day.date) === month), chosen, today)}
                   </span>
                 )}
               </button>
@@ -136,26 +140,7 @@ export function YearPage({ menu, year, today, data, loadFailed, onYear, onOpenMo
         })}
       </ol>
 
-      <section className={`legend ${metric ? (HEAT_CLASS[metric.metric] ?? '') : ''}`} aria-label="Légende">
-        <ul className="legend-list">
-          <li>
-            <span className="dot legend-dot" data-heat="none" aria-hidden="true" />
-            Pas de données
-          </li>
-          <li>
-            <span className="dot legend-dot" data-heat="0" aria-hidden="true" />
-            Rien
-          </li>
-          <li>
-            Moins
-            {([1, 2, 3, 4] as const).map((level) => (
-              <span key={level} className="dot legend-dot" data-heat={level} aria-hidden="true" />
-            ))}
-            Plus
-          </li>
-        </ul>
-        <p className="legend-note">Vide : pas de données. Pâle : rien ce jour-là.</p>
-      </section>
+      {single ? <HeatLegend metric={single} /> : chosen.length > 0 && <MetricsLegend metrics={chosen} mode="dots" />}
     </main>
   )
 }
