@@ -1,36 +1,96 @@
-# Versions et déploiement. À chaque push sur main, release-please tient à jour la PR de release ;
-# quand on la fusionne, il crée le tag vX.Y.Z et la GitHub Release. Alors seulement : images
-# linux/amd64 étiquetées vX.Y.Z sur ghcr.io, puis déploiement sur le NAS par Tailscale et SSH.
+# Déploiement continu. Quand la CI d'un push sur main est verte, deploy/next-version.sh regarde ce qui
+# a changé depuis le dernier tag : si le contenu d'une image a bougé (backend/, web/, mcp/, hors tests
+# et Markdown), il calcule vX.Y.Z d'après les types de commits, et le job crée le tag et la GitHub
+# Release avec ses notes. Puis images linux/amd64 étiquetées vX.Y.Z sur ghcr.io, et déploiement sur le
+# NAS par Tailscale et SSH. Tout se construit depuis le commit testé par la CI (head_sha).
+# Retour arrière : Run workflow avec un tag existant, qui ne fait que le déploiement.
 # Mise en place et secrets : docs/deploiement.md, « Déploiement automatique ».
 name: Release
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version déjà publiée à redéployer (vX.Y.Z)"
+        required: true
+        type: string
+
+# Une release à la fois, jamais interrompue. Une seconde en attente remplace la précédente : le calcul
+# depuis le dernier tag reprend alors tous les commits.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  release-please:
+  version:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
     permissions:
       contents: write
-      pull-requests: write
     outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
+      tag: ${{ steps.next.outputs.tag }}
     steps:
-      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
-        id: release
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - name: Version suivante, tag et GitHub Release
+        id: next
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          notes="$RUNNER_TEMP/notes.md"
+          tag="$(deploy/next-version.sh "$SHA" "$notes")"
+          if [ -z "$tag" ]; then
+            echo "Rien à publier : aucun changement des images."
+            exit 0
+          fi
+          echo "Release $tag sur $SHA"
+          cat "$notes"
+          gh release create "$tag" --target "$SHA" --title "$tag" --notes-file "$notes"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+
+  # Retour arrière ou redéploiement : la version doit exister, tag et GitHub Release.
+  existing:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - name: Version existante
+        id: check
+        env:
+          TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag attendu : vX.Y.Z" >&2
+            exit 1
+          fi
+          gh api "repos/$GH_REPO/git/ref/tags/$TAG" --silent
+          gh release view "$TAG" --json tagName --jq .tagName
+          echo "tag=$TAG" >>"$GITHUB_OUTPUT"
 
   images:
-    needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    needs: version
+    if: needs.version.outputs.tag != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -42,6 +102,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
       - name: Nom de l'image en minuscules, comme ghcr.io l'exige
         id: image
@@ -59,16 +120,21 @@ jobs:
           context: ${{ matrix.component }}
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.image.outputs.name }}:${{ needs.release-please.outputs.tag_name }}
+          tags: ${{ steps.image.outputs.name }}:${{ needs.version.outputs.tag }}
           labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           provenance: false
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
 
   # Le NAS n'accepte de cette clé que `deploy vX.Y.Z <sha256 de compose.yaml>` (deploy/deploy.sh) ;
-  # il ne reçoit aucun fichier. Un seul déploiement à la fois, jamais interrompu.
+  # il ne reçoit aucun fichier. Un seul déploiement à la fois, jamais interrompu. Le checkout est celui
+  # de la version déployée : l'empreinte de compose.yaml lui correspond.
   deploy:
-    needs: [release-please, images]
+    needs: [version, existing, images]
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'workflow_run' && needs.images.result == 'success') ||
+        (github.event_name == 'workflow_dispatch' && needs.existing.result == 'success'))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     concurrency:
@@ -79,6 +145,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.workflow_run.head_sha || needs.existing.outputs.tag }}
           persist-credentials: false
       # Nœud éphémère, tag:ci : l'ACL ne lui ouvre que le port SSH du NAS.
       - uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
@@ -93,7 +160,7 @@ jobs:
           NAS_HOST: ${{ secrets.NAS_HOST }}
           NAS_USER: ${{ secrets.NAS_USER }}
           NAS_SSH_PORT: ${{ secrets.NAS_SSH_PORT }}
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+          TAG: ${{ needs.version.outputs.tag || needs.existing.outputs.tag }}
         run: |
           key="$RUNNER_TEMP/nas_key"
           known="$RUNNER_TEMP/known_hosts"

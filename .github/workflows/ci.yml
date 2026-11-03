@@ -1,5 +1,5 @@
-# Tests de chaque PR et de chaque push sur main, en quatre jobs parallèles (plus le script de
-# déploiement). Les images ne se construisent qu'à la release : .github/workflows/release.yml.
+# Tests de chaque PR et de chaque push sur main, en quatre jobs parallèles (plus les scripts de
+# déploiement). Verte sur main, elle lance .github/workflows/release.yml : version, images, NAS.
 name: CI
 
 on:
@@ -8,17 +8,12 @@ on:
       - "docs/**"
       - "**/*.md"
       - ".claude/**"
-      # Ce que change une PR de release, seule : version et CHANGELOG.
-      - "version.txt"
-      - ".release-please-manifest.json"
   push:
     branches: [main]
     paths-ignore:
       - "docs/**"
       - "**/*.md"
       - ".claude/**"
-      - "version.txt"
-      - ".release-please-manifest.json"
 
 concurrency:
   group: ci-${{ github.ref }}

@@ -1,6 +1,6 @@
 # Life tracker — Déploiement sur le NAS
 
-Runbook de l'étape 4, joué sur le NAS (voir « Ce qui reste à vérifier »). L'installation et les mises à jour de `compose.yaml` restent à la main ; depuis le 3 nov. 2026, une release déploie la nouvelle version d'elle-même (voir « Déploiement automatique »).
+Runbook de l'étape 4, joué sur le NAS (voir « Ce qui reste à vérifier »). L'installation et les mises à jour de `compose.yaml` restent à la main ; depuis le 3 nov. 2026, tout changement du code de production fusionné dans `main` part sur le NAS de lui-même, une fois la CI verte (voir « Déploiement automatique »).
 
 **Règle.** Rien de ce qui suit ne se copie dans le dépôt : ni `.env`, ni `secrets/`, ni token, ni mot de passe, ni sortie de commande qui en contient. Le dépôt ne reçoit que des modèles. Dans les commandes, `OWNER` est le compte GitHub, en minuscules.
 
@@ -29,7 +29,7 @@ Sur le Mac, à la racine du dépôt, une fois les changements commités :
 gh repo create life-tracker --private --source=. --push
 ```
 
-À l'origine, le push sur `main` lançait `images.yml`, qui construisait des images étiquetées par SHA de commit. Depuis le 3 nov. 2026, les images ne se construisent qu'à une release, étiquetées `vX.Y.Z` (voir « Déploiement automatique ») : `TRACKER_TAG` reçoit alors ce tag. Une fois le workflow vert :
+À l'origine, le push sur `main` lançait `images.yml`, qui construisait des images étiquetées par SHA de commit. Depuis le 3 nov. 2026, les images ne se construisent qu'à une release, étiquetées `vX.Y.Z`, que crée chaque changement du code de production fusionné dans `main` (voir « Déploiement automatique ») : `TRACKER_TAG` reçoit alors ce tag. Une fois le workflow vert :
 
 ```sh
 gh run list --limit 1
@@ -730,7 +730,18 @@ Si `--network host` répond, l'option `inhibit_ipv4` n'a pas d'effet sur ce NAS 
 
 ## Déploiement automatique
 
-Mis en place le 3 nov. 2026, **pas encore joué sur le NAS** : les points incertains sont listés au point 0. Fusionner la PR de release crée le tag `vX.Y.Z`, construit les trois images `vX.Y.Z` (`.github/workflows/release.yml`), puis le job `deploy` :
+Mis en place le 3 nov. 2026 (release `v0.1.0`), en déploiement continu depuis le même jour : les points incertains sont listés au point 0. Le flux, dans `.github/workflows/release.yml` :
+
+- **Fusion d'une PR qui change le contenu d'une image** : `backend/`, `web/` ou `mcp/`, hors tests (`backend/tests/`, `web/e2e/`, `mcp/test/`) et Markdown. Une PR qui ne touche que `docs/`, la CI, les tests ou `deploy/` ne livre rien, quel que soit son type.
+- **CI verte sur `main`.** Release part de la fin du workflow CI (`workflow_run`) et ne fait rien si elle a échoué. Un commit de documentation seule ne lance pas la CI, donc rien.
+- **Version** : `deploy/next-version.sh` compare le commit au dernier tag et calcule `vX.Y.Z` d'après les types des commits depuis ce tag. Le type ne décide que du numéro : une rupture (`!` ou `BREAKING CHANGE:`) donne une mineure tant qu'on est sous 1.0.0, une majeure ensuite ; un `feat`, une mineure ; tout le reste (`fix`, `perf`, `refactor`, `build`, `chore`…), un correctif.
+- **Tag et GitHub Release**, avec les notes : Fonctionnalités, Corrections, Performances, Autres changements, chaque ligne étant le titre de la PR et son numéro. Les notes de version ne vivent que là.
+- **Images** `vX.Y.Z` sur ghcr.io, construites depuis le commit que la CI a testé.
+- **NAS** : le job `deploy`, depuis le même commit.
+
+Une release à la fois, jamais interrompue : deux fusions rapprochées se suivent, et une release en attente qui en remplace une autre reprend tous les commits depuis le dernier tag. Un commit dont la CI échoue ne part pas : ses changements partent avec la prochaine fusion dont la CI est verte.
+
+Le job `deploy` :
 
 1. rejoint le tailnet comme nœud éphémère `tag:ci`, par un client OAuth Tailscale ;
 2. se connecte en SSH au NAS avec une clé dédiée, `known_hosts` épinglé ;
@@ -738,13 +749,13 @@ Mis en place le 3 nov. 2026, **pas encore joué sur le NAS** : les points incert
 
 Sur le NAS, `deploy.sh` (copie de `deploy/deploy.sh`), en root par une seule règle sudoers :
 
-- refuse toute autre commande, et refuse si son `compose.yaml` diffère de celui de la release. Le job ne pousse jamais de fichier : **un `compose.yaml` modifié se copie à la main avant de fusionner la PR de release**, comme à l'étape 4 ;
+- refuse toute autre commande, et refuse si son `compose.yaml` diffère de celui de la release. Le job ne pousse jamais de fichier : **un `compose.yaml` modifié se copie sur le NAS avant de fusionner la PR qui le change**, comme à l'étape 4 ; sinon le déploiement est refusé, le NAS reste sur l'ancien tag, et on relance par un retour arrière vers la nouvelle version (plus bas) une fois le fichier copié ;
 - note l'ancien `TRACKER_TAG`, écrit le nouveau dans `.env`, puis `pull` et `up -d` ;
 - attend 3 min au plus que chaque service soit sain : `healthy`, ou en marche s'il n'a pas de contrôle, `migrate` sorti à 0. Le collecteur compte dès qu'il tourne, car son premier contrôle n'a lieu qu'au bout de 5 min ;
 - sinon remet l'ancien tag, relance `up -d` et sort en erreur : le job est rouge. Les migrations sont en ajout seul, donc l'ancien code tourne sur le schéma plus récent ;
 - n'affiche que des noms de services et des états.
 
-Reste à la main : les copies de `compose.yaml` et de `deploy.sh`, et toute administration demandée par une note de version (`admin rebuild`, `set-precedence`…), après le déploiement.
+Reste à la main : les copies de `compose.yaml` et de `deploy.sh`, et toute administration que demande la description de la PR (`admin rebuild`, `set-precedence`, un secret…), après le déploiement.
 
 Dans les commandes, `MOI` est mon compte DSM d'administrateur, `NAS_HOST` le nom du NAS dans le tailnet (`nas.TAILNET.ts.net`) ou son adresse `100.x`, toujours le même partout. Aucune valeur secrète ne passe par la conversation avec Claude ni par le dépôt.
 
@@ -852,7 +863,7 @@ Dans les commandes, `MOI` est mon compte DSM d'administrateur, `NAS_HOST` le nom
 
    La clé privée reste sur le Mac le temps du point 9, puis `rm ~/.ssh/life-tracker-deploy` : une nouvelle clé remplace une clé perdue.
 
-8. **Réglages du dépôt**, tous du plan gratuit. Fusion en squash seule, avec le titre et la description de la PR comme message ; branche supprimée après fusion ; release-please a besoin que les Actions puissent ouvrir des PR :
+8. **Réglages du dépôt**, tous du plan gratuit. Fusion en squash seule, avec le titre et la description de la PR comme message ; branche supprimée après fusion ; les Actions n'ont pas à approuver ni ouvrir de PR :
 
    ```sh
    gh api -X PATCH repos/OWNER/life-tracker \
@@ -860,7 +871,7 @@ Dans les commandes, `MOI` est mon compte DSM d'administrateur, `NAS_HOST` le nom
      -f squash_merge_commit_title=PR_TITLE -f squash_merge_commit_message=PR_BODY \
      -F delete_branch_on_merge=true
    gh api -X PUT repos/OWNER/life-tracker/actions/permissions/workflow \
-     -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
+     -f default_workflow_permissions=read -F can_approve_pull_request_reviews=false
    ```
 
    Le token `read:packages` du NAS (étape 2) doit rester valide : expiré, le `pull` échoue et le déploiement revient à l'ancien tag.
@@ -877,20 +888,22 @@ Dans les commandes, `MOI` est mon compte DSM d'administrateur, `NAS_HOST` le nom
 
    `sudo: a password is required` signale une règle sudoers absente ou ignorée (point 0 b) ; un shell ouvert, une commande forcée ignorée (point 0 a) : retirer la clé tout de suite.
 
-10. **Première release.** Après fusion d'une PR sur `main`, release-please ouvre la PR « chore: release 0.1.0 » : la première version est `0.1.0` (`initial-version`), comptée à partir du commit qui précède ce chantier (`bootstrap-sha`). Il ne l'ouvre que si un commit visible au CHANGELOG (`feat`, `fix` ou `perf`) est arrivé depuis. Ouverte par le jeton des Actions, cette PR ne lance ni la CI ni le contrôle du titre, ce qui est normal : elle ne touche que `version.txt`, le manifeste et `CHANGELOG.md`. Avant de la fusionner, recopier `compose.yaml` s'il a changé. La fusion lance tag, images, puis `deploy`. Ensuite, sur le NAS :
+10. **Premier déploiement continu.** La première release, `v0.1.0`, date du 3 nov. 2026 ; le calcul part de son tag. La prochaine PR qui change le code des images (un `feat` ou un `fix` de l'étape 10) doit, une fois fusionnée et la CI de `main` verte, créer `v0.2.0` ou `v0.1.1` avec ses notes (`gh release view`), construire les images, puis déployer. Avant de la fusionner, recopier `compose.yaml` s'il a changé. Ensuite, sur le NAS :
 
     ```sh
-    sudo grep TRACKER_TAG /volume1/docker/life-tracker/.env   # TRACKER_TAG=v0.1.0
+    sudo grep TRACKER_TAG /volume1/docker/life-tracker/.env   # le nouveau tag
     cd /volume1/docker/life-tracker && sudo docker compose ps -a
     ```
 
-**Couper le déploiement.** Retirer la ligne `life-tracker-deploy` de `~/.ssh/authorized_keys` : le job échoue à la connexion, le NAS ne change pas. Pour aller plus loin, supprimer `/etc/sudoers.d/life-tracker-deploy`, ou désactiver le workflow (`gh workflow disable Release`, qui arrête aussi les releases).
+    Une PR qui ne change que la doc, la CI ou les tests lance Release sans rien publier : le job `version` écrit « Rien à publier ».
 
-**Retour arrière par tag.** Les images de chaque release restent sur ghcr.io. Relancer le job `deploy` d'une ancienne release (*Actions > Release >* le run de cette version *> Re-run jobs*) redéploie son tag, si `compose.yaml` n'a pas changé depuis. Sinon, à la main sur le NAS : `sudo sed -i 's/^TRACKER_TAG=.*/TRACKER_TAG=vX.Y.Z/' .env`, puis `pull` et `up -d`. Une migration ne se défait pas : voir « Retour arrière ».
+**Couper le déploiement.** Retirer la ligne `life-tracker-deploy` de `~/.ssh/authorized_keys` : le job échoue à la connexion, le NAS ne change pas. Ou désactiver le workflow : `gh workflow disable Release` arrête releases et déploiements, et `gh workflow enable Release` les reprend ; la première release suivante reprend tous les commits depuis le dernier tag. Pour aller plus loin, supprimer `/etc/sudoers.d/life-tracker-deploy`.
+
+**Retour arrière par tag.** Les images de chaque release restent sur ghcr.io. *Actions > Release > Run workflow*, avec le tag `vX.Y.Z` d'une version publiée, redéploie ce tag sans calcul de version ni construction d'images ; de même `gh workflow run Release -f tag=vX.Y.Z`. Le job fait le checkout de ce tag : l'empreinte envoyée est celle de son `compose.yaml`, et le NAS refuse si le sien a changé depuis. Sinon, à la main sur le NAS : `sudo sed -i 's/^TRACKER_TAG=.*/TRACKER_TAG=vX.Y.Z/' .env`, puis `pull` et `up -d`. Une migration ne se défait pas : voir « Retour arrière ».
 
 ## Exploitation
 
-**Mise à jour.** D'ordinaire par une release, d'elle-même : voir « Déploiement automatique ». À la main, depuis le dossier du projet, avec un tag `vX.Y.Z` publié :
+**Mise à jour.** D'ordinaire d'elle-même, à la fusion d'un changement du code de production : voir « Déploiement automatique ». À la main, depuis le dossier du projet, avec un tag `vX.Y.Z` publié :
 
 ```sh
 sudo sed -i 's/^TRACKER_TAG=.*/TRACKER_TAG=vX.Y.Z/' .env
@@ -935,7 +948,7 @@ Confirmé le 31 oct. 2026 : le workflow et la publication sur ghcr.io, le démar
 Reste à confirmer :
 
 - le raccourci sur un vrai iPhone (étape 10), reporté ;
-- le déploiement automatique, de bout en bout : les points incertains de « Déploiement automatique » (commande forcée et sudoers sur DSM), l'essai à blanc, la première release `v0.1.0` déployée, puis un échec voulu (fausse empreinte, clé retirée) qui laisse le NAS sur l'ancien tag ;
+- le déploiement automatique, de bout en bout : les points incertains de « Déploiement automatique » (commande forcée et sudoers sur DSM), l'essai à blanc, le premier déploiement continu (point 10), un retour arrière par *Run workflow*, puis un échec voulu (fausse empreinte, clé retirée) qui laisse le NAS sur l'ancien tag ;
 - la persistance de `tailscale serve` après un redémarrage du NAS ;
 - l'import du projet dans l'interface de Container Manager, facultatif ;
 - l'accès refusé depuis un autre compte du NAS, si un compte non administrateur existe ;
