@@ -1,5 +1,5 @@
 # Le titre de la PR devient le message du commit sur main (fusion en squash) : il suit Conventional
-# Commits, `type(scope): description en français`, et pilote les versions de release-please.
+# Commits, `type(scope): description en français`, et fixe le numéro de version (deploy/next-version.sh).
 name: Titre de PR
 
 on:
