@@ -1,19 +1,34 @@
 # Binaire statique : compilation native sur GitHub Actions, croisée sur un Mac, sans émulation dans les deux cas.
-FROM --platform=$BUILDPLATFORM rust:1.99.1-alpine@sha256:7e9e2d068a107a2adafd19930011178d14a78326053cd4c3a9f7ad3fd049557d AS build
+# cargo-chef compile les dépendances dans une couche à part, qui ne dépend que de Cargo.toml et
+# Cargo.lock : un changement de src/ ne recompile que notre crate, le reste vient du cache.
+FROM --platform=$BUILDPLATFORM rust:1.99.1-alpine@sha256:7e9e2d068a107a2adafd19930011178d14a78326053cd4c3a9f7ad3fd049557d AS chef
 WORKDIR /src
-COPY . .
+RUN cargo install cargo-chef --locked --version 0.1.78
 # rust-toolchain.toml fait foi : rustup l'applique dès qu'on est dans ce dossier.
+COPY rust-toolchain.toml .
 RUN rustup target add x86_64-unknown-linux-musl
 ENV CARGO_PROFILE_RELEASE_STRIP=symbols
 # rust-lld seulement en compilation croisée : sur amd64, il lierait aussi les macros procédurales, qui
 # ont besoin de la libc du système, et il échoue. De même clang, pour le C et l'assembleur de ring :
-# le gcc de l'image ne sait produire que pour sa propre architecture.
-# SQLX_OFFLINE vient de .cargo/config.toml : la compilation lit .sqlx/ et jamais une base.
+# le gcc de l'image ne sait produire que pour sa propre architecture. cross.sh porte ce choix pour
+# chaque compilation qui suit.
 RUN if [ "$(uname -m)" != x86_64 ]; then \
       apk add --no-cache clang; \
-      export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld CC_x86_64_unknown_linux_musl=clang; \
-    fi; \
-    cargo build --locked --release --target x86_64-unknown-linux-musl
+      echo 'export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld CC_x86_64_unknown_linux_musl=clang' > /cross.sh; \
+    else \
+      : > /cross.sh; \
+    fi
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS build
+COPY --from=planner /src/recipe.json .
+RUN . /cross.sh && cargo chef cook --locked --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
+COPY . .
+# SQLX_OFFLINE vient de .cargo/config.toml : la compilation lit .sqlx/ et jamais une base.
+RUN . /cross.sh && cargo build --locked --release --target x86_64-unknown-linux-musl
 # Le dossier d'état du collecteur : un volume neuf hérite de ce propriétaire. Par COPY, car RUN
 # demanderait d'émuler amd64 sur un Mac.
 RUN mkdir -p /collector-state
