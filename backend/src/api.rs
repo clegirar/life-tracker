@@ -785,7 +785,11 @@ async fn first_listens(pool: &PgPool, date: NaiveDate) -> Result<Vec<FirstListen
         r#"WITH listened AS (
              SELECT DISTINCT ON (i.level, i.item_key)
                     e.generation, i.level, i.item_key, i.display,
-                    e.details->>'artist' AS artist,
+                    -- L'album porte la clé de l'artiste principal : c'est lui qu'on affiche, et que
+                    -- le marquage renvoie.
+                    CASE WHEN i.level = 'album'
+                         THEN COALESCE(e.details->'artists'->0->>'name', e.details->>'artist')
+                         ELSE e.details->>'artist' END AS artist,
                     min(e.occurred_at) OVER (PARTITION BY i.level, i.item_key) AS first_at,
                     ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings)) AS day_start
              FROM derived.live_events e
@@ -889,6 +893,7 @@ async fn get_day_music(
     let rows = sqlx::query!(
         r#"SELECT e.details->>'artist' AS artist,
                   e.details->>'artist_key' AS artist_key,
+                  e.details->'artists' AS artists,
                   e.details->>'album' AS album,
                   e.details->>'album_key' AS album_key,
                   e.details->>'track' AS "track!",
@@ -930,13 +935,35 @@ async fn get_day_music(
             .unwrap_or_else(|| format!("\u{0}{}", fold(&row.track)));
         tally(&mut tracks, track_key, &row.track, artist);
         let Some(artist) = artist else { continue };
-        if let (Some(key), Some(track_key)) = (row.artist_key, row.track_key) {
-            tally(&mut artists, key, artist, Some(artist))
-                .tracks
-                .insert(track_key);
+        // Un artiste par crédit, l'artiste principal d'abord ; une écoute interprétée avant les
+        // artistes crédités n'a que son artiste entier.
+        let credits: Vec<(String, String)> = match row.artists.as_ref().and_then(Value::as_array) {
+            Some(list) => list
+                .iter()
+                .filter_map(|c| {
+                    Some((
+                        c["key"].as_str()?.to_owned(),
+                        c["name"].as_str()?.to_owned(),
+                    ))
+                })
+                .collect(),
+            None => row
+                .artist_key
+                .clone()
+                .map(|key| (key, artist.to_owned()))
+                .into_iter()
+                .collect(),
+        };
+        if let Some(track_key) = &row.track_key {
+            for (key, name) in &credits {
+                tally(&mut artists, key.clone(), name, Some(name))
+                    .tracks
+                    .insert(track_key.clone());
+            }
         }
         if let (Some(key), Some(album)) = (row.album_key, row.album.as_deref()) {
-            tally(&mut albums, key, album, Some(artist));
+            let lead = credits.first().map_or(artist, |(_, name)| name.as_str());
+            tally(&mut albums, key, album, Some(lead));
         }
     }
     let artists: Vec<MusicArtist> = ranked(artists)

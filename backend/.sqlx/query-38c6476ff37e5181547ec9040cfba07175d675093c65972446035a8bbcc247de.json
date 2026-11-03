@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT o.seq, o.ordinal, o.level, o.display\n           FROM derived.event_items o\n           JOIN unnest($1::bigint[], $2::smallint[]) AS w(seq, ordinal)\n             ON w.seq = o.seq AND w.ordinal = o.ordinal\n           WHERE o.generation = (SELECT id FROM derived.generations WHERE state = 'active')",
+  "query": "SELECT o.seq, o.ordinal, o.level, o.display\n           FROM derived.event_items o\n           JOIN unnest($1::bigint[], $2::smallint[]) AS w(seq, ordinal)\n             ON w.seq = o.seq AND w.ordinal = o.ordinal\n           WHERE o.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n           ORDER BY o.seq, o.ordinal, o.level, o.position",
   "describe": {
     "columns": [
       {
@@ -61,5 +61,5 @@
       false
     ]
   },
-  "hash": "4e4b1df6867595656f0904e5afc375fc65b0167b379c7155f211dbafa0a8b199"
+  "hash": "38c6476ff37e5181547ec9040cfba07175d675093c65972446035a8bbcc247de"
 }

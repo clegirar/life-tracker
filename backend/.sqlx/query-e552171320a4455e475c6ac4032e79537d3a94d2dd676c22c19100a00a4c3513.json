@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO derived.event_items (generation, seq, ordinal, level,\n                           position, item_key, display, metric, occurred_at)\n                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Int8",
+        "Int2",
+        "Text",
+        "Int2",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e552171320a4455e475c6ac4032e79537d3a94d2dd676c22c19100a00a4c3513"
+}

@@ -504,6 +504,11 @@ mod tests {
             track_info_key("A", "B"),
             track_info_key("a feat. X", "B (Live)")
         );
+        // Un titre à plusieurs artistes n'est demandé qu'une fois, sous la clé de l'artiste principal.
+        assert_eq!(
+            track_info_key("A & X", "B"),
+            track_info_key("A", "B (feat. X)")
+        );
     }
 
     #[test]

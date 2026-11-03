@@ -424,6 +424,7 @@ fn track(record: &Record, metric: &'static str, level: &'static str) -> Output {
         details: json!({"d": 1}),
         items: vec![Item {
             level,
+            position: 0,
             item_key: "a::t".to_owned(),
             display: "A - T".to_owned(),
         }],
@@ -593,8 +594,8 @@ async fn concurrent_starters_establish_one_active_generation() {
             .unwrap();
     assert_eq!(
         serde_json::from_str::<Value>(&versions).unwrap(),
-        json!({"coffee.cup": 1, "record.cancel": 1, "lastfm.scrobble": 1, "lastfm.track_info": 1,
-               "music.mark_known": 1, "apple.play_history_row": 1})
+        json!({"coffee.cup": 1, "record.cancel": 1, "lastfm.scrobble": 2, "lastfm.track_info": 2,
+               "music.mark_known": 2, "apple.play_history_row": 2})
     );
 }
 
@@ -935,6 +936,16 @@ async fn the_comparison_detects_a_difference_in_every_table() {
             ),
             format!(
                 "UPDATE derived.event_items SET display = 'A - T' WHERE generation = {g} AND seq = {track_seq}"
+            ),
+        ),
+        (
+            "event_items",
+            track_seq,
+            format!(
+                "UPDATE derived.event_items SET position = 1 WHERE generation = {g} AND seq = {track_seq}"
+            ),
+            format!(
+                "UPDATE derived.event_items SET position = 0 WHERE generation = {g} AND seq = {track_seq}"
             ),
         ),
         (

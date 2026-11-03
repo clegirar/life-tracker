@@ -350,7 +350,8 @@ export function buildServer(backend: Backend): McpServer {
     'top',
     {
       title: 'Top',
-      description: 'The most frequent items of a level over a period (e.g. top artists of the month), with their keys.',
+      description:
+        'The most frequent items of a level over a period (e.g. top artists of the month), with their keys. A listen credited to several artists counts for each of them in items and distinct_items, but once in occurrences_with_item.',
       inputSchema: z.object({
         metric,
         level,

@@ -63,7 +63,8 @@ pub async fn compare(
              FROM derived.events WHERE generation IN ($1, $2)
              UNION ALL
              SELECT 'event_items', generation, seq,
-                    jsonb_build_array(ordinal, level, item_key, display, metric, occurred_at)
+                    jsonb_build_array(ordinal, level, position, item_key, display, metric,
+                                      occurred_at)
              FROM derived.event_items WHERE generation IN ($1, $2)
              UNION ALL
              SELECT 'cancellations', generation, cancel_seq,

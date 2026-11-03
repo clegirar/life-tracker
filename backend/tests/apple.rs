@@ -282,8 +282,10 @@ async fn the_import_counts_everything_and_keeps_each_kind_of_row_where_it_belong
     // 200 s + les 140 s du morceau qui franchit la moitié : pas besoin d'une fiche Last.fm.
     assert_eq!(day["listens_without_duration"], 0);
     assert_eq!(day["minutes"], 6);
-    assert_eq!(names(&day["artists"]), ["ARTISTE FICTIF feat. Invité"]);
+    // L'invité est un artiste crédité à part entière.
+    assert_eq!(names(&day["artists"]), ["ARTISTE FICTIF", "Invité"]);
     assert_eq!(day["artists"][0]["listens"], 2);
+    assert_eq!(day["artists"][1]["listens"], 1);
     assert_eq!(names(&day["albums"]), ["Album fictif"]);
 }
 
@@ -525,7 +527,8 @@ async fn discoveries_move_back_to_the_dates_of_the_history() {
     assert_eq!(
         levels,
         [
-            ("artist", "ARTISTE FICTIF feat. Invité"),
+            ("artist", "ARTISTE FICTIF"),
+            ("artist", "Invité"),
             ("album", "Album fictif"),
             ("track", "Titre fictif"),
             ("track", "Titre repris"),

@@ -107,6 +107,26 @@ test('une journée sans découverte le dit, sans cacher ses écoutes', async ({ 
   await expect(section(page).getByText('Aucune découverte ce jour-là.')).toBeVisible()
 })
 
+test('un album partagé par deux crédits est une seule découverte, à l\'artiste principal', async ({ page, request }) => {
+  const date = addDays(today, -21)
+  const cookie = await apiSession(request)
+  await send(request, [
+    scrobble(date, 0, { artist: 'Duo Principal & Duo Second', album: 'Album Partagé', track: 'Titre Un' }),
+    scrobble(date, 1, { artist: 'Duo Principal & Autre Invité', album: 'Album Partagé', track: 'Titre Deux' }),
+  ])
+  await waitForListens(request, cookie, date, 2)
+
+  await login(page)
+  await previousDay(page, 21)
+  await expect(section(page).getByText('Artiste découvert')).toHaveCount(3)
+  await expect(section(page).getByText('Album découvert · Duo Principal', { exact: true })).toHaveCount(1)
+
+  await button(page, 'Album Partagé').click()
+  await expect.poll(() => levelsOf(request, cookie, date), { timeout: 30_000 }).toEqual(['artist', 'artist', 'artist', 'track', 'track'])
+  await expect(button(page, 'Album Partagé')).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 })
+  await expect(button(page, 'Album Partagé')).toHaveAttribute('aria-pressed', 'true')
+})
+
 for (const [colorScheme, daysAgo] of [['light', 15], ['dark', 16]] as const) {
   test.describe(colorScheme, () => {
     test.use({ colorScheme })

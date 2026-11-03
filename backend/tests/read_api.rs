@@ -563,6 +563,50 @@ async fn first_and_last_time_of_an_artist_and_its_known_marks() {
     assert_eq!(status, 404);
 }
 
+/// L'exemple de référence : une écoute à trois artistes compte trois artistes uniques, mais une seule
+/// écoute avec un artiste. Le contexte d'un titre joint les artistes crédités dans leur ordre.
+#[tokio::test]
+async fn top_counts_each_credited_artist_and_each_listen_once() {
+    let app = App::new().await;
+    app.send(vec![scrobble(
+        "2026-10-20T08:00:00Z",
+        "Zek, Jungle Jack & Caballero",
+        "T",
+        "GRAND LUXXXE Vol.1",
+    )])
+    .await;
+    let path = |level: &str| {
+        format!("/v1/top?metric=music.listen&level={level}&from=2026-10-20&to=2026-10-20")
+    };
+    let artists = app.ok(&path("artist")).await;
+    assert_eq!(artists["distinct_items"], 3);
+    assert_eq!(artists["occurrences_with_item"], 1);
+    let names: Vec<&str> = artists["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["Caballero", "Jungle Jack", "Zek"]);
+    let tracks = app.ok(&path("track")).await;
+    assert_eq!(tracks["distinct_items"], 1);
+    assert_eq!(tracks["occurrences_with_item"], 1);
+    assert_eq!(
+        tracks["items"][0]["context"],
+        json!({"artist": "Zek, Jungle Jack & Caballero", "album": "GRAND LUXXXE Vol.1"})
+    );
+    let albums = app.ok(&path("album")).await;
+    assert_eq!(albums["items"][0]["key"], "zek\tgrand luxxxe vol.1");
+    let occurrences = app
+        .ok("/v1/occurrences?metric=music.listen&from=2026-10-20&to=2026-10-20&level=artist&key=jungle%20jack")
+        .await;
+    assert_eq!(occurrences["total"], 1);
+    let durations = app
+        .ok("/v1/durations?metric=music.listen&from=2026-10-20&to=2026-10-20")
+        .await;
+    assert_eq!(durations["events"], 1);
+}
+
 #[tokio::test]
 async fn top_and_discoveries_over_a_period() {
     let app = App::new().await;

@@ -241,6 +241,187 @@ async fn a_day_of_music() {
     );
 }
 
+/// Une écoute reste un événement : elle compte pour chacun de ses artistes crédités, une seule fois
+/// dans les écoutes, les titres et les minutes. L'album et le titre suivent l'artiste principal.
+#[tokio::test]
+async fn a_track_with_several_artists_counts_for_each() {
+    let app = App::new().await;
+    app.send(vec![
+        scrobble(
+            "2026-10-20T08:00:00Z",
+            "Zek, Jungle Jack & Caballero",
+            "T",
+            "GRAND LUXXXE Vol.1",
+        ),
+        scrobble(
+            "2026-10-20T09:00:00Z",
+            "A2H & Dau",
+            "U",
+            "Les gosses effrayés",
+        ),
+        scrobble(
+            "2026-10-20T10:00:00Z",
+            "A2H & zek",
+            "V",
+            "Les gosses effrayés",
+        ),
+        // Le même titre, crédité de deux façons.
+        scrobble("2026-10-20T11:00:00Z", "BenPLG & Orelsan", "X", ""),
+        scrobble("2026-10-20T12:00:00Z", "BenPLG", "X (feat. Orelsan)", ""),
+        // Les invités cités dans le titre, sans parenthèses.
+        scrobble(
+            "2026-10-20T13:00:00Z",
+            "BenPLG",
+            "Y feat. Orelsan & Nekfeu",
+            "",
+        ),
+        scrobble(
+            "2026-10-20T14:00:00Z",
+            "BenPLG",
+            "Z ft. Dau, Jungle Jack",
+            "",
+        ),
+        info(
+            "a",
+            "2026-10-20T08:01:00Z",
+            "Zek, Jungle Jack & Caballero",
+            "T",
+            json!("180000"),
+        ),
+        // Deux fiches pour une même clé de titre : la plus récente fait foi.
+        info(
+            "b",
+            "2026-10-20T11:01:00Z",
+            "BenPLG & Orelsan",
+            "X",
+            json!("100000"),
+        ),
+        info(
+            "c",
+            "2026-10-20T12:01:00Z",
+            "BenPLG",
+            "X (feat. Orelsan)",
+            json!("200000"),
+        ),
+    ])
+    .await;
+
+    let day = app.music("2026-10-20").await;
+    assert_eq!(day["listens"], 7);
+    // 180 + 200 × 2 = 580 s : chaque écoute une fois, quel que soit son nombre d'artistes.
+    assert_eq!(day["minutes"], 10);
+    assert_eq!(day["listens_without_duration"], 4);
+    assert_eq!(day["tracks"].as_array().unwrap().len(), 6);
+    assert_eq!(
+        day["tracks"][0],
+        json!({"name": "X (feat. Orelsan)", "artist": "BenPLG", "listens": 2})
+    );
+    assert_eq!(
+        day["artist_of_day"],
+        json!({"name": "BenPLG", "listens": 4})
+    );
+    assert_eq!(
+        day["artists"],
+        json!([
+            {"name": "BenPLG", "tracks": 3, "listens": 4},
+            {"name": "Orelsan", "tracks": 2, "listens": 3},
+            {"name": "A2H", "tracks": 2, "listens": 2},
+            {"name": "Dau", "tracks": 2, "listens": 2},
+            {"name": "Jungle Jack", "tracks": 2, "listens": 2},
+            // Le dernier nom vu.
+            {"name": "zek", "tracks": 2, "listens": 2},
+            {"name": "Caballero", "tracks": 1, "listens": 1},
+            {"name": "Nekfeu", "tracks": 1, "listens": 1},
+        ])
+    );
+    assert_eq!(
+        day["albums"],
+        json!([
+            {"name": "Les gosses effrayés", "artist": "A2H", "listens": 2},
+            {"name": "GRAND LUXXXE Vol.1", "artist": "Zek", "listens": 1},
+        ])
+    );
+}
+
+/// L'exemple de référence, tel quel : une écoute, un titre, trois artistes, trois découvertes d'artiste.
+#[tokio::test]
+async fn one_listen_of_three_artists_is_one_listen_one_track_three_artists() {
+    let app = App::new().await;
+    app.send(vec![scrobble(
+        "2026-10-20T08:00:00Z",
+        "Zek, Jungle Jack & Caballero",
+        "T",
+        "",
+    )])
+    .await;
+    let day = app.music("2026-10-20").await;
+    assert_eq!(day["listens"], 1);
+    assert_eq!(day["tracks"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        day["tracks"][0],
+        json!({"name": "T", "artist": "Zek, Jungle Jack & Caballero", "listens": 1})
+    );
+    assert_eq!(
+        day["artists"],
+        json!([
+            {"name": "Caballero", "tracks": 1, "listens": 1},
+            {"name": "Jungle Jack", "tracks": 1, "listens": 1},
+            {"name": "Zek", "tracks": 1, "listens": 1},
+        ])
+    );
+    assert_eq!(
+        app.discoveries("2026-10-20").await,
+        found(&[
+            ("artist", "Caballero"),
+            ("artist", "Jungle Jack"),
+            ("artist", "Zek"),
+            ("track", "T"),
+        ])
+    );
+}
+
+/// Un marquage d'artiste sur un crédit marque chacun ; la ligne d'album nomme l'artiste principal, et
+/// ce qu'elle renvoie suffit à marquer l'album de tous ses crédits.
+#[tokio::test]
+async fn marks_follow_the_credited_artists() {
+    let app = App::new().await;
+    app.send(vec![
+        scrobble(
+            "2026-10-20T09:00:00Z",
+            "A2H & Dau",
+            "U",
+            "Les gosses effrayés",
+        ),
+        scrobble(
+            "2026-10-20T10:00:00Z",
+            "A2H & zek",
+            "V",
+            "Les gosses effrayés",
+        ),
+    ])
+    .await;
+    let day = app.music("2026-10-20").await;
+    let album = day["first_listens"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["level"] == "album")
+        .unwrap()
+        .clone();
+    assert_eq!(album["artist"], "A2H");
+    app.mark(
+        "m1",
+        json!({"level": "album", "artist": album["artist"], "album": album["name"]}),
+    )
+    .await;
+    app.mark("m2", json!({"level": "artist", "artist": "A2H & Dau"}))
+        .await;
+    assert_eq!(
+        app.discoveries("2026-10-20").await,
+        found(&[("artist", "zek"), ("track", "U"), ("track", "V")])
+    );
+}
+
 #[tokio::test]
 async fn an_empty_day_and_a_day_without_any_duration() {
     let app = App::new().await;
@@ -760,8 +941,9 @@ async fn a_mark_from_the_displayed_names_covers_every_spelling() {
     .await;
     let day = app.music("2026-10-16").await;
     let rows = day["first_listens"].as_array().unwrap();
-    assert_eq!(rows.len(), 3, "{rows:?}");
-    assert_eq!(rows[0]["name"], "DAFT PUNK feat. X", "le dernier nom vu");
+    assert_eq!(rows.len(), 4, "{rows:?}");
+    assert_eq!(rows[0]["name"], "DAFT PUNK", "le dernier nom vu");
+    assert_eq!(rows[1]["name"], "X", "l'invité, artiste crédité");
     for (index, row) in rows.iter().enumerate() {
         let (name, artist) = (row["name"].clone(), row["artist"].clone());
         let payload = match row["level"].as_str().unwrap() {

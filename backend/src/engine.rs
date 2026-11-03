@@ -202,12 +202,13 @@ async fn write_outputs(
                 for item in &event.items {
                     sqlx::query!(
                         "INSERT INTO derived.event_items (generation, seq, ordinal, level,
-                           item_key, display, metric, occurred_at)
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                           position, item_key, display, metric, occurred_at)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
                         generation,
                         record.seq,
                         ordinal,
                         item.level,
+                        item.position,
                         item.item_key,
                         item.display,
                         event.metric,
