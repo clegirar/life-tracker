@@ -24,6 +24,13 @@
   --sidebar-active: #d6d6dc;
   --scrim: rgba(0, 0, 0, 0.28);
   --drawer-shadow: 0 0 32px rgba(0, 0, 0, 0.18);
+  /* La vue de l'année : la part de la couleur de la métrique dans chaque palier, sur le fond de carte. */
+  --heat-zero: 13%;
+  --heat-1: 32%;
+  --heat-2: 54%;
+  --heat-3: 77%;
+  --heat-4: 100%;
+  --heat-empty: #c7c7cc;
   /* Ressort échantillonné : amortissement 0,72, léger dépassement. */
   --spring: linear(0, 0.13, 0.383, 0.632, 0.822, 0.944, 1.009, 1.035, 1.038, 1.031, 1.021, 1.012, 1.005, 1.001, 1);
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -53,6 +60,13 @@
     --sidebar-active: #2c2c2e;
     --scrim: rgba(0, 0, 0, 0.56);
     --drawer-shadow: 0 0 0 0.5px #38383a;
+    /* Sur fond sombre, le pâle doit rester distinct de la carte. */
+    --heat-zero: 20%;
+    --heat-1: 38%;
+    --heat-2: 58%;
+    --heat-3: 79%;
+    --heat-4: 100%;
+    --heat-empty: #48484a;
   }
 }
 
@@ -232,7 +246,7 @@ button:disabled {
     visibility: visible;
     transition: none;
     box-shadow: none;
-    border-right: 0.5px solid var(--separator);
+    background: none;
   }
 }
 
@@ -976,7 +990,151 @@ button:disabled {
   margin-top: 6px;
 }
 
+/* La vue de l'année : douze mini-mois, deux colonnes sur iPhone, trois puis quatre sur un écran large. */
+.year-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  --heat: var(--muted);
+  transform-origin: top center;
+  transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out);
+}
+
+/* L'arrivée depuis le mois : l'année se pose, comme la carte du mois. */
+@starting-style {
+  .year-grid {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+@media (min-width: 600px) {
+  .year-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1100px) {
+  .year-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.year-grid > li {
+  display: flex;
+}
+
+.heat-coffee {
+  --heat: var(--accent);
+}
+
+.heat-music {
+  --heat: var(--music);
+}
+
+/* Tout le mini-mois est la cible : il ouvre son mois. */
+.mini {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 10px 12px;
+  border-radius: 16px;
+  background: var(--card);
+  text-align: left;
+  transition: transform 300ms var(--spring);
+}
+
+.mini:active:not(:disabled) {
+  transform: scale(0.97);
+  transition: transform 100ms var(--ease-out);
+}
+
+.mini:disabled {
+  color: var(--control-disabled);
+}
+
+.mini-name {
+  padding-left: 2px;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.mini[aria-current='date'] .mini-name {
+  color: var(--heat);
+}
+
+.mini-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.dot,
+.dot-slot {
+  aspect-ratio: 1;
+  border-radius: 50%;
+}
+
+.dot {
+  display: block;
+  box-shadow: inset 0 0 0 1px var(--heat-empty);
+}
+
+/* Pas de données : le contour seul. Un zéro est rempli, au plus pâle. */
+.dot[data-heat] {
+  box-shadow: none;
+}
+
+.dot[data-heat='none'] {
+  box-shadow: inset 0 0 0 1px var(--heat-empty);
+}
+
+.dot[data-heat='0'] {
+  background: color-mix(in srgb, var(--heat) var(--heat-zero), var(--card));
+}
+
+.dot[data-heat='1'] {
+  background: color-mix(in srgb, var(--heat) var(--heat-1), var(--card));
+}
+
+.dot[data-heat='2'] {
+  background: color-mix(in srgb, var(--heat) var(--heat-2), var(--card));
+}
+
+.dot[data-heat='3'] {
+  background: color-mix(in srgb, var(--heat) var(--heat-3), var(--card));
+}
+
+.dot[data-heat='4'] {
+  background: var(--heat);
+}
+
+/* Aujourd'hui est entouré, comme dans le mois. */
+.dot[data-today] {
+  outline: 1.5px solid var(--fg);
+  outline-offset: 1px;
+}
+
+.legend-dot {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.legend .legend-dot {
+  /* Hors de la carte, le pâle se mélange au fond de page. */
+  --card: var(--bg);
+}
+
 @media (hover: hover) and (pointer: fine) {
+  .mini:hover:not(:disabled) {
+    filter: brightness(0.97);
+  }
   .cell:hover:not(:disabled) {
     background: var(--field);
   }
@@ -1023,9 +1181,15 @@ button:disabled {
     transform: none;
     transition: none;
   }
-  .month-card {
+  .month-card,
+  .year-grid {
     transform: none;
     transition: opacity 150ms linear;
+  }
+  .mini,
+  .mini:active {
+    transform: none;
+    transition: none;
   }
   .known-pill,
   .known:active .known-pill {

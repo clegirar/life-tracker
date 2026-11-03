@@ -115,6 +115,8 @@ fn routes() -> Router<AppState> {
         .route("/v1/days/{date}", get(get_day))
         .route("/v1/days/{date}/music", get(get_day_music))
         .route("/v1/months/{month}", get(get_month))
+        // Pas dans `READ_ROUTES` : la vue de l'année ne sert qu'à la web app.
+        .route("/v1/years/{year}", get(get_year))
         .route("/v1/sources/health", get(get_sources_health))
         .route("/v1/inventory", get(get_inventory))
         .route("/v1/search", get(get_search))
@@ -1016,6 +1018,18 @@ async fn get_month(
 ) -> Result<Json<calendar::Month>, ApiError> {
     let start = calendar::parse_month(&month).ok_or(ApiError::InvalidDate)?;
     Ok(Json(calendar::month(&state.pool, start).await?))
+}
+
+/// L'année, jour par jour, de la même forme que le mois. Une année future est refusée.
+async fn get_year(
+    State(state): State<AppState>,
+    Path(year): Path<String>,
+) -> Result<Json<calendar::Year>, ApiError> {
+    let start = calendar::parse_year(&year).ok_or(ApiError::InvalidDate)?;
+    calendar::year(&state.pool, start)
+        .await?
+        .map(Json)
+        .ok_or(ApiError::InvalidDate)
 }
 
 #[derive(Serialize)]

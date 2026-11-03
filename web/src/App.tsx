@@ -11,6 +11,8 @@ import { parisDate } from './time'
 import { useCoffee } from './useCoffee'
 import { useMonth } from './useMonth'
 import { useMusic } from './useMusic'
+import { useYear } from './useYear'
+import { YearPage } from './YearPage'
 
 type Auth = 'unknown' | 'in' | 'out' | 'expired'
 
@@ -45,6 +47,9 @@ export function App() {
   const music = useMusic(date, onSessionLost, auth === 'in')
   // Le mois affiché, ou celui du jour : la page du jour y lit si sa journée est incomplète.
   const calendar = useMonth(shownMonth ?? monthOf(date), onSessionLost, auth === 'in', shownMonth)
+  // L'année n'est lue que vue ouverte : la rouvrir la relit.
+  const shownYear = route.page === 'year' ? route.year : today.slice(0, 4)
+  const year = useYear(shownYear, onSessionLost, auth === 'in' && route.page === 'year')
 
   // Une panne n'est pas une déconnexion : la page du jour saura la signaler.
   useEffect(() => {
@@ -76,10 +81,24 @@ export function App() {
   const menu = wide ? null : <MenuButton open={drawerOpen} onOpen={() => setMenuOpen(true)} buttonRef={menuButton} />
 
   let page
-  if (route.page === 'month') {
+  if (route.page === 'year') {
+    page = (
+      <YearPage
+        menu={menu}
+        year={route.year}
+        today={today}
+        data={year.year}
+        loadFailed={year.loadFailed}
+        onYear={(next) => go({ page: 'year', year: next })}
+        onOpenMonth={(month) => go({ page: 'month', month })}
+        onReload={() => void year.reload()}
+      />
+    )
+  } else if (route.page === 'month') {
     page = (
       <MonthPage
         menu={menu}
+        onShowYear={() => go({ page: 'year', year: route.month.slice(0, 4) })}
         month={route.month}
         today={today}
         selected={date}
@@ -119,6 +138,7 @@ export function App() {
           coffee.reset()
           music.reset()
           calendar.reset()
+          year.reset()
           setLastDay(null)
           setMenuOpen(false)
           navigate(TODAY, true)

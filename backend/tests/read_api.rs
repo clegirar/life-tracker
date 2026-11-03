@@ -308,6 +308,10 @@ async fn the_service_token_never_writes() {
             "route inconnue",
             c.get(format!("{base}/v1/inconnu")).bearer_auth(t),
         ),
+        (
+            "année : une lecture de la web app, hors des routes du MCP",
+            c.get(format!("{base}/v1/years/2026")).bearer_auth(t),
+        ),
     ];
     for (name, attempt) in attempts {
         let response = attempt.send().await.unwrap();

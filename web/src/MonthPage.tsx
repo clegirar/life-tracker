@@ -6,6 +6,8 @@ import { musicAlert } from './music'
 interface Props {
   /** Le bouton du tiroir, sur iPhone. */
   menu: ReactNode
+  /** Le retour à l'année, comme le « ‹ 2026 » du Calendrier d'iOS. */
+  onShowYear: () => void
   month: string
   today: string
   selected: string
@@ -28,7 +30,7 @@ function Chevron({ d }: { d: string }) {
 // Une couleur par métrique connue ; une métrique nouvelle prend la couleur neutre, sans code à changer.
 const METRIC_CLASS: Record<string, string> = { coffee: 'v-coffee', 'music.listen': 'v-music' }
 
-export function MonthPage({ menu, month, today, selected, data, loadFailed, health, onMonth, onOpenDay, onReload }: Props) {
+export function MonthPage({ menu, onShowYear, month, today, selected, data, loadFailed, health, onMonth, onOpenDay, onReload }: Props) {
   const isCurrent = month === monthOf(today)
   const days = new Map((data?.month === month ? data.days : []).map((day) => [day.date, day]))
   const metrics = data?.metrics ?? []
@@ -42,10 +44,15 @@ export function MonthPage({ menu, month, today, selected, data, loadFailed, heal
 
   return (
     <main className="page month-page">
-      {menu && <div className="topbar">{menu}</div>}
+      <div className="topbar">
+        {menu}
+        <button type="button" className="back" onClick={onShowYear} aria-label={`Voir l'année ${month.slice(0, 4)}`}>
+          <Chevron d="M15 5l-7 7 7 7" />
+          {month.slice(0, 4)}
+        </button>
+      </div>
       <header className="header">
         <div className="header-text">
-          <p className="subtitle">{month.slice(0, 4)}</p>
           <h1 className="title">{monthName(month)}</h1>
         </div>
         <nav className="nav" aria-label="Changer de mois">
