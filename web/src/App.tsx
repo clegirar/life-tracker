@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { fetchDay, logout, Unauthorized } from './api'
 import { monthOf } from './calendar'
 import { DayPage } from './DayPage'
 import { Login } from './Login'
 import { MonthPage } from './MonthPage'
+import { TODAY, routePath, useRoute, type Route } from './route'
+import { MenuButton, Sidebar, useWide } from './Sidebar'
 import { parisDate } from './time'
 import { useCoffee } from './useCoffee'
 import { useMonth } from './useMonth'
@@ -13,13 +16,16 @@ type Auth = 'unknown' | 'in' | 'out' | 'expired'
 
 export function App() {
   const [auth, setAuth] = useState<Auth>('unknown')
-  // `null` : suivre aujourd'hui, y compris quand minuit passe avec la page ouverte.
-  const [selected, setSelected] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const today = parisDate(now)
-  const date = selected ?? today
-  // `null` : la page du jour ; sinon le mois affiché.
-  const [shownMonth, setShownMonth] = useState<string | null>(null)
+  const { route, navigate } = useRoute(today)
+  // Le dernier jour ouvert : le mois le montre sélectionné, les données du jour restent les siennes.
+  // `null` : aujourd'hui.
+  const [lastDay, setLastDay] = useState<string | null>(null)
+  const date = (route.page === 'day' ? route.date : lastDay) ?? today
+  const wide = useWide()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuButton = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     const tick = () => setNow(Date.now())
@@ -33,6 +39,7 @@ export function App() {
 
   const onSessionLost = useCallback(() => setAuth('expired'), [])
 
+  const shownMonth = route.page === 'month' ? route.month : null
   // Vit au-dessus de l'écran de connexion : une écriture refusée par une session expirée y survit.
   const coffee = useCoffee(date, onSessionLost, auth === 'in')
   const music = useMusic(date, onSessionLost, auth === 'in')
@@ -47,47 +54,81 @@ export function App() {
     )
   }, [])
 
+  const closeMenu = useCallback(() => {
+    // Le focus revient au bouton qui a ouvert le tiroir, une fois la page sortie de `inert`.
+    flushSync(() => setMenuOpen(false))
+    menuButton.current?.focus({ preventScroll: true })
+  }, [])
+
   if (auth === 'unknown') return null
   if (auth !== 'in') {
     return <Login expired={auth === 'expired'} onLoggedIn={() => setAuth('in')} />
   }
-  const select = (next: string) => setSelected(next === today ? null : next)
-  if (shownMonth) {
-    return (
+
+  const go = (next: Route) => {
+    if (route.page === 'day') setLastDay(route.date)
+    if (next.page === 'day') setLastDay(next.date)
+    setMenuOpen(false)
+    navigate(next)
+  }
+  const openDay = (next: string) => go({ page: 'day', date: next === today ? null : next })
+  const drawerOpen = !wide && menuOpen
+  const menu = wide ? null : <MenuButton open={drawerOpen} onOpen={() => setMenuOpen(true)} buttonRef={menuButton} />
+
+  let page
+  if (route.page === 'month') {
+    page = (
       <MonthPage
-        month={shownMonth}
+        menu={menu}
+        month={route.month}
         today={today}
         selected={date}
         data={calendar.month}
         loadFailed={calendar.loadFailed}
         health={music.health}
-        onMonth={setShownMonth}
+        onMonth={(month) => go({ page: 'month', month })}
         onReload={() => void calendar.reload()}
-        onOpenDay={(next) => {
-          select(next)
-          setShownMonth(null)
-        }}
+        onOpenDay={openDay}
+      />
+    )
+  } else {
+    page = (
+      <DayPage
+        menu={menu}
+        date={date}
+        today={today}
+        onSelect={openDay}
+        onShowMonth={() => go({ page: 'month', month: monthOf(date) })}
+        calendarDay={calendar.month?.days.find((day) => day.date === date) ?? null}
+        coffee={coffee}
+        music={music}
       />
     )
   }
+
   return (
-    <DayPage
-      date={date}
-      today={today}
-      onSelect={select}
-      onShowMonth={() => setShownMonth(monthOf(date))}
-      calendarDay={calendar.month?.days.find((day) => day.date === date) ?? null}
-      coffee={coffee}
-      music={music}
-      onLogout={async () => {
-        await logout().catch(() => undefined)
-        coffee.reset()
-        music.reset()
-        calendar.reset()
-        setSelected(null)
-        setShownMonth(null)
-        setAuth('out')
-      }}
-    />
+    <div className="shell">
+      <Sidebar
+        wide={wide}
+        open={drawerOpen}
+        onClose={closeMenu}
+        calendarHref={routePath(TODAY)}
+        onCalendar={() => go(TODAY)}
+        onLogout={async () => {
+          await logout().catch(() => undefined)
+          coffee.reset()
+          music.reset()
+          calendar.reset()
+          setLastDay(null)
+          setMenuOpen(false)
+          navigate(TODAY, true)
+          setAuth('out')
+        }}
+      />
+      {/* `inert` : le tiroir ouvert est seul à recevoir le focus et les touchers. */}
+      <div className="content" inert={drawerOpen}>
+        {page}
+      </div>
+    </div>
   )
 }

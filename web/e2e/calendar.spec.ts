@@ -110,7 +110,8 @@ test('une source muette marque les journées non couvertes, jusqu’à son rattr
   } finally {
     await heartbeat(request)
   }
-  await page.reload()
+  // L'adresse garde le mois : on repart du jour pour l'ouvrir de nouveau.
+  await page.goto('/')
   const now = await openMonthOf(page, today)
   await expect(now).not.toHaveAccessibleName(/en attente/)
   expect((await serverMonthDay(request, cookie, today)).pending).toEqual([])
@@ -183,7 +184,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
 
       try {
         sql("UPDATE core.sources SET last_seen_at = now() - interval '2 days' WHERE name = 'lastfm'")
-        await page.reload()
+        await page.goto('/')
         await openMonthOf(page, today)
         await expect(page.getByText('Last.fm ne répond plus.')).toBeVisible()
         await checkLayout(page)

@@ -125,8 +125,8 @@ test('une journée sans écoute et une panne ne se confondent pas', async ({ pag
     health.sources[0].silent = true
     await route.fulfill({ response, json: health })
   })
+  // L'adresse garde le jour.
   await page.reload()
-  await previousDay(page, 1)
   await expect(page.getByRole('heading', { name: 'Hier' })).toBeVisible()
   await expect(page.getByTestId('music-alert')).toContainText('Last.fm ne répond plus.')
   await expect(music(page)).toContainText('Pas de données')

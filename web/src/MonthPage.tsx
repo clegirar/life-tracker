@@ -1,8 +1,11 @@
+import type { ReactNode } from 'react'
 import type { Month, SourcesHealth } from './api'
 import { addMonths, cellLabel, compact, errorCountText, marker, MARKER_LABELS, monthGrid, monthName, monthOf, WEEKDAYS, type Marker } from './calendar'
 import { musicAlert } from './music'
 
 interface Props {
+  /** Le bouton du tiroir, sur iPhone. */
+  menu: ReactNode
   month: string
   today: string
   selected: string
@@ -25,7 +28,7 @@ function Chevron({ d }: { d: string }) {
 // Une couleur par métrique connue ; une métrique nouvelle prend la couleur neutre, sans code à changer.
 const METRIC_CLASS: Record<string, string> = { coffee: 'v-coffee', 'music.listen': 'v-music' }
 
-export function MonthPage({ month, today, selected, data, loadFailed, health, onMonth, onOpenDay, onReload }: Props) {
+export function MonthPage({ menu, month, today, selected, data, loadFailed, health, onMonth, onOpenDay, onReload }: Props) {
   const isCurrent = month === monthOf(today)
   const days = new Map((data?.month === month ? data.days : []).map((day) => [day.date, day]))
   const metrics = data?.metrics ?? []
@@ -39,6 +42,7 @@ export function MonthPage({ month, today, selected, data, loadFailed, health, on
 
   return (
     <main className="page month-page">
+      {menu && <div className="topbar">{menu}</div>}
       <header className="header">
         <div className="header-text">
           <p className="subtitle">{month.slice(0, 4)}</p>

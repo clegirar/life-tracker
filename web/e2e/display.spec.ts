@@ -1,25 +1,9 @@
-import { expect, test, type Page } from '@playwright/test'
-import { apiSession, clearDay, count, login, parisToday, waitForServerCount } from './helpers'
+import { expect, test } from '@playwright/test'
+import { apiSession, checkLayout, clearDay, count, login, parisToday, waitForServerCount } from './helpers'
 
 // Captures à la largeur d'un iPhone, en clair et en sombre. Elles restent hors du dépôt.
 const SHOTS = process.env.E2E_SCREENSHOTS ?? 'e2e-artifacts/screenshots'
 const today = parisToday()
-
-async function checkLayout(page: Page) {
-  const problems = await page.evaluate(() => {
-    const out: string[] = []
-    const root = document.documentElement
-    if (root.scrollWidth > window.innerWidth) out.push(`défilement horizontal : ${root.scrollWidth}`)
-    for (const el of document.querySelectorAll('button, input, a')) {
-      const { width, height, right } = el.getBoundingClientRect()
-      const name = el.getAttribute('aria-label') ?? el.textContent ?? el.tagName
-      if (height < 44 || width < 44) out.push(`${name} : ${width}×${height}`)
-      if (right > window.innerWidth) out.push(`${name} dépasse à droite`)
-    }
-    return out
-  })
-  expect(problems).toEqual([])
-}
 
 for (const colorScheme of ['light', 'dark'] as const) {
   test.describe(colorScheme, () => {

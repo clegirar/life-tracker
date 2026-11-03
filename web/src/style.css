@@ -18,6 +18,12 @@
   --on-music: #ffffff;
   --segment-on: #ffffff;
   --check: #c98500;
+  /* La barre latérale : un cran sous le fond de page, comme la barre de Réglages sur Mac. */
+  --sidebar-bg: #e9e9ee;
+  --sidebar-hover: #e0e0e6;
+  --sidebar-active: #d6d6dc;
+  --scrim: rgba(0, 0, 0, 0.28);
+  --drawer-shadow: 0 0 32px rgba(0, 0, 0, 0.18);
   /* Ressort échantillonné : amortissement 0,72, léger dépassement. */
   --spring: linear(0, 0.13, 0.383, 0.632, 0.822, 0.944, 1.009, 1.035, 1.038, 1.031, 1.021, 1.012, 1.005, 1.001, 1);
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -42,6 +48,11 @@
     --on-music: #2a0509;
     --segment-on: #636366;
     --check: #ffcc4d;
+    --sidebar-bg: #121214;
+    --sidebar-hover: #1f1f22;
+    --sidebar-active: #2c2c2e;
+    --scrim: rgba(0, 0, 0, 0.56);
+    --drawer-shadow: 0 0 0 0.5px #38383a;
   }
 }
 
@@ -92,6 +103,152 @@ button:disabled {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* La coquille : la barre latérale et la page. Sur un écran large, la barre prend sa colonne. */
+.shell {
+  min-height: 100dvh;
+}
+
+.content {
+  min-width: 0;
+}
+
+/* Sur iPhone, un tiroir qui glisse depuis la gauche : il sort par où il est entré. Transitions CSS,
+   donc interruptibles ; la fermeture, une réponse du système, est plus courte que l'ouverture. */
+.sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 20;
+  width: min(300px, 84vw);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 12px calc(16px + env(safe-area-inset-bottom, 0px))
+    calc(12px + env(safe-area-inset-left, 0px));
+  background: var(--sidebar-bg);
+  box-shadow: var(--drawer-shadow);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  transform: translateX(-100%);
+  visibility: hidden;
+  transition: transform 220ms var(--ease-out), visibility 0s linear 220ms;
+}
+
+.sidebar[data-open='true'] {
+  transform: none;
+  visibility: visible;
+  transition: transform 280ms var(--ease-out), visibility 0s;
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+  background: var(--scrim);
+  opacity: 0;
+  pointer-events: none;
+  touch-action: none;
+  transition: opacity 220ms var(--ease-out);
+}
+
+.scrim[data-open='true'] {
+  opacity: 1;
+  pointer-events: auto;
+  transition-duration: 280ms;
+}
+
+.sidebar-title {
+  padding: 4px 12px 12px;
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 700;
+}
+
+.sidebar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 17px;
+  line-height: 22px;
+  color: var(--fg);
+  text-align: left;
+  text-decoration: none;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: transform 300ms var(--spring), background-color 120ms var(--ease-out);
+}
+
+.sidebar-item:active {
+  transform: scale(0.97);
+  transition: transform 100ms var(--ease-out), background-color 120ms var(--ease-out);
+}
+
+.sidebar-item[aria-current='page'] {
+  background: var(--sidebar-active);
+  font-weight: 600;
+}
+
+.sidebar-item svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.sidebar-logout {
+  margin-top: auto;
+  font-size: 15px;
+  color: var(--muted);
+}
+
+@media (min-width: 900px) {
+  .shell {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    align-items: start;
+  }
+  .sidebar {
+    position: sticky;
+    top: 0;
+    width: auto;
+    height: 100dvh;
+    transform: none;
+    visibility: visible;
+    transition: none;
+    box-shadow: none;
+    border-right: 0.5px solid var(--separator);
+  }
+}
+
+/* Le bouton du tiroir et le retour, sur une même ligne en haut de la page. */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  margin: -6px 0 -10px;
+}
+
+.topbar .back {
+  margin: 0 0 0 -6px;
+}
+
+.topbar .menu-button + .back {
+  margin-left: 4px;
 }
 
 /* La mise en page : marges de la maquette, plus les zones de l'encoche et de la barre d'accueil. */
@@ -574,14 +731,6 @@ button:disabled {
   font-weight: 600;
 }
 
-.quiet {
-  align-self: center;
-  min-height: 44px;
-  padding: 0 12px;
-  font-size: 15px;
-  color: var(--muted);
-}
-
 .login {
   justify-content: flex-start;
 }
@@ -814,8 +963,11 @@ button:disabled {
   }
   .link:hover,
   .cup-cancel:hover,
-  .quiet:hover {
+  .sidebar-logout:hover {
     text-decoration: underline;
+  }
+  .sidebar-item:hover:not([aria-current='page']) {
+    background: var(--sidebar-hover);
   }
 }
 
@@ -853,5 +1005,33 @@ button:disabled {
     from {
       opacity: 0;
     }
+  }
+}
+
+/* Mouvement réduit : le tiroir apparaît en fondu, sans glisser. */
+@media (prefers-reduced-motion: reduce) and (max-width: 899.98px) {
+  .sidebar,
+  .sidebar[data-open='true'] {
+    transform: none;
+  }
+  .sidebar {
+    opacity: 0;
+    transition: opacity 150ms linear, visibility 0s linear 150ms;
+  }
+  .sidebar[data-open='true'] {
+    opacity: 1;
+    transition: opacity 150ms linear, visibility 0s;
+  }
+  .scrim,
+  .scrim[data-open='true'] {
+    transition: opacity 150ms linear;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-item,
+  .sidebar-item:active {
+    transform: none;
+    transition: background-color 120ms linear;
   }
 }
