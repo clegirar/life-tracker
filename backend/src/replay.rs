@@ -262,6 +262,14 @@ pub async fn rebuild(
         bail!("une reconstruction est déjà en cours");
     }
     let result = rebuild_locked(pool, registry, allow_differences).await;
+    // Fermer seule ne suffit pas : le serveur libère le verrou un peu après, et une
+    // reconstruction lancée aussitôt le trouverait encore pris.
+    let _ = sqlx::query_scalar!(
+        r#"SELECT pg_advisory_unlock($1) AS "unlocked!""#,
+        REBUILD_LOCK,
+    )
+    .fetch_one(&mut lock)
+    .await;
     let _ = lock.close().await;
     result
 }
