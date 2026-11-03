@@ -2,7 +2,8 @@
 // à enregistrement fermé (un seul client, Claude, par son document CIMD, sans le récupérer).
 //
 // Sur Internet (Tailscale Funnel) ne servent que /mcp (jeton exigé), /token et /.well-known/*. La page de
-// connexion refuse toute requête venue par Funnel : elle ne s'ouvre que depuis le tailnet.
+// connexion refuse toute requête venue par Funnel, reconnue à l'absence de Tailscale-User-Login : elle ne
+// s'ouvre que depuis le tailnet.
 
 import { createHash, timingSafeEqual } from 'node:crypto';
 

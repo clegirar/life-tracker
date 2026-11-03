@@ -2,7 +2,7 @@
 // sur le NAS (voir docs/deploiement.md), jamais du dépôt.
 
 export interface Config {
-  /** Origine publique, sans chemin : https://<machine>.<tailnet>.ts.net:8443. C'est l'émetteur OAuth. */
+  /** Origine publique, sans chemin : https://<machine>.<tailnet>.ts.net. C'est l'émetteur OAuth. */
   publicOrigin: string;
   /** L'URL saisie dans Claude, chemin compris : la ressource protégée (RFC 9728, RFC 8707). */
   resource: string;

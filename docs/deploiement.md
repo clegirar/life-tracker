@@ -175,6 +175,8 @@ L'adresse est `https://<nas>.<tailnet>.ts.net`. Le nom apparaît dans les journa
 
 **Prise en charge sur Synology : essayée le 31 oct. 2026, `serve` fonctionne sur mon NAS.** La documentation de Tailscale n'en parle pas, ni pour, ni contre. Si le port 443 entre en conflit avec DSM : `--https=8443`, et l'adresse porte ce port. Si `serve` ne marche pas : un conteneur Tailscale dans le projet, à décider alors, sans jamais retirer `Secure`.
 
+**Depuis l'étape 9 (3 nov. 2026), la web app est sur 8443** : `sudo tailscale serve --bg --https=8443 http://127.0.0.1:18080`, à l'adresse `https://<nas>.<tailnet>.ts.net:8443`. Le port 443 sert le MCP par Funnel (voir « Mise à jour vers l'étape 9 »).
+
 Après un redémarrage du NAS, revérifier `sudo tailscale serve status`.
 
 ### 8. Compte web
@@ -206,7 +208,7 @@ Tailscale doit être actif sur l'iPhone. Noms d'actions de l'iOS en français, �
    ```json
    {"records":[{"key":"Clé","kind":"coffee.cup","schema_version":1,"occurred_at":"Date","payload":{}}]}
    ```
-5. **Obtenir le contenu de l'URL** : `https://<nas>.<tailnet>.ts.net/v1/records`, méthode **POST**, avec trois en-têtes :
+5. **Obtenir le contenu de l'URL** : `https://<nas>.<tailnet>.ts.net:8443/v1/records` (le port 8443 depuis l'étape 9 ; sur 443 répond le MCP), méthode **POST**, avec trois en-têtes :
    - `Authorization` : `Bearer <token de l'étape 9>`
    - `Content-Type` : `application/json`
    - `X-Client-Version` : `ios-shortcut-1`
@@ -522,35 +524,24 @@ Seulement alors, marquer l'étape 8 « Fait » dans `docs/poc.md`.
 
 ## Mise à jour vers l'étape 9 (serveur MCP)
 
-À faire une fois, sur le NAS déjà en service, après un workflow vert (qui construit maintenant trois images : `backend`, `web`, `mcp`). Préparé et vérifié sur le Mac seulement : tests, images `linux/amd64` construites, et un essai du compose avec l'image du MCP (santé, port publié, aucune sortie, base inconnue). **Une nouvelle migration** : `_sqlx_migrations` passe à 3 lignes (`core.service_tokens`), donc pas de retour à l'ancienne image (voir « Retour arrière » plus bas). **Pas de `rebuild`** : aucun interprète ne change. Dans chaque `docker compose run -T` ou `exec -T`, `</dev/null` évite d'avaler la ligne collée suivante.
+À faire une fois, sur le NAS déjà en service, après un workflow vert (qui construit maintenant trois images : `backend`, `web`, `mcp`). Joué les 2 et 3 nov. 2026, avec le tag `8e5cf06035f28d7d821d38cc91c2117cdee27c4c` : Funnel fonctionne sur le paquet Synology, mais Claude.ai n'atteint pas une URL sur le port 8443, d'où l'exposition sur 443 décrite ici, et deux corrections du MCP (`ba64cf3`, `8e5cf06`, voir le principe et le point 8). Préparé la veille sur le Mac : tests, images `linux/amd64` construites, et un essai du compose avec l'image du MCP. **Une nouvelle migration** : `_sqlx_migrations` passe à 3 lignes (`core.service_tokens`), donc pas de retour à l'ancienne image (voir « Retour arrière » plus bas). **Pas de `rebuild`** : aucun interprète ne change. Dans chaque `docker compose run -T` ou `exec -T`, `</dev/null` évite d'avaler la ligne collée suivante.
 
-**Le principe.** Le MCP est le seul service sur Internet, par Tailscale Funnel sur le port **8443** ; la web app reste en `tailscale serve` privé sur 443. Sur Internet ne répondent que `/mcp` (jeton OAuth exigé), `/token` et `/.well-known/*`. La page de connexion (`/authorize`) refuse toute requête arrivée par Funnel (en-tête `Tailscale-Funnel-Request`, posé par Tailscale et retiré s'il vient du client) : on se connecte depuis un appareil du tailnet, Tailscale actif. Même adresse dans les deux cas : depuis le tailnet, MagicDNS résout `<nas>.<tailnet>.ts.net` vers l'adresse 100.x du NAS, et la requête arrive en direct, sans passer par les relais de Funnel ni porter l'en-tête (d'après le code de `tailscaled`, `ipn/ipnlocal/serve.go`, à confirmer au point 7). Le secret de connexion est propre au MCP, différent du mot de passe web, et ne vit que dans le gestionnaire de mots de passe ; le NAS n'en garde que le haché Argon2id.
+**Le principe.** Le MCP est le seul service sur Internet, par Tailscale Funnel sur le port **443** ; la web app passe en `tailscale serve` privé sur **8443**. Prévu d'abord à l'inverse (Funnel sur 8443) : essayé le 2 nov. 2026, Claude.ai répond « Couldn't reach this address » à une URL de connecteur avec le port 8443, sans qu'aucune requête n'atteigne le MCP, alors que l'iPhone en 4G obtient bien le JSON. Sur Internet ne répondent que `/mcp` (jeton OAuth exigé), `/token` et `/.well-known/*`. La page de connexion (`/authorize`) refuse toute requête arrivée par Funnel : on se connecte depuis un appareil du tailnet, Tailscale actif. **Le paquet Tailscale de Synology ne pose pas l'en-tête `Tailscale-Funnel-Request`** (vérifié : la page s'ouvrait depuis l'iPhone en 4G) ; `/authorize` exige donc aussi l'en-tête `Tailscale-User-Login`, que `tailscaled` pose pour un utilisateur du tailnet (et retire s'il vient du client), et qui manque par Funnel. Même adresse dans les deux cas : depuis le tailnet, MagicDNS résout `<nas>.<tailnet>.ts.net` vers l'adresse 100.x du NAS, et la requête arrive en direct, sans les relais de Funnel (vérifié le 3 nov. 2026 : le Mac obtient la page de consentement, l'iPhone en 4G sans Tailscale « Connexion depuis le tailnet »). Le secret de connexion est propre au MCP, différent du mot de passe web, et ne vit que dans le gestionnaire de mots de passe ; le NAS n'en garde que le haché Argon2id.
 
-**À ne jamais faire : `tailscale funnel` sur le port 443.** La web app y est servie : elle deviendrait publique. Seule exception, le repli du point 0 a, qui déplace d'abord la web app.
+**À ne jamais faire : `tailscale funnel` sur le port 8443**, où est la web app : elle deviendrait publique. **Ni remettre la web app sur 443** tant que Funnel y sert le MCP.
 
-0. **Trois points incertains, à lever d'abord.** Si l'un échoue, s'arrêter et le noter.
+0. **Points incertains, levés les 2 et 3 nov. 2026.**
 
-   a. **Une URL de connecteur avec le port 8443** : rien dans la documentation de Claude ne l'interdit ni ne le promet. Elle se vérifie aux points 8 et 9 : si Claude refuse l'adresse ou n'atteint pas le serveur, repli ci-dessous.
+   a. **Une URL de connecteur avec le port 8443** : refusée en pratique, Claude.ai ne l'atteint pas. D'où le port 443.
 
-   b. **Le serveur du SDK v2 face à Claude.ai** : le SDK sert l'ère 2026-07-28 et, par défaut, les clients de l'ère 2025 en mode sans état (page « Support legacy clients » de sa documentation). Les tests le vérifient avec le client officiel dans les deux ères, jamais avec Claude.ai lui-même : c'est le point 9.
+   b. **Le serveur du SDK v2 face à Claude.ai** : le SDK sert l'ère 2026-07-28 et, par défaut, les clients de l'ère 2025 en mode sans état. Vérifié au point 9 : Claude.ai se connecte et appelle les outils.
 
-   c. **Funnel sur le paquet Tailscale de Synology** : `serve` y fonctionne depuis l'étape 4 ; Funnel n'y a jamais été essayé. Version 1.52 au moins :
+   c. **Funnel sur le paquet Tailscale de Synology** : fonctionne, mais sans l'en-tête `Tailscale-Funnel-Request` (voir le principe). Version 1.52 au moins :
 
       ```sh
       sudo tailscale version
       sudo tailscale funnel status
       ```
-
-   **Repli si le port 8443 est refusé par Claude** : le MCP sur 443 par Funnel, la web app déplacée sur 8443 en privé. Dans cet ordre, pour que 443 ne serve jamais la web app en public :
-
-   ```sh
-   sudo tailscale serve --https=443 off
-   sudo tailscale serve --bg --https=8443 http://127.0.0.1:18080
-   sudo tailscale funnel --bg --https=443 http://127.0.0.1:18443
-   sudo tailscale funnel status   # 443 → 18443 (Funnel on), 8443 → 18080 (tailnet only)
-   ```
-
-   Puis `MCP_PUBLIC_URL=https://<nas>.<tailnet>.ts.net` (sans port) dans `.env`, `sudo docker compose up -d mcp`, et la web app s'ouvre à `https://<nas>.<tailnet>.ts.net:8443`. Retirer le connecteur de Claude et le recréer avec la nouvelle URL.
 
 1. Sur le Mac, à la racine du dépôt :
 
@@ -566,7 +557,7 @@ Seulement alors, marquer l'étape 8 « Fait » dans `docs/poc.md`.
    cd /volume1/docker/life-tracker
    tailscale serve status   # l'adresse https://<nas>.<tailnet>.ts.net de la web app
    NAS_HOST=nas.TAILNET.ts.net   # à remplacer, sans https:// ni port
-   printf 'MCP_PUBLIC_URL=https://%s:8443\nMCP_HTTP_PORT=18443\n' "$NAS_HOST" >> .env
+   printf 'MCP_PUBLIC_URL=https://%s\nMCP_HTTP_PORT=18443\n' "$NAS_HOST" >> .env
    grep -E '^MCP_' .env
    (umask 077; : > secrets/mcp.env)
    mv /tmp/compose.yaml .
@@ -611,11 +602,12 @@ Seulement alors, marquer l'étape 8 « Fait » dans `docs/poc.md`.
    ```sh
    sudo docker compose up -d
    sudo docker compose ps mcp   # running (healthy) au bout de 30 s environ
-   H="Host: $NAS_HOST:8443"
-   curl -s -H "$H" http://127.0.0.1:18443/.well-known/oauth-protected-resource/mcp; echo   # "resource":"https://<nas>…:8443/mcp"
+   H="Host: $NAS_HOST"
+   curl -s -H "$H" http://127.0.0.1:18443/.well-known/oauth-protected-resource/mcp; echo   # "resource":"https://<nas>….ts.net/mcp"
    curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "$H" http://127.0.0.1:18443/mcp   # 401
    curl -s -D - -o /dev/null -X POST -H "$H" http://127.0.0.1:18443/mcp | grep -i www-authenticate   # Bearer … resource_metadata="…"
    curl -s -o /dev/null -w '%{http_code}\n' -H "$H" -H 'Tailscale-Funnel-Request: ?1' http://127.0.0.1:18443/authorize   # 403
+   curl -s -o /dev/null -w '%{http_code}\n' -H "$H" http://127.0.0.1:18443/authorize   # 403 : sans Tailscale-User-Login, comme par Funnel
    curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18443/.well-known/oauth-authorization-server   # 403 : autre nom d'hôte
    ```
 
@@ -639,32 +631,34 @@ Seulement alors, marquer l'étape 8 « Fait » dans `docs/poc.md`.
    ]
    ```
 
-   Puis, sur le NAS, **le port 8443 seulement** :
+   Puis, sur le NAS, déplacer d'abord la web app sur 8443, et seulement ensuite ouvrir 443 par Funnel, pour que 443 ne serve jamais la web app en public :
 
    ```sh
-   sudo tailscale funnel --bg --https=8443 http://127.0.0.1:18443
-   sudo tailscale funnel status   # https://<nas>…:8443 (Funnel on) → 127.0.0.1:18443 ; https://<nas>… (tailnet only) → 127.0.0.1:18080
+   sudo tailscale serve --https=443 off
+   sudo tailscale serve --bg --https=8443 http://127.0.0.1:18080
+   sudo tailscale funnel --bg --https=443 http://127.0.0.1:18443
+   sudo tailscale funnel status   # https://<nas>… (Funnel on) → 127.0.0.1:18443 ; https://<nas>…:8443 (tailnet only) → 127.0.0.1:18080
    exit
    ```
 
-   Si `funnel status` montre 443 en « Funnel on » : `sudo tailscale funnel --https=443 off` aussitôt, puis `sudo tailscale serve --bg --https=443 http://127.0.0.1:18080`. La première publication d'un nom par Funnel peut prendre quelques minutes (DNS public).
+   Si `funnel status` montre 8443 en « Funnel on » : `sudo tailscale funnel --https=8443 off` aussitôt, puis `sudo tailscale serve --bg --https=8443 http://127.0.0.1:18080`. La web app s'ouvre désormais à `https://<nas>.<tailnet>.ts.net:8443`. La première publication d'un nom par Funnel peut prendre quelques minutes (DNS public).
 
 7. **Depuis Internet** : un appareil hors du tailnet, par exemple l'iPhone en 4G avec Tailscale coupé, ou un service de `curl` en ligne. `NAS_HOST` comme au point 2 :
 
    ```sh
-   curl -s https://$NAS_HOST:8443/.well-known/oauth-protected-resource/mcp; echo                  # le JSON
-   curl -s https://$NAS_HOST:8443/.well-known/oauth-authorization-server; echo                     # issuer, S256, sans registration_endpoint
-   curl -s -o /dev/null -w '%{http_code}\n' -X POST https://$NAS_HOST:8443/mcp                      # 401
-   curl -s -o /dev/null -w '%{http_code}\n' "https://$NAS_HOST:8443/authorize"                      # 403 : connexion refusée par Funnel
-   curl -s -o /dev/null -w '%{http_code}\n' https://$NAS_HOST:8443/v1/inventory                     # 404
-   curl -s -m 10 -o /dev/null -w '%{http_code}\n' https://$NAS_HOST/ || echo "injoignable"         # injoignable : la web app reste privée
+   curl -s https://$NAS_HOST/.well-known/oauth-protected-resource/mcp; echo                  # le JSON
+   curl -s https://$NAS_HOST/.well-known/oauth-authorization-server; echo                     # issuer, S256, sans registration_endpoint
+   curl -s -o /dev/null -w '%{http_code}\n' -X POST https://$NAS_HOST/mcp                      # 401
+   curl -s -o /dev/null -w '%{http_code}\n' "https://$NAS_HOST/authorize"                      # 403 : connexion refusée par Funnel
+   curl -s -o /dev/null -w '%{http_code}\n' https://$NAS_HOST/v1/inventory                     # 404
+   curl -s -m 10 -o /dev/null -w '%{http_code}\n' https://$NAS_HOST:8443/ || echo "injoignable"   # injoignable : la web app reste privée
    ```
 
-   **Depuis le tailnet** (le Mac, Tailscale actif, MagicDNS activé) : `curl -s -o /dev/null -w '%{http_code}\n' "https://$NAS_HOST:8443/authorize"` doit donner **400** (« Client inconnu ») et non 403 : la requête arrive en direct, sans Funnel. Si c'est 403, le Mac passe par Funnel (MagicDNS désactivé dans Tailscale, ou résolveur forcé) : régler le DNS du Mac avant le point 8. Et la web app répond toujours sur `https://$NAS_HOST`.
+   **Depuis le tailnet** (le Mac, Tailscale actif, MagicDNS activé) : `curl -s -o /dev/null -w '%{http_code}\n' "https://$NAS_HOST/authorize"` doit donner **400** (« Client inconnu ») et non 403 : la requête arrive en direct, avec `Tailscale-User-Login`. Si c'est 403, le Mac passe par Funnel (MagicDNS désactivé dans Tailscale, ou résolveur forcé) : régler le DNS du Mac avant le point 8. Et la web app répond sur `https://$NAS_HOST:8443`.
 
-8. **Le connecteur dans Claude**, sur claude.ai dans le navigateur d'un appareil du tailnet (le Mac) : *Réglages → Connecteurs → Ajouter un connecteur personnalisé*. Nom `Life tracker`, URL `https://<nas>.<tailnet>.ts.net:8443/mcp`, sans identifiant ni secret OAuth dans les réglages avancés. *Se connecter* ouvre la page du NAS « Autoriser Claude à lire le Life tracker ? », qui montre l'hôte de retour (`claude.ai`) : saisir le secret du point 4, *Autoriser*. Retour sur Claude, connecteur relié. Le connecteur vaut ensuite aussi dans l'app iPhone, sans nouvelle connexion : ce sont les serveurs de Claude qui appellent le MCP.
+8. **Le connecteur dans Claude**, sur claude.ai dans le navigateur d'un appareil du tailnet (le Mac) : *Réglages → Connecteurs → Ajouter un connecteur personnalisé*. Nom `Life tracker`, URL `https://<nas>.<tailnet>.ts.net/mcp`, sans identifiant ni secret OAuth dans les réglages avancés. *Se connecter* ouvre la page du NAS « Autoriser Claude à lire le Life tracker ? », qui montre l'hôte de retour (`claude.ai`) : saisir le secret du point 4, *Autoriser*. Retour sur Claude, connecteur relié. Le connecteur vaut ensuite aussi dans l'app iPhone, sans nouvelle connexion : ce sont les serveurs de Claude qui appellent le MCP.
 
-   Cinq échecs de secret en quinze minutes bloquent toute connexion pendant ce temps, même avec le bon secret (« Trop d'essais »). Si la page dit « Connexion depuis le tailnet », le navigateur est passé par Funnel : voir le point 7.
+   Cinq échecs de secret en quinze minutes bloquent toute connexion pendant ce temps, même avec le bon secret (« Trop d'essais »). Si la page dit « Connexion depuis le tailnet », le navigateur est passé par Funnel : voir le point 7. Si *Autoriser* échoue avec `Invalid Origin header: null`, l'image est antérieure à `8e5cf06` : une politique `no-referrer` fait envoyer `Origin: null` au formulaire par Chromium, que le contrôle d'origine du SDK refuse ; la page est maintenant en `same-origin` (en-tête et balise `<meta name="referrer">`).
 
 9. **Les questions de démo**, dans une nouvelle conversation, le connecteur activé (adapter les noms à de vraies écoutes) :
 
@@ -684,9 +678,9 @@ Seulement alors, marquer l'étape 8 « Fait » dans `docs/poc.md`.
    exit
    ```
 
-   Seulement alors, marquer l'étape 9 « Fait » dans `docs/poc.md`, avec les réponses obtenues.
+   Seulement alors, marquer l'étape 9 « Fait » dans `docs/poc.md`, avec les réponses obtenues. Fait le 3 nov. 2026 pour les quatre questions sur la musique et les journaux ; la question du café attend de vrais cafés (voir `docs/poc.md`).
 
-**Couper.** Fermer Internet sans rien toucher d'autre : `sudo tailscale funnel --https=8443 off` (la web app sur 443 reste servie ; vérifier `sudo tailscale serve status`). Couper aussi l'accès de Claude : retirer le connecteur dans Claude, puis effacer les jetons OAuth et arrêter le serveur, et au besoin révoquer le jeton de service :
+**Couper.** Fermer Internet sans rien toucher d'autre : `sudo tailscale funnel --https=443 off`. Plus rien ne répond alors sur 443 ; la web app reste servie sur 8443 (vérifier `sudo tailscale serve status`). Ne pas la remettre sur 443 pour autant : rouvrir Funnel la rendrait publique. Couper aussi l'accès de Claude : retirer le connecteur dans Claude, puis effacer les jetons OAuth et arrêter le serveur, et au besoin révoquer le jeton de service :
 
 ```sh
 sudo -i
@@ -784,9 +778,6 @@ Reste à confirmer :
 - la persistance de `tailscale serve` après un redémarrage du NAS ;
 - l'import du projet dans l'interface de Container Manager, facultatif ;
 - l'accès refusé depuis un autre compte du NAS, si un compte non administrateur existe ;
-- tout l'étape 7 sur le NAS : l'image, le service `apple-import` (droits `10001`, lecture seule, réseau), le temps réel, et la jonction entre l'export et Last.fm. Vérifié sur le Mac par le binaire natif et `compose config`, pas par l'image construite ;
-- tout l'étape 8 sur le NAS : la vue du mois sur les vraies données (écoutes depuis janvier 2022, cafés depuis le 31 oct. 2026, jonction du 12 octobre), son temps de réponse sur le Celeron, et le signal « en attente » après une vraie coupure du collecteur. Vérifié sur le Mac par les tests et des données synthétiques, pas par l'image construite sur le NAS ;
-- tout le collecteur sur le NAS : sortie vers Last.fm, vraies réponses, et le critère de l'étape 5. Vérifié seulement en local, en compose, contre `example.com` et sans clé réelle ;
-- tout l'étape 9 sur le NAS : Funnel sur le paquet Synology, une URL de connecteur sur le port 8443 acceptée par Claude.ai, le serveur du SDK v2 face au vrai client de Claude.ai, l'arrivée directe (sans Funnel) d'une requête du tailnet sur le même nom, `enable_ip_masquerade` sur le Docker de DSM, et les temps de réponse des nouvelles lectures sur le Celeron. Vérifié sur le Mac par les tests (OAuth, outils contre le vrai backend, client officiel du SDK dans les deux ères) et un essai du compose avec l'image du MCP sur Docker Desktop.
+- de l'étape 9 sur le NAS (le reste est confirmé le 3 nov. 2026 : Funnel sur 443, Claude.ai et le SDK v2, la connexion réservée au tailnet) : la question du premier café posée à Claude.ai, une fois de vrais cafés saisis, `enable_ip_masquerade` sur le Docker de DSM, et les temps de réponse des nouvelles lectures sur le Celeron, non relevés.
 
 `cpus` n'est pas utilisé dans `compose.yaml` : de mémoire, le noyau de Synology refuse cette limite, sans que j'aie pu le vérifier. Seule la mémoire est limitée.
