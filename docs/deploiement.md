@@ -1,6 +1,6 @@
 # Life tracker — Déploiement sur le NAS
 
-Runbook de l'étape 4. Tout s'exécute à la main : rien n'automatise le déploiement. État : **préparé et vérifié en local**, jamais lancé sur le vrai NAS (voir « Ce qui reste à vérifier »).
+Runbook de l'étape 4, joué sur le NAS (voir « Ce qui reste à vérifier »). L'installation et les mises à jour de `compose.yaml` restent à la main ; depuis le 3 nov. 2026, une release déploie la nouvelle version d'elle-même (voir « Déploiement automatique »).
 
 **Règle.** Rien de ce qui suit ne se copie dans le dépôt : ni `.env`, ni `secrets/`, ni token, ni mot de passe, ni sortie de commande qui en contient. Le dépôt ne reçoit que des modèles. Dans les commandes, `OWNER` est le compte GitHub, en minuscules.
 
@@ -29,7 +29,7 @@ Sur le Mac, à la racine du dépôt, une fois les changements commités :
 gh repo create life-tracker --private --source=. --push
 ```
 
-Le push sur `main` lance `.github/workflows/images.yml` : `./test.sh`, puis les images. Une fois le workflow vert :
+À l'origine, le push sur `main` lançait `images.yml`, qui construisait des images étiquetées par SHA de commit. Depuis le 3 nov. 2026, les images ne se construisent qu'à une release, étiquetées `vX.Y.Z` (voir « Déploiement automatique ») : `TRACKER_TAG` reçoit alors ce tag. Une fois le workflow vert :
 
 ```sh
 gh run list --limit 1
@@ -101,12 +101,12 @@ sudo -i
 cd /volume1/docker/life-tracker
 ```
 
-Dans `.env`, remplacer `OWNER` et `COMMIT_SHA` :
+Dans `.env`, remplacer `OWNER` et `vX.Y.Z` (la dernière release) :
 
 ```sh
 OWNER_MINUSCULES=...
-SHA_COMPLET=...
-sed -i "s|ghcr.io/OWNER/|ghcr.io/$OWNER_MINUSCULES/|; s|COMMIT_SHA|$SHA_COMPLET|" .env
+VERSION=v...
+sed -i "s|ghcr.io/OWNER/|ghcr.io/$OWNER_MINUSCULES/|; s|^TRACKER_TAG=.*|TRACKER_TAG=$VERSION|" .env
 ```
 
 Puis les secrets, en un seul bloc :
@@ -728,12 +728,172 @@ sudo -u AUTRE_COMPTE ls /volume1/docker/life-tracker                          # 
 
 Si `--network host` répond, l'option `inhibit_ipv4` n'a pas d'effet sur ce NAS : le mot de passe aléatoire reste seul à protéger la base depuis l'hôte, et le critère n'est pas rempli tant que ce point n'est pas réglé. Un administrateur du NAS passe toujours, voir l'étape 3.
 
+## Déploiement automatique
+
+Mis en place le 3 nov. 2026, **pas encore joué sur le NAS** : les points incertains sont listés au point 0. Fusionner la PR de release crée le tag `vX.Y.Z`, construit les trois images `vX.Y.Z` (`.github/workflows/release.yml`), puis le job `deploy` :
+
+1. rejoint le tailnet comme nœud éphémère `tag:ci`, par un client OAuth Tailscale ;
+2. se connecte en SSH au NAS avec une clé dédiée, `known_hosts` épinglé ;
+3. envoie `deploy vX.Y.Z <sha256 de compose.yaml>`, et rien d'autre : la clé n'a pas de shell, seulement une commande forcée.
+
+Sur le NAS, `deploy.sh` (copie de `deploy/deploy.sh`), en root par une seule règle sudoers :
+
+- refuse toute autre commande, et refuse si son `compose.yaml` diffère de celui de la release. Le job ne pousse jamais de fichier : **un `compose.yaml` modifié se copie à la main avant de fusionner la PR de release**, comme à l'étape 4 ;
+- note l'ancien `TRACKER_TAG`, écrit le nouveau dans `.env`, puis `pull` et `up -d` ;
+- attend 3 min au plus que chaque service soit sain : `healthy`, ou en marche s'il n'a pas de contrôle, `migrate` sorti à 0. Le collecteur compte dès qu'il tourne, car son premier contrôle n'a lieu qu'au bout de 5 min ;
+- sinon remet l'ancien tag, relance `up -d` et sort en erreur : le job est rouge. Les migrations sont en ajout seul, donc l'ancien code tourne sur le schéma plus récent ;
+- n'affiche que des noms de services et des états.
+
+Reste à la main : les copies de `compose.yaml` et de `deploy.sh`, et toute administration demandée par une note de version (`admin rebuild`, `set-precedence`…), après le déploiement.
+
+Dans les commandes, `MOI` est mon compte DSM d'administrateur, `NAS_HOST` le nom du NAS dans le tailnet (`nas.TAILNET.ts.net`) ou son adresse `100.x`, toujours le même partout. Aucune valeur secrète ne passe par la conversation avec Claude ni par le dépôt.
+
+0. **Points incertains, à vérifier au premier passage.**
+
+   a. **Le serveur SSH de DSM et la commande forcée** : DSM embarque OpenSSH, qui applique `command=` et `restrict` dans `authorized_keys`, mais je ne l'ai pas vérifié pour un compte administrateur autre que root. Le point 9 le contrôle.
+
+   b. **`/etc/sudoers.d` sur DSM** : il faut que `/etc/sudoers` l'inclue (`sudo grep -n includedir /etc/sudoers`) et qu'une mise à jour de DSM ne l'efface pas. Si l'inclusion manque, ne pas modifier `/etc/sudoers` sans `visudo` ; couper plutôt le déploiement automatique.
+
+   c. **Le dossier personnel** : `~/.ssh` exige le service de dossiers personnels (*Panneau de configuration > Utilisateur et groupe > Avancé*). Le serveur SSH ignore `authorized_keys` si le dossier personnel est ouvert en écriture au groupe ou aux autres.
+
+   d. **Les outils de DSM** : `sha256sum`, `docker compose` (sinon `docker-compose`, que le script prend en repli) et `docker` dans `/usr/local/bin`.
+
+   **Après chaque mise à jour de DSM**, refaire l'essai du point 9 : une mise à jour peut réinitialiser sudoers ou la configuration SSH. Le déploiement échouerait alors sans rien changer, job rouge.
+
+1. **Client OAuth Tailscale.** Console Tailscale, d'abord la politique (point 2) pour que `tag:ci` existe. Puis *Settings > OAuth clients > Generate OAuth client* : la seule permission *Auth Keys* en écriture, avec le tag `tag:ci`. L'identifiant et le secret vont au gestionnaire de mots de passe, puis dans les secrets GitHub (point 7).
+
+2. **Politique Tailscale.** `tag:ci` ne joint que le port SSH du NAS (203 sur le mien, voir *Panneau de configuration > Terminal et SNMP*), et personne ne joint `tag:ci`. À fusionner avec la politique existante, dans *Access controls* :
+
+   ```jsonc
+   {
+     "tagOwners": {
+       "tag:ci": ["autogroup:admin"],
+     },
+     "hosts": {
+       "nas": "100.x.y.z", // l'adresse Tailscale du NAS
+     },
+     "grants": [
+       // Le job de déploiement : SSH vers le NAS, rien d'autre.
+       { "src": ["tag:ci"], "dst": ["nas"], "ip": ["tcp:203"] },
+     ],
+     "tests": [
+       { "src": "tag:ci", "accept": ["nas:203"], "deny": ["nas:22", "nas:443", "nas:8443", "nas:5001"] },
+     ],
+   }
+   ```
+
+   **Attention à la règle par défaut** `{"src": ["*"], "dst": ["*"], "ip": ["*"]}` (ou son équivalent en `acls`) : `*` couvre aussi les appareils étiquetés, donc `tag:ci` aurait accès à tout, et tout le tailnet à lui. La remplacer par une règle limitée à mes appareils, par exemple `{"src": ["autogroup:member"], "dst": ["autogroup:self"], "ip": ["*"]}` si le NAS est à mon nom (sinon, viser le NAS par son tag), puis ajouter aux `tests` `{"src": "tag:ci", "deny": ["<un autre appareil>:22"]}`. La console refuse d'enregistrer une politique dont un test échoue. Vérifier ensuite depuis l'iPhone et le Mac que la web app (8443) et le MCP répondent toujours.
+
+3. **Clé SSH dédiée**, sur le Mac, sans phrase de passe puisque le job l'utilise seul :
+
+   ```sh
+   ssh-keygen -t ed25519 -N '' -C life-tracker-deploy -f ~/.ssh/life-tracker-deploy
+   cat ~/.ssh/life-tracker-deploy.pub
+   ```
+
+4. **`authorized_keys` sur le NAS**, dans mon compte, en une ligne. `restrict` coupe pty et redirections ; `from=` n'accepte que le tailnet et la boucle locale : le paquet Tailscale de DSM, en mode userspace, présente les connexions venues du tailnet comme locales (sans elle : « Refused by key options », vérifié le 3 nov. 2026) ; le réseau local reste refusé ; `sudo -n` échoue au lieu de demander un mot de passe :
+
+   ```sh
+   mkdir -p ~/.ssh && chmod 700 ~/.ssh
+   PUB='ssh-ed25519 AAAA... life-tracker-deploy'   # le contenu du .pub
+   printf 'command="sudo -n /volume1/docker/life-tracker/deploy.sh",restrict,from="127.0.0.1,::1,100.64.0.0/10,fd7a:115c:a1e0::/48" %s\n' "$PUB" >> ~/.ssh/authorized_keys
+   chmod 600 ~/.ssh/authorized_keys
+   ls -ld ~ ~/.ssh ~/.ssh/authorized_keys   # ni ~ ni ~/.ssh ouverts en écriture au groupe
+   ```
+
+   Si `restrict` est refusé (OpenSSH trop ancien), le remplacer par `no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding`.
+
+5. **Règle sudoers.** Mon compte lance ce seul script, sans argument (`""`), et `SSH_ORIGINAL_COMMAND` passe : sudo efface le reste de l'environnement. Vérifiée avant installation :
+
+   ```sh
+   printf '%s\n' \
+     'Defaults!/volume1/docker/life-tracker/deploy.sh env_keep += "SSH_ORIGINAL_COMMAND"' \
+     'MOI ALL=(root) NOPASSWD: /volume1/docker/life-tracker/deploy.sh ""' > /tmp/life-tracker-deploy
+   sudo visudo -cf /tmp/life-tracker-deploy   # « parsed OK »
+   sudo cp /tmp/life-tracker-deploy /etc/sudoers.d/life-tracker-deploy
+   sudo chown root:root /etc/sudoers.d/life-tracker-deploy
+   sudo chmod 440 /etc/sudoers.d/life-tracker-deploy
+   rm /tmp/life-tracker-deploy
+   sudo visudo -c
+   sudo grep -n includedir /etc/sudoers   # sinon, voir le point 0 b
+   ```
+
+6. **`deploy.sh`.** Sur le Mac, depuis le dépôt, puis sur le NAS. Le dossier reste en `700` root : mon compte ne peut ni lire ni modifier le script qu'il a le droit de lancer en root.
+
+   ```sh
+   shasum -a 256 deploy/deploy.sh   # à noter
+   scp -O -P 203 deploy/deploy.sh MOI@NAS_HOST:/tmp/
+   ```
+
+   ```sh
+   sudo cp /tmp/deploy.sh /volume1/docker/life-tracker/deploy.sh
+   sudo chown root:root /volume1/docker/life-tracker/deploy.sh
+   sudo chmod 700 /volume1/docker/life-tracker/deploy.sh
+   sudo sha256sum /volume1/docker/life-tracker/deploy.sh   # la même empreinte
+   rm /tmp/deploy.sh
+   ```
+
+   Quand `deploy/deploy.sh` change dans le dépôt, le recopier de même.
+
+7. **Secrets GitHub**, depuis le Mac à la racine du dépôt. `gh secret set` demande la valeur sans l'afficher, ou la lit dans un fichier :
+
+   ```sh
+   ssh-keyscan -p 203 -t ed25519 NAS_HOST > /tmp/nas_known_hosts
+   ssh-keygen -lf /tmp/nas_known_hosts   # à comparer, sur le NAS, à : ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+   gh secret set NAS_KNOWN_HOSTS < /tmp/nas_known_hosts && rm /tmp/nas_known_hosts
+   gh secret set NAS_SSH_KEY < ~/.ssh/life-tracker-deploy
+   gh secret set NAS_HOST           # le même nom que pour ssh-keyscan
+   gh secret set NAS_USER           # MOI
+   gh secret set NAS_SSH_PORT       # 203
+   gh secret set TS_OAUTH_CLIENT_ID
+   gh secret set TS_OAUTH_SECRET
+   gh secret list
+   ```
+
+   La clé privée reste sur le Mac le temps du point 9, puis `rm ~/.ssh/life-tracker-deploy` : une nouvelle clé remplace une clé perdue.
+
+8. **Réglages du dépôt**, tous du plan gratuit. Fusion en squash seule, avec le titre et la description de la PR comme message ; branche supprimée après fusion ; release-please a besoin que les Actions puissent ouvrir des PR :
+
+   ```sh
+   gh api -X PATCH repos/OWNER/life-tracker \
+     -F allow_squash_merge=true -F allow_merge_commit=false -F allow_rebase_merge=false \
+     -f squash_merge_commit_title=PR_TITLE -f squash_merge_commit_message=PR_BODY \
+     -F delete_branch_on_merge=true
+   gh api -X PUT repos/OWNER/life-tracker/actions/permissions/workflow \
+     -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
+   ```
+
+   Le token `read:packages` du NAS (étape 2) doit rester valide : expiré, le `pull` échoue et le déploiement revient à l'ancien tag.
+
+9. **Essai à blanc**, depuis le Mac relié au tailnet. Rien ne change sur le NAS :
+
+   ```sh
+   K=~/.ssh/life-tracker-deploy
+   ssh -i "$K" -p 203 -o IdentitiesOnly=yes MOI@NAS_HOST 'deploy v0.0.0 0000000000000000000000000000000000000000000000000000000000000000'
+   # REFUS : compose.yaml du NAS différent… (commande forcée, sudo et script en place)
+   ssh -i "$K" -p 203 -o IdentitiesOnly=yes MOI@NAS_HOST 'ls /'        # REFUS : commande attendue…
+   ssh -i "$K" -p 203 -o IdentitiesOnly=yes -t MOI@NAS_HOST            # REFUS, aucun shell
+   ```
+
+   `sudo: a password is required` signale une règle sudoers absente ou ignorée (point 0 b) ; un shell ouvert, une commande forcée ignorée (point 0 a) : retirer la clé tout de suite.
+
+10. **Première release.** Après fusion d'une PR sur `main`, release-please ouvre la PR « chore: release 0.1.0 » : la première version est `0.1.0` (`initial-version`), comptée à partir du commit qui précède ce chantier (`bootstrap-sha`). Il ne l'ouvre que si un commit visible au CHANGELOG (`feat`, `fix` ou `perf`) est arrivé depuis. Ouverte par le jeton des Actions, cette PR ne lance ni la CI ni le contrôle du titre, ce qui est normal : elle ne touche que `version.txt`, le manifeste et `CHANGELOG.md`. Avant de la fusionner, recopier `compose.yaml` s'il a changé. La fusion lance tag, images, puis `deploy`. Ensuite, sur le NAS :
+
+    ```sh
+    sudo grep TRACKER_TAG /volume1/docker/life-tracker/.env   # TRACKER_TAG=v0.1.0
+    cd /volume1/docker/life-tracker && sudo docker compose ps -a
+    ```
+
+**Couper le déploiement.** Retirer la ligne `life-tracker-deploy` de `~/.ssh/authorized_keys` : le job échoue à la connexion, le NAS ne change pas. Pour aller plus loin, supprimer `/etc/sudoers.d/life-tracker-deploy`, ou désactiver le workflow (`gh workflow disable Release`, qui arrête aussi les releases).
+
+**Retour arrière par tag.** Les images de chaque release restent sur ghcr.io. Relancer le job `deploy` d'une ancienne release (*Actions > Release >* le run de cette version *> Re-run jobs*) redéploie son tag, si `compose.yaml` n'a pas changé depuis. Sinon, à la main sur le NAS : `sudo sed -i 's/^TRACKER_TAG=.*/TRACKER_TAG=vX.Y.Z/' .env`, puis `pull` et `up -d`. Une migration ne se défait pas : voir « Retour arrière ».
+
 ## Exploitation
 
-**Mise à jour.** Après un workflow vert, depuis le dossier du projet :
+**Mise à jour.** D'ordinaire par une release, d'elle-même : voir « Déploiement automatique ». À la main, depuis le dossier du projet, avec un tag `vX.Y.Z` publié :
 
 ```sh
-sudo sed -i 's/^TRACKER_TAG=.*/TRACKER_TAG=NOUVEAU_SHA/' .env
+sudo sed -i 's/^TRACKER_TAG=.*/TRACKER_TAG=vX.Y.Z/' .env
 sudo docker compose pull
 sudo docker compose up -d
 sudo docker compose logs migrate
@@ -775,6 +935,7 @@ Confirmé le 31 oct. 2026 : le workflow et la publication sur ghcr.io, le démar
 Reste à confirmer :
 
 - le raccourci sur un vrai iPhone (étape 10), reporté ;
+- le déploiement automatique, de bout en bout : les points incertains de « Déploiement automatique » (commande forcée et sudoers sur DSM), l'essai à blanc, la première release `v0.1.0` déployée, puis un échec voulu (fausse empreinte, clé retirée) qui laisse le NAS sur l'ancien tag ;
 - la persistance de `tailscale serve` après un redémarrage du NAS ;
 - l'import du projet dans l'interface de Container Manager, facultatif ;
 - l'accès refusé depuis un autre compte du NAS, si un compte non administrateur existe ;

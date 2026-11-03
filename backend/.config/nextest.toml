@@ -1,0 +1,6 @@
+# cargo-nextest, lancé par backend/test.sh quand il est installé.
+# Les tests les plus longs (20 à 30 s, workers concurrents et rebuild) partent en premier : lancés
+# en dernier, ils allongeaient le passage d'autant.
+[[profile.default.overrides]]
+filter = "test(=rebuilds_with_a_running_worker_and_arriving_records_lose_nothing) | test(=concurrent_workers_do_not_double_produce) | test(=a_killed_process_resumes_without_loss_or_double_interpretation) | test(=a_mark_acts_only_at_its_own_level)"
+priority = 100
