@@ -123,12 +123,15 @@ pub fn item_filter<'a>(
     }
 }
 
+/// Les éléments d'un événement : niveau et nom, rangés par niveau puis par position.
+type Contexts = HashMap<(i64, i16), Vec<(String, String)>>;
+
 /// Les autres éléments de l'événement le plus récent d'un élément, par niveau : l'artiste d'un titre
 /// ou d'un album. Générique : un titre « Intro » ne se comprend qu'avec son contexte.
 async fn contexts(
     pool: &PgPool,
     events: &[(i64, i16)],
-) -> std::result::Result<HashMap<(i64, i16), Vec<(String, String)>>, sqlx::Error> {
+) -> std::result::Result<Contexts, sqlx::Error> {
     if events.is_empty() {
         return Ok(HashMap::new());
     }
@@ -139,13 +142,14 @@ async fn contexts(
            FROM derived.event_items o
            JOIN unnest($1::bigint[], $2::smallint[]) AS w(seq, ordinal)
              ON w.seq = o.seq AND w.ordinal = o.ordinal
-           WHERE o.generation = (SELECT id FROM derived.generations WHERE state = 'active')"#,
+           WHERE o.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+           ORDER BY o.seq, o.ordinal, o.level, o.position"#,
         &seqs,
         &ordinals,
     )
     .fetch_all(pool)
     .await?;
-    let mut map: HashMap<(i64, i16), Vec<(String, String)>> = HashMap::new();
+    let mut map: Contexts = HashMap::new();
     for row in rows {
         map.entry((row.seq, row.ordinal))
             .or_default()
@@ -154,24 +158,39 @@ async fn contexts(
     Ok(map)
 }
 
+/// Les noms d'un même niveau, dans l'ordre : « A », « A & B », « A, B & C ».
+fn join_names(names: &[&str]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => (*one).to_owned(),
+        [head @ .., last] => format!("{} & {last}", head.join(", ")),
+    }
+}
+
 /// Sans niveau propre, tous les éléments de l'événement ; sinon, ceux des niveaux plus larges que le
-/// sien dans l'ordre du registre (l'artiste d'un album, l'artiste et l'album d'un titre).
+/// sien dans l'ordre du registre (l'artiste d'un album, l'artiste et l'album d'un titre). Plusieurs
+/// éléments d'un même niveau (les artistes crédités d'une écoute) se joignent par position.
 fn context_of(
-    map: &HashMap<(i64, i16), Vec<(String, String)>>,
+    map: &Contexts,
     event: (i64, i16),
     own_level: Option<&str>,
     levels: &[String],
 ) -> Option<HashMap<String, String>> {
     let rank = |level: &str| levels.iter().position(|l| l == level);
     let own = own_level.map(rank);
-    let items: HashMap<String, String> = map
-        .get(&event)?
-        .iter()
-        .filter(|(level, _)| match own {
+    let mut grouped: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (level, display) in map.get(&event)? {
+        let wider = match own {
             None => true,
             Some(own) => matches!((rank(level), own), (Some(r), Some(o)) if r < o),
-        })
-        .cloned()
+        };
+        if wider {
+            grouped.entry(level).or_default().push(display);
+        }
+    }
+    let items: HashMap<String, String> = grouped
+        .into_iter()
+        .map(|(level, names)| (level.to_owned(), join_names(&names)))
         .collect();
     (!items.is_empty()).then_some(items)
 }
@@ -772,7 +791,8 @@ pub struct Top {
     level: String,
     /// Éléments différents sur la période, au-delà de la limite compris.
     distinct_items: i64,
-    /// Occurrences qui ont un élément à ce niveau (une écoute sans artiste n'en a pas).
+    /// Occurrences qui ont un élément à ce niveau (une écoute sans artiste n'en a pas). Une écoute à
+    /// trois artistes compte une fois ici, et pour chacun de ses artistes dans `items`.
     occurrences_with_item: i64,
     items: Vec<Ranked>,
 }
@@ -786,17 +806,21 @@ pub async fn top(
 ) -> Result<Top> {
     metric.check_level(level)?;
     let rows = sqlx::query!(
-        r#"SELECT i.item_key AS "item_key!", count(*) AS "occurrences!",
+        r#"WITH period AS (
+             SELECT i.*
+             FROM derived.live_event_items i
+             WHERE i.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+               AND i.metric = $1 AND i.level = $2
+               AND i.occurred_at >= ($3::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+               AND i.occurred_at < (($4::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+           )
+           SELECT i.item_key AS "item_key!", count(*) AS "occurrences!",
                   (array_agg(i.display ORDER BY i.occurred_at DESC, i.seq DESC))[1] AS "name!",
                   (array_agg(i.seq ORDER BY i.occurred_at DESC, i.seq DESC))[1] AS "seq!",
                   (array_agg(i.ordinal ORDER BY i.occurred_at DESC, i.seq DESC))[1] AS "ordinal!",
                   count(*) OVER () AS "distinct!",
-                  sum(count(*)) OVER ()::int8 AS "with_item!"
-           FROM derived.live_event_items i
-           WHERE i.generation = (SELECT id FROM derived.generations WHERE state = 'active')
-             AND i.metric = $1 AND i.level = $2
-             AND i.occurred_at >= ($3::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
-             AND i.occurred_at < (($4::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+                  (SELECT count(*) FROM (SELECT DISTINCT seq, ordinal FROM period) e) AS "with_item!"
+           FROM period i
            GROUP BY i.item_key
            ORDER BY 2 DESC, 1
            LIMIT $5"#,

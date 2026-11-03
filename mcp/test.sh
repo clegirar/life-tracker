@@ -86,9 +86,9 @@ rm -f "$OUT"
 [ "$status" = 0 ] || exit "$status"
 [ "$none_skipped" = 1 ] || { echo "ÉCHEC : des tests ont été sautés" >&2; exit 1; }
 
-echo "▶ Aucun appel MCP n'a écrit : le journal ne contient que le jeu de données (4 cafés, 5 Last.fm)"
+echo "▶ Aucun appel MCP n'a écrit : le journal ne contient que le jeu de données (4 cafés, 6 Last.fm)"
 records="$(docker exec "$C" psql -U postgres -d tracker -Atc 'select count(*) from core.records')"
-[ "$records" = 9 ] || { echo "ÉCHEC : $records enregistrements au journal" >&2; exit 1; }
+[ "$records" = 10 ] || { echo "ÉCHEC : $records enregistrements au journal" >&2; exit 1; }
 
 echo "▶ Les logs du backend ne contiennent aucun jeton"
 if grep -qF -e "$LT_MCP_TEST_SERVICE_TOKEN" -e "$LT_MCP_TEST_IOS_TOKEN" -e "$LT_MCP_TEST_LASTFM_TOKEN" -e "Veridis" "$LOG"; then

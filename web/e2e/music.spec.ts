@@ -43,7 +43,8 @@ test('la section musique montre le nombre, le temps, l\'artiste du jour et les t
   // 180 × 2 + 300 = 660 s ; deux écoutes sont sans durée connue.
   await expect(page.getByTestId('minutes')).toHaveText('11 min')
   await expect(music(page).getByText('Sans compter 2 écoutes de durée inconnue.')).toBeVisible()
-  await expect(music(page).getByText('ARTISTE FICTIF feat. Invité · 3 écoutes')).toBeVisible()
+  // L'invité est un artiste à part : l'artiste du jour garde ses 3 écoutes, sous le dernier nom vu.
+  await expect(music(page).getByText('ARTISTE FICTIF · 3 écoutes')).toBeVisible()
 
   const rows = music(page).locator('.row')
   // Deux versions d'un titre comptent pour un seul.
@@ -53,14 +54,42 @@ test('la section musique montre le nombre, le temps, l\'artiste du jour et les t
 
   await music(page).getByRole('button', { name: 'Artistes' }).click()
   await expect(music(page).getByRole('button', { name: 'Artistes' })).toHaveAttribute('aria-pressed', 'true')
-  await expect(rows).toHaveCount(3)
+  await expect(rows).toHaveCount(4)
   await expect(rows.first()).toContainText('2 titres')
+  await expect(rows.filter({ hasText: 'Invité' }).locator('.row-count')).toHaveText('1')
   await expect(rows.first().locator('.row-count')).toHaveText('3')
 
   await music(page).getByRole('button', { name: 'Albums' }).click()
   await expect(rows).toHaveCount(2)
   await expect(rows.first()).toContainText('Album fictif')
   await expect(rows.getByText('Sans album')).toHaveCount(0)
+})
+
+test('une écoute à trois artistes compte une écoute, un titre et trois artistes', async ({ page, request }) => {
+  const date = addDays(today, -19)
+  const cookie = await apiSession(request)
+  await send(request, [
+    scrobble(date, 0, { artist: 'Alpha Fictif, Bêta Fictif & Gamma Fictif', track: 'Titre à trois', album: 'Album à trois' }),
+  ])
+  await waitForListens(request, cookie, date, 1)
+
+  await login(page)
+  await previousDay(page, 19)
+  await expect(page.getByTestId('listens')).toHaveText('1')
+  const rows = music(page).locator('.row')
+  await expect(rows).toHaveCount(1)
+  await expect(rows.first()).toContainText('Alpha Fictif, Bêta Fictif & Gamma Fictif')
+
+  await music(page).getByRole('button', { name: 'Artistes' }).click()
+  await expect(rows).toHaveCount(3)
+  for (const name of ['Alpha Fictif', 'Bêta Fictif', 'Gamma Fictif']) {
+    await expect(rows.filter({ hasText: name }).locator('.row-count')).toHaveText('1')
+  }
+
+  await music(page).getByRole('button', { name: 'Albums' }).click()
+  await expect(rows).toHaveCount(1)
+  await expect(rows.first()).toContainText('Alpha Fictif')
+  await expect(rows.first()).not.toContainText('Gamma Fictif')
 })
 
 test('la journée de Paris : une écoute à 00:30 est du jour, pas de la veille', async ({ page, request }) => {

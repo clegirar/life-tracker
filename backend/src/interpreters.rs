@@ -23,8 +23,37 @@ pub struct InterpretError(pub &'static str);
 #[derive(Debug, PartialEq)]
 pub struct Item {
     pub level: &'static str,
+    /// Le rang de l'élément parmi ceux de son niveau : 0, sauf pour les artistes crédités d'une
+    /// écoute, où 0 désigne l'artiste principal.
+    pub position: i16,
     pub item_key: String,
     pub display: String,
+}
+
+impl Item {
+    /// Le seul élément de son niveau.
+    fn single(level: &'static str, item_key: String, display: &str) -> Self {
+        Self {
+            level,
+            position: 0,
+            item_key,
+            display: display.to_owned(),
+        }
+    }
+}
+
+/// Un élément `artist` par artiste crédité, dans l'ordre du crédit.
+fn artist_items(credits: &[music::Credit]) -> Vec<Item> {
+    credits
+        .iter()
+        .zip(0..=i16::MAX)
+        .map(|(credit, position)| Item {
+            level: "artist",
+            position,
+            item_key: credit.key.clone(),
+            display: credit.name.clone(),
+        })
+        .collect()
 }
 
 #[derive(Debug, PartialEq)]
@@ -88,25 +117,25 @@ pub static INTERPRETERS: &[Interpreter] = &[
     },
     Interpreter {
         kind: "lastfm.scrobble",
-        version: 1,
+        version: 2,
         schema_version: 1,
         interpret: lastfm_scrobble,
     },
     Interpreter {
         kind: "lastfm.track_info",
-        version: 1,
+        version: 2,
         schema_version: 1,
         interpret: lastfm_track_info,
     },
     Interpreter {
         kind: "music.mark_known",
-        version: 1,
+        version: 2,
         schema_version: 1,
         interpret: music_mark_known,
     },
     Interpreter {
         kind: "apple.play_history_row",
-        version: 1,
+        version: 2,
         schema_version: 1,
         interpret: apple_play_history_row,
     },
@@ -169,7 +198,8 @@ fn lastfm_scrobble(record: &Record) -> Result<Vec<Output>, InterpretError> {
 }
 
 /// Une écoute dont l'artiste est connu, avec ses éléments, sous les mêmes clés quelle que soit la source.
-/// `played_ms` n'apparaît que si la source le donne.
+/// Un élément `artist` par artiste crédité (`music::credited_artists`) ; l'album et le titre prennent
+/// la clé de l'artiste principal. `played_ms` n'apparaît que si la source le donne.
 fn attributed_listen(
     record: &Record,
     artist: &str,
@@ -177,28 +207,22 @@ fn attributed_listen(
     track: &str,
     played_ms: Option<i64>,
 ) -> Event {
+    let credits = music::credited_artists(artist, track);
     let artist_key = music::artist_key(artist);
     let track_key = music::track_key(artist, track);
     let album_key = album.map(|album| music::album_key(artist, album));
-    let mut items = vec![Item {
-        level: "artist",
-        item_key: artist_key.clone(),
-        display: artist.to_owned(),
-    }];
+    let mut items = artist_items(&credits);
     if let (Some(album), Some(key)) = (album, &album_key) {
-        items.push(Item {
-            level: "album",
-            item_key: key.clone(),
-            display: album.to_owned(),
-        });
+        items.push(Item::single("album", key.clone(), album));
     }
-    items.push(Item {
-        level: "track",
-        item_key: track_key.clone(),
-        display: track.to_owned(),
-    });
+    items.push(Item::single("track", track_key.clone(), track));
+    let artists: Vec<Value> = credits
+        .iter()
+        .map(|credit| json!({ "key": credit.key, "name": credit.name }))
+        .collect();
     let mut details = json!({
         "artist": artist,
+        "artists": artists,
         "album": album,
         "track": track,
         "artist_key": artist_key,
@@ -263,6 +287,7 @@ fn apple_play_history_row(record: &Record) -> Result<Vec<Output>, InterpretError
         None => Event {
             details: json!({
                 "artist": null,
+                "artists": null,
                 "album": album,
                 "track": track,
                 "artist_key": null,
@@ -304,11 +329,7 @@ fn lastfm_track_info(record: &Record) -> Result<Vec<Output>, InterpretError> {
     Ok(vec![Output::Event(Event {
         value: Some(format!("{}.{:03}", ms / 1000, ms % 1000)),
         details: json!({ "track_key": track_key }),
-        items: vec![Item {
-            level: "track",
-            item_key: track_key,
-            display: track.to_owned(),
-        }],
+        items: vec![Item::single("track", track_key, track)],
         ..Event::at_envelope(record, "music.track_duration")
     })])
 }
@@ -318,7 +339,8 @@ fn lastfm_track_info(record: &Record) -> Result<Vec<Output>, InterpretError> {
 const MAX_MARKED_NAME_BYTES: usize = 1024;
 
 /// `{"level", "artist", "album", "track"}` : la déclaration « déjà connu », avec les noms tels
-/// qu'affichés. Un seul élément, à son niveau : c'est ce qui fait qu'un marquage n'agit qu'à son niveau.
+/// qu'affichés. Des éléments à son seul niveau : c'est ce qui fait qu'un marquage n'agit qu'à son niveau.
+/// Un artiste « A & B » marque A et B ; un album ou un titre prend la clé de l'artiste principal.
 /// Les clés se recalculent comme celles des écoutes, donc suivent la normalisation à chaque rebuild.
 fn music_mark_known(record: &Record) -> Result<Vec<Output>, InterpretError> {
     let name = |field: &str| {
@@ -328,25 +350,23 @@ fn music_mark_known(record: &Record) -> Result<Vec<Output>, InterpretError> {
     let artist = name("artist").ok_or(InterpretError("music.mark_known: invalid artist"))?;
     let (album, track) = (name("album"), name("track"));
     let level = record.payload.get("level").and_then(Value::as_str);
-    let (level, item_key, display) = match level {
-        Some("artist") => ("artist", music::artist_key(artist), artist),
+    let (level, items) = match level {
+        Some("artist") => ("artist", artist_items(&music::credited_artists(artist, ""))),
         Some("album") => {
             let album = album.ok_or(InterpretError("music.mark_known: invalid album"))?;
-            ("album", music::album_key(artist, album), album)
+            let key = music::album_key(artist, album);
+            ("album", vec![Item::single("album", key, album)])
         }
         Some("track") => {
             let track = track.ok_or(InterpretError("music.mark_known: invalid track"))?;
-            ("track", music::track_key(artist, track), track)
+            let key = music::track_key(artist, track);
+            ("track", vec![Item::single("track", key, track)])
         }
         _ => return Err(InterpretError("music.mark_known: invalid level")),
     };
     Ok(vec![Output::Event(Event {
         details: json!({ "level": level, "artist": artist, "album": album, "track": track }),
-        items: vec![Item {
-            level,
-            item_key,
-            display: display.to_owned(),
-        }],
+        items,
         ..Event::at_envelope(record, "music.known")
     })])
 }
@@ -437,10 +457,45 @@ mod tests {
             levels,
             [
                 ("artist", "daft punk"),
+                ("artist", "someone"),
                 ("album", "daft punk\tdiscovery"),
                 ("track", "daft punk\tveridis quo"),
             ]
         );
+        assert_eq!(event.details["artist"], "Daft Punk feat. Someone");
+        assert_eq!(
+            event.details["artists"],
+            json!([{"key": "daft punk", "name": "Daft Punk"}, {"key": "someone", "name": "Someone"}])
+        );
+    }
+
+    #[test]
+    fn a_listen_credits_each_artist_once_and_counts_as_one_event() {
+        let record = record(json!({
+            "artist": {"#text": "Zek, Jungle Jack & Caballero"},
+            "name": "T (feat. Jungle Jack & Invité)",
+            "album": {"#text": "GRAND LUXXXE Vol.1"},
+        }));
+        let event = single_event(lastfm_scrobble(&record).unwrap());
+        let items: Vec<_> = event
+            .items
+            .iter()
+            .map(|i| (i.level, i.position, i.item_key.as_str(), i.display.as_str()))
+            .collect();
+        assert_eq!(
+            items,
+            [
+                ("artist", 0, "zek", "Zek"),
+                ("artist", 1, "jungle jack", "Jungle Jack"),
+                ("artist", 2, "caballero", "Caballero"),
+                ("artist", 3, "invité", "Invité"),
+                ("album", 0, "zek\tgrand luxxxe vol.1", "GRAND LUXXXE Vol.1"),
+                ("track", 0, "zek\tt", "T (feat. Jungle Jack & Invité)"),
+            ]
+        );
+        assert_eq!(event.details["artist_key"], "zek");
+        assert_eq!(event.details["album_key"], "zek\tgrand luxxxe vol.1");
+        assert_eq!(event.details["track_key"], "zek\tt");
     }
 
     #[test]
@@ -524,18 +579,42 @@ mod tests {
     }
 
     #[test]
-    fn a_mark_gives_one_item_at_its_own_level_under_the_key_of_the_listens() {
-        let item = |payload: Value| {
+    fn a_mark_gives_items_at_its_own_level_under_the_key_of_the_listens() {
+        let items = |payload: Value| {
             let event = single_event(music_mark_known(&record(payload)).unwrap());
             assert_eq!(event.metric, "music.known");
-            assert_eq!(event.items.len(), 1);
-            let item = &event.items[0];
-            (item.level, item.item_key.clone(), item.display.clone())
+            event
+                .items
+                .iter()
+                .map(|i| (i.level, i.position, i.item_key.clone(), i.display.clone()))
+                .collect::<Vec<_>>()
+        };
+        let item = |payload: Value| {
+            let mut found = items(payload);
+            assert_eq!(found.len(), 1);
+            let (level, _, key, display) = found.remove(0);
+            (level, key, display)
         };
         let artist = "DAFT PUNK feat. X";
         assert_eq!(
-            item(json!({"level": "artist", "artist": artist, "album": "Discovery", "track": "T"})),
-            ("artist", music::artist_key("Daft Punk"), artist.to_owned())
+            items(json!({"level": "artist", "artist": artist, "album": "Discovery", "track": "T"})),
+            [
+                (
+                    "artist",
+                    0,
+                    music::artist_key("Daft Punk"),
+                    "DAFT PUNK".to_owned()
+                ),
+                ("artist", 1, "x".to_owned(), "X".to_owned()),
+            ]
+        );
+        assert_eq!(
+            item(json!({"level": "artist", "artist": "Simon & Garfunkel"})),
+            (
+                "artist",
+                "simon & garfunkel".to_owned(),
+                "Simon & Garfunkel".to_owned()
+            )
         );
         assert_eq!(
             item(json!({"level": "album", "artist": artist, "album": "Discovery"})),

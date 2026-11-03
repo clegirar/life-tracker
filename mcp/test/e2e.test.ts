@@ -61,7 +61,7 @@ async function settled(): Promise<void> {
     const response = await fetch(`${backendUrl}/v1/inventory`, { headers: { authorization: `Bearer ${serviceToken}` } });
     const body = (await response.json()) as { metrics: { metric: string; events: number }[] };
     const events = (name: string) => body.metrics.find((m) => m.metric === name)?.events ?? 0;
-    if (events('coffee') === 4 && events('music.listen') === 4 && events('music.track_duration') === 1) {
+    if (events('coffee') === 4 && events('music.listen') === 5 && events('music.track_duration') === 1) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -96,6 +96,8 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
       scrobble('2026-10-13T18:00:00Z', 'Daft Punk', 'Veridis Quo', 'Discovery'),
       scrobble('2026-10-14T18:00:00Z', 'Daft Punk', 'Veridis Quo (Remastered)', 'Discovery'),
       scrobble('2026-10-13T19:00:00Z', 'Justice', 'Genesis', 'Cross'),
+      // Hors des périodes d'octobre interrogées ailleurs : une écoute à trois artistes crédités.
+      scrobble('2026-09-20T18:00:00Z', 'Zek, Jungle Jack & Caballero', 'T', 'GRAND LUXXXE Vol.1'),
       {
         key: 'info-veridis',
         kind: 'lastfm.track_info',
@@ -213,6 +215,16 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
     const completeness = await call('completeness', { from: '2026-10-01', to: '2026-10-31' });
     const coffee = (completeness.metrics as { metric: string; days_without_data: string[] }[]).find((m) => m.metric === 'coffee');
     assert.deepEqual(coffee?.days_without_data, ['2026-10-01..2026-10-11']);
+  });
+
+  test('combien d’artistes uniques : une écoute à trois artistes en compte trois', async () => {
+    const artists = await call('top', { metric: 'music.listen', level: 'artist', from: '2026-09-20', to: '2026-09-20' });
+    assert.equal(artists.distinct_items, 3);
+    assert.equal(artists.occurrences_with_item, 1);
+    const tracks = await call('top', { metric: 'music.listen', level: 'track', from: '2026-09-20', to: '2026-09-20' });
+    assert.equal(tracks.distinct_items, 1);
+    const track = (tracks.items as { context: Record<string, string> }[])[0];
+    assert.equal(track?.context.artist, 'Zek, Jungle Jack & Caballero');
   });
 
   test('une erreur de paramètre se dit à Claude, sans planter', async () => {

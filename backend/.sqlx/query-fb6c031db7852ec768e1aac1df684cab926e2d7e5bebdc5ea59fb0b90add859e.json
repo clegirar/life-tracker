@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT i.item_key AS \"item_key!\", count(*) AS \"occurrences!\",\n                  (array_agg(i.display ORDER BY i.occurred_at DESC, i.seq DESC))[1] AS \"name!\",\n                  (array_agg(i.seq ORDER BY i.occurred_at DESC, i.seq DESC))[1] AS \"seq!\",\n                  (array_agg(i.ordinal ORDER BY i.occurred_at DESC, i.seq DESC))[1] AS \"ordinal!\",\n                  count(*) OVER () AS \"distinct!\",\n                  sum(count(*)) OVER ()::int8 AS \"with_item!\"\n           FROM derived.live_event_items i\n           WHERE i.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND i.metric = $1 AND i.level = $2\n             AND i.occurred_at >= ($3::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n             AND i.occurred_at < (($4::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n           GROUP BY i.item_key\n           ORDER BY 2 DESC, 1\n           LIMIT $5",
+  "query": "WITH period AS (\n             SELECT i.*\n             FROM derived.live_event_items i\n             WHERE i.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n               AND i.metric = $1 AND i.level = $2\n               AND i.occurred_at >= ($3::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n               AND i.occurred_at < (($4::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n           )\n           SELECT i.item_key AS \"item_key!\", count(*) AS \"occurrences!\",\n                  (array_agg(i.display ORDER BY i.occurred_at DESC, i.seq DESC))[1] AS \"name!\",\n                  (array_agg(i.seq ORDER BY i.occurred_at DESC, i.seq DESC))[1] AS \"seq!\",\n                  (array_agg(i.ordinal ORDER BY i.occurred_at DESC, i.seq DESC))[1] AS \"ordinal!\",\n                  count(*) OVER () AS \"distinct!\",\n                  (SELECT count(*) FROM (SELECT DISTINCT seq, ordinal FROM period) e) AS \"with_item!\"\n           FROM period i\n           GROUP BY i.item_key\n           ORDER BY 2 DESC, 1\n           LIMIT $5",
   "describe": {
     "columns": [
       {
@@ -70,5 +70,5 @@
       null
     ]
   },
-  "hash": "c2bece69e4a4fec5b0e68fef7cda5592426f357d2163a3a998508bb41d7303bc"
+  "hash": "fb6c031db7852ec768e1aac1df684cab926e2d7e5bebdc5ea59fb0b90add859e"
 }
