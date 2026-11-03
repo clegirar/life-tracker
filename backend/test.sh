@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Tests du backend sur un PostgreSQL 18 jetable : rôles (db/init), migrations par `migrate`, puis cargo test.
+# Tests du backend sur un PostgreSQL 18 jetable : rôles (db/init), migrations par `migrate`, puis les tests,
+# par cargo-nextest s'il est installé (tous les binaires de test en parallèle), sinon par cargo test.
 # Le conteneur n'utilise aucun volume de développement et disparaît à la sortie.
-# Usage : backend/test.sh             (Docker requis)
+# Usage : backend/test.sh [arguments]   (Docker requis ; arguments de cargo nextest run ou de cargo test)
 #         backend/test.sh --prepare   régénère le cache .sqlx/ (Docker et sqlx-cli requis)
 set -euo pipefail
 
@@ -60,5 +61,12 @@ if command -v cargo-sqlx >/dev/null; then
   DATABASE_URL="$LT_TEST_OWNER_URL" cargo sqlx prepare --check
 fi
 
-echo "▶ cargo test"
-cargo test "$@"
+# Le crate n'a aucun test de documentation, que nextest ne lancerait pas : en ajouter demanderait
+# `cargo test --doc` ici.
+if cargo nextest --version >/dev/null 2>&1; then
+  echo "▶ cargo nextest run"
+  cargo nextest run "$@"
+else
+  echo "▶ cargo test"
+  cargo test "$@"
+fi

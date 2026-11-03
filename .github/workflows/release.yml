@@ -1,0 +1,107 @@
+# Versions et déploiement. À chaque push sur main, release-please tient à jour la PR de release ;
+# quand on la fusionne, il crée le tag vX.Y.Z et la GitHub Release. Alors seulement : images
+# linux/amd64 étiquetées vX.Y.Z sur ghcr.io, puis déploiement sur le NAS par Tailscale et SSH.
+# Mise en place et secrets : docs/deploiement.md, « Déploiement automatique ».
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  images:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        component: [backend, web, mcp]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Nom de l'image en minuscules, comme ghcr.io l'exige
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}/${COMPONENT}" >> "$GITHUB_OUTPUT"
+        env:
+          COMPONENT: ${{ matrix.component }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.component }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.name }}:${{ needs.release-please.outputs.tag_name }}
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          provenance: false
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+  # Le NAS n'accepte de cette clé que `deploy vX.Y.Z <sha256 de compose.yaml>` (deploy/deploy.sh) ;
+  # il ne reçoit aucun fichier. Un seul déploiement à la fois, jamais interrompu.
+  deploy:
+    needs: [release-please, images]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Nœud éphémère, tag:ci : l'ACL ne lui ouvre que le port SSH du NAS.
+      - uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+      - name: Déploiement sur le NAS
+        env:
+          NAS_SSH_KEY: ${{ secrets.NAS_SSH_KEY }}
+          NAS_KNOWN_HOSTS: ${{ secrets.NAS_KNOWN_HOSTS }}
+          NAS_HOST: ${{ secrets.NAS_HOST }}
+          NAS_USER: ${{ secrets.NAS_USER }}
+          NAS_SSH_PORT: ${{ secrets.NAS_SSH_PORT }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          key="$RUNNER_TEMP/nas_key"
+          known="$RUNNER_TEMP/known_hosts"
+          trap 'rm -f "$key" "$known"' EXIT
+          (umask 077 && printf '%s\n' "$NAS_SSH_KEY" >"$key")
+          printf '%s\n' "$NAS_KNOWN_HOSTS" >"$known"
+          sha="$(sha256sum compose.yaml | cut -d' ' -f1)"
+          echo "deploy $TAG $sha"
+          ssh -i "$key" -p "$NAS_SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=30 \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known" \
+            "$NAS_USER@$NAS_HOST" "deploy $TAG $sha"

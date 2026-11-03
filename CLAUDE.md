@@ -16,10 +16,12 @@ Hors POC : les messages et l'agent Mac, l'annuaire côté interface, les autres 
 
 Seul ce qui existe aujourd'hui est listé ; ajouter ici les commandes de chaque nouveau composant.
 
-- Tout le dépôt : `./test.sh` (base, qualité et tests du backend, web app, serveur MCP ; conteneurs jetables, Docker requis).
+- Tout le dépôt : `./test.sh` (script de déploiement, base, qualité et tests du backend, web app, serveur MCP ; conteneurs jetables, Docker requis).
+- Script de déploiement : `deploy/test.sh` (faux `docker`, sans Docker ; shellcheck s'il est installé).
+- CI : `.github/workflows/ci.yml`, sur chaque PR et chaque push sur `main` hors documentation, lance en parallèle `db/test/run.sh`, le format, clippy et `backend/test.sh`, `web/test.sh`, `mcp/test.sh` et `deploy/test.sh`. `pr-title.yml` contrôle le titre de la PR. Workflows vérifiés par `actionlint`.
 - Tests de la base : `db/test/run.sh` (conteneurs jetables, Docker requis).
 - Base de développement : `cp .env.example .env && docker compose -f compose.dev.yaml up -d` (port 54329).
-- Tests du backend : `backend/test.sh [arguments de cargo test]` (conteneur jetable, Docker requis ; Rust figé par `backend/rust-toolchain.toml`).
+- Tests du backend : `backend/test.sh [arguments]` (conteneur jetable, Docker requis ; Rust figé par `backend/rust-toolchain.toml`). Par `cargo nextest run` si cargo-nextest est installé (comme en CI, 0.9.150), sinon `cargo test` : les arguments suivent l'outil. Les tests les plus longs partent en premier (`backend/.config/nextest.toml`).
 - Après un changement de requête SQL : `backend/test.sh --prepare` régénère le cache `backend/.sqlx/` (sqlx-cli 0.9 requis), à versionner.
 - Qualité : dans `backend/`, `cargo fmt --check` et `cargo clippy --all-targets -- -D warnings`.
 - Web app : `web/test.sh [arguments de playwright test]` lance lint, types, tests unitaires, build, puis Playwright contre le vrai backend et un PostgreSQL 18.6 jetable (Docker requis ; télécharge Chromium au premier passage). Captures et logs dans `web/e2e-artifacts/`, ignoré par git.
@@ -27,7 +29,8 @@ Seul ce qui existe aujourd'hui est listé ; ajouter ici les commandes de chaque 
 
 - Serveur MCP : `mcp/test.sh [arguments de node --test]` lance types, build, tests OAuth, puis de bout en bout contre le vrai backend et un PostgreSQL 18.6 jetable (Docker requis). Dans `mcp/` : `npm ci`, `npm run typecheck`, `npm run build`, `npm test` (sans backend, les tests de bout en bout sont sautés).
 - Lancer le MCP en développement, depuis `mcp/` après `npm run build` : `MCP_PUBLIC_URL=https://localhost:8443 MCP_BACKEND_URL=http://127.0.0.1:8080 MCP_SERVICE_TOKEN=<jeton de développement> MCP_LOGIN_HASH=<sortie de hash-password> MCP_LISTEN=127.0.0.1:8787 MCP_STATE_DIR=<dossier> node dist/main.js serve`. Le haché : `printf '%s\n' "$SECRET" | node dist/main.js hash-password` (16 caractères au moins, lu sur l'entrée standard, sortie déjà encodée pour un fichier d'environnement). Jamais de jeton ni de secret de production en développement.
-- Images de production, linux/amd64 : `docker buildx build --platform linux/amd64 --load -t <nom> backend` (de même pour `web` et `mcp`). Sur GitHub : `.github/workflows/images.yml`.
+- Images de production, linux/amd64 : `docker buildx build --platform linux/amd64 --load -t <nom> backend` (de même pour `web` et `mcp`). Sur GitHub, seulement à une release : `.github/workflows/release.yml`.
+- Releases : release-please (`release-please-config.json`, `.release-please-manifest.json`, `version.txt`, `CHANGELOG.md`) tient une PR de release à jour sur `main`. La fusionner crée le tag `vX.Y.Z`, construit les images `vX.Y.Z` et déploie sur le NAS (`deploy/deploy.sh` par Tailscale et SSH). Mise en place : `docs/deploiement.md`, « Déploiement automatique ».
 - Production : `compose.yaml`, à lancer sur le NAS et jamais depuis le dépôt ; secrets et commandes dans `docs/deploiement.md`.
 
 Depuis `backend/`, après `set -a && . ../.env && set +a` (chaque commande lit sa propre URL) :
@@ -65,6 +68,7 @@ Le cookie de session est toujours `Secure`. Seule exception, pour le développem
 - Documentation et commentaires en français ; code, noms de champs et API en anglais.
 - Migrations dans `backend/migrations/`, sans version descendante. Elles restent modifiables jusqu'au premier déploiement sur le NAS (étape 4) ; ensuite, on en ajoute une nouvelle.
 - Versions d'images explicites, jamais `latest`. PostgreSQL 18 reste figé.
+- Git : une branche `type/sujet` par travail (par exemple `feat/compteur-the`), une PR par `gh pr create`. Messages et titres de PR en Conventional Commits : `type(scope): description en français`. Types : `feat`, `fix`, `perf`, `refactor`, `test`, `docs`, `chore`, `ci`, `build` ; scopes facultatifs : `backend`, `web`, `mcp`, `db`, `deploy`, `ci` ; `!` ou `BREAKING CHANGE:` pour une rupture. Fusion en squash : le titre de la PR devient le commit sur `main` et décide de la version (`feat` : mineure, `fix` et `perf` : correctif, avant 1.0.0). Chaque commit est signé (`git commit -s`, pour le contrôle DCO). C'est l'utilisateur qui fusionne. Commit, push et PR seulement à sa demande.
 - Le plus simple qui respecte les principes. Toute décision de conception s'ajoute au journal des décisions de l'architecture, et chaque étape terminée se note dans `docs/poc.md`.
 
 ## Interface
