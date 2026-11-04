@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.details->'points' AS \"points!\"\n           FROM derived.live_events e\n           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND e.metric = 'workout.track'\n             AND e.details->'activity_id' = $1\n           ORDER BY e.seq DESC\n           LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "points!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "51350b8b3ce115f1a9156f69bcde5030d9d28a6ad0808776133c8415ae46f9d6"
+}

@@ -415,6 +415,10 @@ pub struct Occurrence {
     at: DateTime<Utc>,
     /// Heure de Paris, `AAAA-MM-JJ HH:MM`.
     local: String,
+    /// La valeur de l'événement (pas d'un jour, minutes de sommeil, km d'une séance), si la métrique
+    /// en a une. Jamais ses détails : ils peuvent porter des coordonnées, que le MCP ne voit pas.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     items: Option<HashMap<String, String>>,
 }
@@ -468,6 +472,7 @@ pub async fn occurrences(
         "list" => {
             let rows = sqlx::query!(
                 r#"SELECT e.seq AS "seq!", e.ordinal AS "ordinal!", e.occurred_at AS "occurred_at!",
+                          e.value::float8 AS value,
                           to_char(e.occurred_at AT TIME ZONE (SELECT timezone FROM core.settings),
                                   'YYYY-MM-DD HH24:MI') AS "local!",
                           count(*) OVER () AS "total!"
@@ -503,6 +508,7 @@ pub async fn occurrences(
                         items: context_of(&contexts, (r.seq, r.ordinal), None, &[]),
                         at: r.occurred_at,
                         local: r.local,
+                        value: r.value,
                     })
                     .collect(),
             })

@@ -816,14 +816,27 @@ async fn logs_never_cite_the_key_the_user_the_token_or_a_name() {
 }
 
 #[test]
-fn collect_never_receives_a_database_url_and_requires_its_secrets() {
-    let output = Command::new(env!("CARGO_BIN_EXE_life-tracker"))
-        .arg("collect")
-        .env_clear()
-        .env("DATABASE_URL", "postgres://ignored")
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("lastfm-api-key"), "{stderr}");
+fn collect_never_receives_a_database_url_and_requires_a_connector() {
+    let run = |envs: &[(&str, &str)]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_life-tracker"))
+            .arg("collect")
+            .env_clear()
+            .env("DATABASE_URL", "postgres://ignored")
+            .env("INGEST_URL", "http://127.0.0.1:9")
+            .envs(envs.iter().copied())
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+    let none = run(&[]);
+    assert!(
+        none.contains("LASTFM_API_KEY") && none.contains("GARMIN_API_KEY"),
+        "{none}"
+    );
+    let half = run(&[("GARMIN_API_KEY", "cle-fictive")]);
+    assert!(half.contains("GARMIN_TOKEN"), "{half}");
+    assert!(!half.contains("cle-fictive"), "{half}");
+    let half = run(&[("LASTFM_API_KEY", "cle-fictive"), ("LASTFM_USER", "u")]);
+    assert!(half.contains("COLLECTOR_TOKEN"), "{half}");
 }

@@ -22,6 +22,7 @@ use tokio::sync::Semaphore;
 use tracing::{Instrument, error, info, info_span, warn};
 use uuid::Uuid;
 
+use crate::activity;
 use crate::admin::{generate_token, token_hash};
 use crate::auth;
 use crate::calendar;
@@ -114,6 +115,9 @@ fn routes() -> Router<AppState> {
         .route("/v1/auth/logout", post(logout))
         .route("/v1/days/{date}", get(get_day))
         .route("/v1/days/{date}/music", get(get_day_music))
+        // Pas dans `READ_ROUTES` : des coordonnées, que le MCP ne voit jamais.
+        .route("/v1/days/{date}/activity", get(get_day_activity))
+        .route("/v1/activities/{id}/track", get(get_activity_track))
         .route("/v1/months/{month}", get(get_month))
         // Pas dans `READ_ROUTES` : la vue de l'année ne sert qu'à la web app.
         .route("/v1/years/{year}", get(get_year))
@@ -1012,6 +1016,27 @@ async fn get_day_music(
 }
 
 /// Le mois, jour par jour : valeurs, erreurs, journées en attente ou à vérifier (voir `calendar`).
+/// Pas, calories, sommeil et séances d'un jour, avec leurs détails (voir `activity`).
+async fn get_day_activity(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Result<Json<activity::DayActivity>, ApiError> {
+    let date = parse_day(&date).ok_or(ApiError::InvalidDate)?;
+    Ok(Json(activity::day(&state.pool, date).await?))
+}
+
+/// La trace simplifiée d'une séance, pour sa carte.
+async fn get_activity_track(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<activity::Track>, ApiError> {
+    let id: u64 = id.parse().map_err(|_| ApiError::InvalidParameter("id"))?;
+    activity::track(&state.pool, id)
+        .await?
+        .map(Json)
+        .ok_or(ApiError::NotFound)
+}
+
 async fn get_month(
     State(state): State<AppState>,
     Path(month): Path<String>,

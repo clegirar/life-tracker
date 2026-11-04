@@ -9,8 +9,11 @@ publish = false
 anyhow = "=1.0.104"
 argon2 = { version = "=0.6.0", features = ["password-hash", "getrandom"] }
 axum = "=0.8.9"
+# Le jeton de Garmin est un JWT : sa date d'expiration se lit dans sa partie centrale.
+base64 = "=0.22.1"
 chrono = { version = "=0.4.45", default-features = false, features = ["clock", "serde", "std"] }
 clap = { version = "=4.6.7", features = ["derive", "env"] }
+fitparser = "=0.12.0"
 getrandom = "=0.4.3"
 hex = "=0.4.3"
 log = "=0.4.35"
@@ -28,6 +31,8 @@ tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json", "tracing-log"] }
 unicode-normalization = "=0.1.25"
 uuid = { version = "=1.29.0", features = ["serde", "v7"] }
+# La trace d'une séance : le fichier d'origine de Garmin, un ZIP qui contient un .FIT. Pur Rust.
+zip = { version = "=9.3.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
 jsonschema = { version = "=0.60.2", default-features = false }
