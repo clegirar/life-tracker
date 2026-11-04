@@ -147,7 +147,7 @@ pub static INTERPRETERS: &[Interpreter] = &[
     },
     Interpreter {
         kind: "garmin.sleep",
-        version: 1,
+        version: 2,
         schema_version: 1,
         interpret: garmin_sleep,
     },
@@ -460,8 +460,42 @@ fn garmin_daily_summary(record: &Record) -> Result<Vec<Output>, InterpretError> 
     Ok(outputs)
 }
 
+/// `heart_rate` d'une nuit, `[[secondes depuis le début, bpm], …]` : la plus basse et la moyenne
+/// arrondie, `None` sans échantillon (une nuit d'avant la fréquence cardiaque n'en a pas).
+fn sleep_heart_rate(payload: &Value) -> Result<Option<(&serde_json::Number, i64)>, InterpretError> {
+    const INVALID: InterpretError = InterpretError("garmin.sleep: invalid heart_rate");
+    let samples = match payload.get("heart_rate") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Array(samples)) => samples,
+        Some(_) => return Err(INVALID),
+    };
+    let mut lowest: Option<&serde_json::Number> = None;
+    let mut sum = 0.0;
+    for sample in samples {
+        let [seconds, Value::Number(bpm)] = sample.as_array().map(Vec::as_slice).ok_or(INVALID)?
+        else {
+            return Err(INVALID);
+        };
+        let bpm_value = bpm
+            .as_f64()
+            .filter(|b| b.is_finite() && *b > 0.0)
+            .ok_or(INVALID)?;
+        seconds
+            .as_f64()
+            .filter(|s| s.is_finite() && *s >= 0.0)
+            .ok_or(INVALID)?;
+        if lowest.is_none_or(|l| bpm_value < l.as_f64().unwrap_or(f64::INFINITY)) {
+            lowest = Some(bpm);
+        }
+        sum += bpm_value;
+    }
+    Ok(lowest.map(|l| (l, (sum / samples.len() as f64).round() as i64)))
+}
+
 /// `{calendar_date, start, end, sleep_seconds, deep_seconds, light_seconds, rem_seconds,
-/// awake_seconds}` : une nuit, rangée au jour du réveil (celui de Garmin), en minutes.
+/// awake_seconds, heart_rate?}` : une nuit, rangée au jour du réveil (celui de Garmin), en minutes.
+/// Avec des échantillons de fréquence cardiaque, la plus basse (`lowest_hr`) et la moyenne (`avg_hr`) ;
+/// la série elle-même reste au journal.
 fn garmin_sleep(record: &Record) -> Result<Vec<Output>, InterpretError> {
     let payload = &record.payload;
     let date = garmin_calendar_date(payload)?;
@@ -477,18 +511,23 @@ fn garmin_sleep(record: &Record) -> Result<Vec<Output>, InterpretError> {
             Some(_) => Err(InterpretError("garmin.sleep: invalid instant")),
         }
     };
+    let mut details = json!({
+        "calendar_date": date,
+        "start": instant("start")?,
+        "end": instant("end")?,
+        "sleep_seconds": seconds,
+        "deep_seconds": garmin_number(payload, "deep_seconds")?,
+        "light_seconds": garmin_number(payload, "light_seconds")?,
+        "rem_seconds": garmin_number(payload, "rem_seconds")?,
+        "awake_seconds": garmin_number(payload, "awake_seconds")?,
+    });
+    if let Some((lowest, average)) = sleep_heart_rate(payload)? {
+        details["lowest_hr"] = json!(lowest);
+        details["avg_hr"] = json!(average);
+    }
     Ok(vec![Output::Event(Event {
         value: Some(scaled(seconds, 60.0)),
-        details: json!({
-            "calendar_date": date,
-            "start": instant("start")?,
-            "end": instant("end")?,
-            "sleep_seconds": seconds,
-            "deep_seconds": garmin_number(payload, "deep_seconds")?,
-            "light_seconds": garmin_number(payload, "light_seconds")?,
-            "rem_seconds": garmin_number(payload, "rem_seconds")?,
-            "awake_seconds": garmin_number(payload, "awake_seconds")?,
-        }),
+        details,
         ..Event::at_envelope(record, "sleep")
     })])
 }
@@ -1065,6 +1104,12 @@ mod tests {
         assert_eq!(event.details["end"], "2026-11-03T06:05:00+00:00");
         assert_eq!(event.details["rem_seconds"], 6_660);
         assert!(event.items.is_empty());
+        assert_eq!(
+            event.details.get("lowest_hr"),
+            None,
+            "une nuit sans fréquence cardiaque"
+        );
+        assert_eq!(event.details.get("avg_hr"), None);
         for payload in [
             json!({"calendar_date": "2026-11-03"}),
             json!({"calendar_date": "2026-11-03", "sleep_seconds": 0}),
@@ -1072,6 +1117,50 @@ mod tests {
             json!({"sleep_seconds": 60}),
         ] {
             assert!(garmin_sleep(&garmin_record(payload)).is_err());
+        }
+    }
+
+    #[test]
+    fn a_night_with_heart_rate_gives_its_lowest_and_its_rounded_average() {
+        let night = |heart_rate: Value| {
+            garmin_record(json!({
+                "calendar_date": "2026-11-03", "start": "2026-11-02T22:41:00Z",
+                "end": "2026-11-03T06:05:00Z", "sleep_seconds": 25_980, "heart_rate": heart_rate,
+            }))
+        };
+        let record = night(json!([[60, 58], [180, 48], [300, 55], [420, 60]]));
+        let event = single_event(garmin_sleep(&record).unwrap());
+        assert_eq!(event.details["lowest_hr"], 48);
+        assert_eq!(event.details["avg_hr"], 55, "55,25 arrondi");
+        assert_eq!(
+            event.details.get("heart_rate"),
+            None,
+            "la série reste au journal"
+        );
+        assert_eq!(event.value.as_deref(), Some("433.000"));
+        // Toujours le même résultat : un rejeu n'y voit aucune différence.
+        assert_eq!(single_event(garmin_sleep(&record).unwrap()), event);
+        let event = single_event(garmin_sleep(&night(json!([[0, 50.5], [120, 51]]))).unwrap());
+        assert_eq!(event.details["lowest_hr"], json!(50.5));
+        assert_eq!(event.details["avg_hr"], 51);
+        for empty in [json!([]), json!(null)] {
+            let event = single_event(garmin_sleep(&night(empty)).unwrap());
+            assert_eq!(event.details.get("lowest_hr"), None);
+        }
+        for invalid in [
+            json!("48"),
+            json!([[60]]),
+            json!([[60, 0]]),
+            json!([[60, -3]]),
+            json!([[60, "48"]]),
+            json!([["x", 48]]),
+            json!([[-60, 48]]),
+            json!([[60, 48, 1]]),
+        ] {
+            assert_eq!(
+                garmin_sleep(&night(invalid)).unwrap_err(),
+                InterpretError("garmin.sleep: invalid heart_rate")
+            );
         }
     }
 
