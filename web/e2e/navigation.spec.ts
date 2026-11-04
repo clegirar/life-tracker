@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { addDays, checkLayout, DESKTOP, login, openMenu, parisToday } from './helpers'
+import { addDays, checkLayout, DESKTOP, fullShot, login, openMenu, parisToday } from './helpers'
 
 // La barre latérale, le tiroir sur iPhone et les adresses des pages.
 const SHOTS = process.env.E2E_SCREENSHOTS ?? 'e2e-artifacts/screenshots'
@@ -130,13 +130,13 @@ for (const colorScheme of ['light', 'dark'] as const) {
         const main = (await page.locator('main').boundingBox())!
         expect(main.x).toBeGreaterThanOrEqual(bar.x + bar.width)
         await checkLayout(page)
-        await page.screenshot({ path: `${SHOTS}/${colorScheme}-large-jour.png`, fullPage: true })
+        await fullShot(page, `${SHOTS}/${colorScheme}-large-jour.png`)
 
         await page.getByRole('button', { name: /^Voir le mois/ }).click()
         await expect(page.getByTestId('month-grid')).toBeVisible()
         await page.waitForTimeout(300) // la fin de l'arrivée
         await checkLayout(page)
-        await page.screenshot({ path: `${SHOTS}/${colorScheme}-large-mois.png`, fullPage: true })
+        await fullShot(page, `${SHOTS}/${colorScheme}-large-mois.png`)
       })
     })
   })

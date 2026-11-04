@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
-import { addDays, API_URL, apiSession, checkLayout, DESKTOP, IOS_TOKEN, login, noon, parisToday, scrobble, send, waitForListens } from './helpers'
+import { addDays, API_URL, apiSession, checkLayout, DESKTOP, fullShot, IOS_TOKEN, login, noon, parisToday, scrobble, send, waitForListens } from './helpers'
 
 // La vue de l'année. Des jours que les autres fichiers n'utilisent pas : 26 à 28. Noms fictifs.
 const SHOTS = process.env.E2E_SCREENSHOTS ?? 'e2e-artifacts/screenshots'
@@ -211,7 +211,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
         await page.setViewportSize(viewport)
         await login(page)
         const width = label === '390' ? '390' : '1280'
-        const shot = (name: string) => page.screenshot({ path: `${SHOTS}/${width}-${colorScheme}-${name}.png`, fullPage: true })
+        const shot = (name: string) => fullShot(page, `${SHOTS}/${width}-${colorScheme}-${name}.png`)
 
         await page.goto(`/annee/${yearOf(today)}`)
         await expect(page.getByTestId('year-grid')).toHaveAttribute('data-mode', 'plusieurs')

@@ -36,6 +36,9 @@
   /* Ressort échantillonné : amortissement 0,72, léger dépassement. */
   --spring: linear(0, 0.13, 0.383, 0.632, 0.822, 0.944, 1.009, 1.035, 1.038, 1.031, 1.021, 1.012, 1.005, 1.001, 1);
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  /* Les chiffres du jour (cafés, écoutes, temps) : une seule taille, d'une carte à l'autre. */
+  --figure-size: 34px;
+  --figure-line: 41px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -382,10 +385,11 @@ button:disabled {
 }
 
 .stat-value {
-  font-size: 28px;
-  line-height: 34px;
+  font-size: var(--figure-size);
+  line-height: var(--figure-line);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 .stat-note {
@@ -587,8 +591,8 @@ button:disabled {
 }
 
 .count-value {
-  font-size: 56px;
-  line-height: 64px;
+  font-size: var(--figure-size);
+  line-height: var(--figure-line);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;

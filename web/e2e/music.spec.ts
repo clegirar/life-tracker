@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
-import { addDays, apiSession, checkLayout, login, noon, parisToday, previousDay, scrobble, send, waitForListens, type Listen } from './helpers'
+import { addDays, apiSession, checkLayout, fullShot, login, noon, parisToday, previousDay, scrobble, send, waitForListens, type Listen } from './helpers'
 
 // Les écoutes entrent par la vraie API d'ingestion, avec le token de la source, comme le collecteur.
 // Noms fictifs. Chaque test a sa journée : le journal n'efface rien.
@@ -211,7 +211,7 @@ for (const [colorScheme, daysAgo] of [['light', 4], ['dark', 5]] as const) {
       await page.setViewportSize({ width: 1280, height: 800 })
       await music(page).getByRole('button', { name: 'Titres' }).click()
       await checkLayout(page)
-      await page.screenshot({ path: `${SHOTS}/${colorScheme}-large-musique.png`, fullPage: true })
+      await fullShot(page, `${SHOTS}/${colorScheme}-large-musique.png`)
       await page.setViewportSize({ width: 390, height: 844 })
 
       await page.route('**/v1/sources/health', async (route) => {

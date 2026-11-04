@@ -160,3 +160,19 @@ export async function logoutFromMenu(page: Page) {
 
 /** La largeur d'un Mac : la barre latérale fixe. */
 export const DESKTOP = { width: 1280, height: 800 }
+
+/**
+ * Capture de toute la page. Sur Mac, la fenêtre prend d'abord la hauteur de la page : la barre latérale
+ * est collée à la fenêtre (100dvh), et une capture « pleine page » la couperait au milieu.
+ */
+export async function fullShot(page: Page, path: string) {
+  const viewport = page.viewportSize()
+  if (!viewport || viewport.width < 900) {
+    await page.screenshot({ path, fullPage: true })
+    return
+  }
+  const height = await page.evaluate(() => document.documentElement.scrollHeight)
+  await page.setViewportSize({ width: viewport.width, height: Math.max(viewport.height, height) })
+  await page.screenshot({ path })
+  await page.setViewportSize(viewport)
+}
