@@ -129,6 +129,8 @@ test('six métriques : toutes choisies par défaut, et Pas seule montre ses chif
   await login(page)
   await page.goto(`/mois/${DAY.slice(0, 7)}`)
   const filters = page.getByRole('group', { name: 'Métriques affichées' })
+  // Dans l'ordre d'affichage du registre.
+  await expect(filters.getByRole('button')).toHaveText(['Cafés', 'Écoutes', 'Pas', 'Séances', 'Sommeil', 'Calories brûlées'])
   for (const name of ['Cafés', 'Écoutes', 'Pas', 'Calories brûlées', 'Sommeil', 'Séances']) {
     await expect(filters.getByRole('button', { name })).toHaveAttribute('aria-pressed', 'true')
   }
@@ -136,7 +138,7 @@ test('six métriques : toutes choisies par défaut, et Pas seule montre ses chif
   for (const metric of ['steps', 'calories.burned', 'sleep', 'workout']) {
     await expect(cell.locator(`.day-dot[data-metric="${metric}"]`)).toHaveCount(1)
   }
-  await expect(cell).toHaveAccessibleName(/2\s350 kcal.*7 h 13.*8\s412 pas.*2 séances/)
+  await expect(cell).toHaveAccessibleName(/8\s412 pas.*2 séances.*7 h 13.*2\s350 kcal/)
   for (const name of ['Cafés', 'Écoutes', 'Calories brûlées', 'Sommeil', 'Séances']) await filters.getByRole('button', { name }).click()
   await expect(cell.locator('.cell-value[data-metric="steps"]')).toHaveText('8,4 k')
   await expect(page.locator(`.cell[data-date="${NO_DATA}"] .cell-value`)).toHaveText(' ')

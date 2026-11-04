@@ -18,7 +18,8 @@
   --on-music: #ffffff;
   /* Garmin : les couleurs système d'Apple, en version accessible sur fond clair. */
   --steps: #248a3d;
-  --calories: #c93400;
+  /* Un vrai orange, loin du rouge des écoutes et du brun du café. */
+  --calories: #dc6a00;
   --sleep: #5856d6;
   --workout: #0071a4;
   --segment-on: #ffffff;
