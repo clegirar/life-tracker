@@ -10,9 +10,14 @@
 //! (règle 9), sous une clé qui dépend de son contenu, et une nouvelle version part avec l'annulation
 //! de la précédente, dans le même lot. Toute lecture ne voit donc qu'une version vivante.
 //!
+//! La fréquence cardiaque d'une nuit vient de la série du jour (`dailyHeartRate`, un échantillon toutes
+//! les deux minutes, du minuit au minuit de l'heure locale) : une nuit en chevauche deux, celle de la
+//! veille de son réveil et celle du jour. Seuls les échantillons entre le début et la fin de la nuit
+//! entrent dans la charge utile, pour que sa clé ne change pas quand la journée continue.
+//!
 //! Ses logs ne donnent que des nombres, des statuts et des motifs fixes, jamais une donnée ni un secret.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -36,6 +41,7 @@ const STATE_FILE: &str = "garmin-state.json";
 const TOKEN_PATH: &str = "/personalapitoken-service/personal-api/personal-api-key/token";
 const SUMMARIES_PATH: &str = "/usersummary-service/v2/dailysummaries";
 const SLEEP_PATH: &str = "/sleep-service/sleep/dailySleepSummariesByDate";
+const HEART_RATE_PATH: &str = "/wellness-service/wellness/dailyHeartRate";
 const ACTIVITIES_PATH: &str = "/activitylist-service/activities/search/activities";
 const DOWNLOAD_PATH: &str = "/download-service/files/activity";
 /// Un fichier d'une séance de plusieurs heures pèse quelques Mo : au-delà, ce n'est pas une séance.
@@ -195,9 +201,15 @@ impl Observation {
     /// retombe sur la même clé (`duplicate`), un contenu révisé en donne une nouvelle. La charge utile
     /// est sérialisée clés triées, donc toujours de la même façon.
     pub fn key(&self) -> String {
-        let canonical = serde_json::to_string(&self.payload).expect("JSON sérialisable");
-        let digest = hex::encode(Sha256::digest(canonical.as_bytes()));
-        format!("{}:{}", self.subject, &digest[..16])
+        key_of(&self.subject, &self.payload)
+    }
+
+    /// La clé qu'aurait eue une nuit avant la fréquence cardiaque (version 0.3 du connecteur) : la même
+    /// charge utile, sans `heart_rate`. `None` si la charge utile n'en a pas : la clé est la même.
+    pub fn key_without_heart_rate(&self) -> Option<String> {
+        let mut payload = self.payload.clone();
+        payload.as_object_mut()?.remove("heart_rate")?;
+        Some(key_of(&self.subject, &payload))
     }
 
     pub fn record(&self, key: &str) -> Value {
@@ -209,6 +221,12 @@ impl Observation {
             "payload": self.payload,
         })
     }
+}
+
+fn key_of(subject: &str, payload: &Value) -> String {
+    let canonical = serde_json::to_string(payload).expect("JSON sérialisable");
+    let digest = hex::encode(Sha256::digest(canonical.as_bytes()));
+    format!("{subject}:{}", &digest[..16])
 }
 
 /// Un nombre positif, normalisé : entier s'il l'est, sinon arrondi au millième. La même valeur donne
@@ -295,6 +313,71 @@ pub fn sleep(raw: &Value) -> Option<Observation> {
             "awake_seconds": number(raw.get("awakeSleepSeconds")),
         }),
     })
+}
+
+/// Les jours dont la série de fréquence cardiaque couvre une nuit : la veille du réveil et le jour du
+/// réveil. Aucun pour une nuit sans début ni fin.
+pub fn heart_rate_dates(night: &Observation) -> Vec<NaiveDate> {
+    if night.kind != "garmin.sleep"
+        || night.payload["start"].is_null()
+        || night.payload["end"].is_null()
+    {
+        return Vec::new();
+    }
+    vec![night.date - Days::new(1), night.date]
+}
+
+fn instant_ms(value: &Value) -> Option<i64> {
+    DateTime::parse_from_rfc3339(value.as_str()?)
+        .ok()
+        .map(|at| at.timestamp_millis())
+}
+
+/// Les échantillons d'une série `dailyHeartRate` : `[instant en ms, bpm]`, sans les vides (`null`,
+/// zéro). Une série sans `heartRateValues` n'en a aucun ; une réponse qui n'est pas un objet est illisible.
+pub fn heart_rate_samples(series: &Value) -> Option<Vec<(i64, Value)>> {
+    let object = series.as_object()?;
+    let Some(values) = object.get("heartRateValues").and_then(Value::as_array) else {
+        return Some(Vec::new());
+    };
+    Some(
+        values
+            .iter()
+            .filter_map(|sample| {
+                let pair = sample.as_array()?;
+                let at = pair.first()?.as_i64()?;
+                let bpm = number(pair.get(1));
+                bpm.as_f64().is_some_and(|b| b > 0.0).then_some((at, bpm))
+            })
+            .collect(),
+    )
+}
+
+/// Ajoute à une nuit `heart_rate` : `[[secondes depuis le début, bpm], …]`, les échantillons des séries
+/// compris entre son début et sa fin, bornes comprises, triés, un par instant. Rien sans échantillon :
+/// la charge utile reste celle d'une nuit sans fréquence cardiaque.
+pub fn with_heart_rate(mut night: Observation, series: &[&[(i64, Value)]]) -> Observation {
+    let (Some(start), Some(end)) = (
+        instant_ms(&night.payload["start"]),
+        instant_ms(&night.payload["end"]),
+    ) else {
+        return night;
+    };
+    let mut samples = BTreeMap::new();
+    for (at, bpm) in series.iter().flat_map(|s| s.iter()) {
+        if (start..=end).contains(at) {
+            samples
+                .entry((at - start + 500).div_euclid(1000))
+                .or_insert_with(|| bpm.clone());
+        }
+    }
+    if !samples.is_empty() {
+        night.payload["heart_rate"] = samples
+            .into_iter()
+            .map(|(seconds, bpm)| json!([seconds, bpm]))
+            .collect();
+    }
+    night
 }
 
 fn garmin_time(raw: &Value, field: &str) -> Option<NaiveDateTime> {
@@ -760,6 +843,7 @@ fn call_name(path: &str) -> &'static str {
     match path {
         SUMMARIES_PATH => "summaries",
         SLEEP_PATH => "sleep",
+        HEART_RATE_PATH => "heart_rate",
         ACTIVITIES_PATH => "activities",
         _ => "other",
     }
@@ -813,6 +897,11 @@ struct Subject {
 struct State {
     /// L'historique a été collecté une fois : la suite ne relit que la fenêtre.
     backfilled: bool,
+    /// Le sommeil de tout l'historique a été relu une fois avec sa fréquence cardiaque. Absent de
+    /// l'état d'une version d'avant : le passage suivant relit les nuits de l'historique, et annule
+    /// celles d'avant la fréquence cardiaque, que l'état a oubliées, par leur ancienne clé.
+    #[serde(default)]
+    heart_rate_backfilled: bool,
     subjects: BTreeMap<String, Subject>,
 }
 
@@ -913,10 +1002,40 @@ impl Collector {
         tokio::time::sleep(self.config.pause).await;
     }
 
-    /// Tout ce que Garmin sait de `from` à `to`, réduit aux listes blanches, une version par sujet.
+    /// La série de fréquence cardiaque de chaque jour demandé, un appel par jour, une fois chacun : la
+    /// série d'un jour sert à deux nuits. Un 404 est un jour sans série : ses nuits partent sans ses
+    /// échantillons. Toute autre erreur fait échouer le passage, comme les autres appels.
+    async fn heart_rates(
+        &mut self,
+        dates: BTreeSet<NaiveDate>,
+        report: &mut TickReport,
+    ) -> Result<BTreeMap<NaiveDate, Vec<(i64, Value)>>, ServiceError> {
+        let mut series = BTreeMap::new();
+        for date in dates {
+            let query = [("date", date.to_string())];
+            let samples = match self
+                .garmin
+                .get(HEART_RATE_PATH, &query, &mut report.calls)
+                .await
+            {
+                Ok(body) => heart_rate_samples(&body)
+                    .ok_or(ServiceError::Unavailable { reason: "shape" })?,
+                Err(ServiceError::Failed { status: 404, .. }) => Vec::new(),
+                Err(err) => return Err(err),
+            };
+            series.insert(date, samples);
+            self.pause().await;
+        }
+        Ok(series)
+    }
+
+    /// Tout ce que Garmin sait de `from` à `to`, réduit aux listes blanches, une version par sujet. Le
+    /// sommeil remonte à `sleep_from`, plus tôt une fois pour relire l'historique avec la fréquence
+    /// cardiaque.
     async fn fetch(
         &mut self,
         from: NaiveDate,
+        sleep_from: NaiveDate,
         to: NaiveDate,
         report: &mut TickReport,
     ) -> Result<BTreeMap<String, Observation>, ServiceError> {
@@ -938,13 +1057,17 @@ impl Collector {
             }
             self.pause().await;
         }
-        for (start, end) in chunks(from, to, SLEEP_CHUNK_DAYS) {
+        let mut nights = Vec::new();
+        for (start, end) in chunks(sleep_from, to, SLEEP_CHUNK_DAYS) {
             let body = self
                 .garmin
                 .get(SLEEP_PATH, &range(start, end), &mut report.calls)
                 .await?;
             for raw in list(body)? {
-                keep(sleep(&raw), report);
+                match sleep(&raw) {
+                    Some(night) => nights.push(night),
+                    None => report.skipped += 1,
+                }
             }
             self.pause().await;
         }
@@ -968,11 +1091,23 @@ impl Collector {
             offset += length;
             self.pause().await;
         }
+        let dates = nights.iter().flat_map(heart_rate_dates).collect();
+        let series = self.heart_rates(dates, report).await?;
+        for night in nights {
+            let days: Vec<&[(i64, Value)]> = heart_rate_dates(&night)
+                .iter()
+                .filter_map(|date| series.get(date).map(Vec::as_slice))
+                .collect();
+            let night = with_heart_rate(night, &days);
+            found.insert(night.subject.clone(), night);
+        }
         Ok(found)
     }
 
-    /// Les versions nouvelles : un sujet déjà reçu avec le même contenu ne repart pas.
-    fn units(&self, observations: BTreeMap<String, Observation>) -> Vec<Unit> {
+    /// Les versions nouvelles : un sujet déjà reçu avec le même contenu ne repart pas. Avec `legacy`,
+    /// une nuit que l'état ne connaît pas annule sa version d'avant la fréquence cardiaque, retrouvée
+    /// par sa clé : annuler une clé absente du journal est sans effet.
+    fn units(&self, observations: BTreeMap<String, Observation>, legacy: bool) -> Vec<Unit> {
         observations
             .into_values()
             .filter_map(|o| {
@@ -988,12 +1123,17 @@ impl Collector {
                 if known.is_some_and(|s| s.key == key) {
                     return None;
                 }
+                let previous = match known {
+                    Some(s) => Some(s.key.clone()).filter(|k| k != NO_TRACK),
+                    None if legacy => o.key_without_heart_rate().filter(|k| *k != key),
+                    None => None,
+                };
                 Some(Unit {
                     record: o.record(&key),
                     subject: o.subject,
                     date: o.date,
                     key,
-                    previous: known.map(|s| s.key.clone()).filter(|k| k != NO_TRACK),
+                    previous,
                 })
             })
             .collect()
@@ -1072,7 +1212,7 @@ impl Collector {
                 Some(track) => {
                     let mut found = BTreeMap::new();
                     found.insert(subject, track);
-                    let units = self.units(found);
+                    let units = self.units(found, false);
                     self.send(units, now, report).await?;
                 }
                 None => {
@@ -1105,17 +1245,25 @@ impl Collector {
             BACKFILL_DAYS - 1
         };
         let from = today - Days::new(days);
-        let observations = self.fetch(from, today, &mut report).await?;
+        // Une fois, après la mise à jour qui a ajouté la fréquence cardiaque : tout le sommeil.
+        let legacy = !self.state.heart_rate_backfilled;
+        let sleep_from = if legacy {
+            today - Days::new(BACKFILL_DAYS - 1)
+        } else {
+            from
+        };
+        let observations = self.fetch(from, sleep_from, today, &mut report).await?;
         let workouts: Vec<Observation> = observations
             .values()
             .filter(|o| has_gps(o))
             .cloned()
             .collect();
-        let units = self.units(observations);
+        let units = self.units(observations, legacy);
         self.send(units, now, &mut report).await?;
         self.ingest.heartbeat().await?;
         self.tracks(&workouts, now, &mut report).await?;
         self.state.backfilled = true;
+        self.state.heart_rate_backfilled = true;
         let horizon = today - Days::new(KEEP_SUBJECT_DAYS);
         self.state
             .subjects
@@ -1229,7 +1377,9 @@ mod tests {
                 "steps"
             ]
         );
-        let night = sleep(&raw_sleep()).unwrap();
+        let series = raw_heart_rate(1_793_659_200_000, 1_793_686_000_000, |_| json!(52));
+        let samples = heart_rate_samples(&series).unwrap();
+        let night = with_heart_rate(sleep(&raw_sleep()).unwrap(), &[&samples]);
         assert_eq!(
             keys(&night.payload),
             [
@@ -1237,11 +1387,20 @@ mod tests {
                 "calendar_date",
                 "deep_seconds",
                 "end",
+                "heart_rate",
                 "light_seconds",
                 "rem_seconds",
                 "sleep_seconds",
                 "start"
             ]
+        );
+        // Les échantillons seuls : ni le profil, ni les autres chiffres de la série.
+        assert!(
+            night.payload["heart_rate"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|s| { s.as_array().unwrap().len() == 2 && s[1] == 52 })
         );
         let workout = activity(&raw_activity()).unwrap();
         assert_eq!(
@@ -1270,6 +1429,90 @@ mod tests {
                 assert!(!text.contains(secret), "{secret} dans {text}");
             }
         }
+    }
+
+    /// Une série `dailyHeartRate` fictive d'après la structure relevée sur le vrai compte : un
+    /// échantillon toutes les deux minutes de `from` (ms) à `to`, des vides, et ce qui n'entre jamais.
+    fn raw_heart_rate(from: i64, to: i64, bpm: impl Fn(i64) -> Value) -> Value {
+        let values: Vec<Value> = (from..to)
+            .step_by(120_000)
+            .map(|at| json!([at, bpm(at)]))
+            .collect();
+        json!({
+            "userProfilePK": 123_456, "calendarDate": "2026-11-03",
+            "startTimestampGMT": "2026-11-02T23:00:00.0", "endTimestampGMT": "2026-11-03T22:58:00.0",
+            "maxHeartRate": 140, "minHeartRate": 44, "restingHeartRate": 50,
+            "lastSevenDaysAvgRestingHeartRate": 51,
+            "heartRateValueDescriptors": [{"key": "timestamp", "index": 0}, {"key": "heartrate", "index": 1}],
+            "heartRateValues": values,
+        })
+    }
+
+    #[test]
+    fn a_night_takes_the_heart_rate_of_its_two_days_within_its_bounds() {
+        let night = sleep(&raw_sleep()).unwrap();
+        assert_eq!(heart_rate_dates(&night), [d("2026-11-02"), d("2026-11-03")]);
+        // Début 22:41 UTC le 2, fin 06:05 UTC le 3 ; la série du 3 commence à 23:00 UTC le 2.
+        let (start, end) = (1_793_659_260_000_i64, 1_793_685_900_000_i64);
+        let midnight = 1_793_660_400_000_i64;
+        let before = heart_rate_samples(&raw_heart_rate(midnight - 86_400_000, midnight, |at| {
+            if at < start - 60_000 {
+                json!(90)
+            } else {
+                json!(58.0)
+            }
+        }))
+        .unwrap();
+        let after =
+            heart_rate_samples(&raw_heart_rate(
+                midnight,
+                midnight + 86_400_000,
+                |at| match at {
+                    at if at == midnight + 240_000 => Value::Null,
+                    at if at == midnight + 3_600_000 => json!(47),
+                    at if at > end => json!(120),
+                    _ => json!(53),
+                },
+            ))
+            .unwrap();
+        let night = with_heart_rate(night, &[&before, &after]);
+        let samples = night.payload["heart_rate"].as_array().unwrap();
+        // De 22:42 (le premier échantillon après 22:41) à 06:04 compris, moins le vide.
+        assert_eq!(samples.first().unwrap(), &json!([60, 58]));
+        assert_eq!(samples.last().unwrap(), &json!([26_580, 53]));
+        assert_eq!(samples.len(), (26_580 - 60) / 120 + 1 - 1);
+        assert!(
+            samples
+                .iter()
+                .all(|s| s[1] != 90 && s[1] != 120 && !s[1].is_null())
+        );
+        assert!(samples.contains(&json!([1_140 + 3_600, 47])));
+        assert!(
+            samples
+                .windows(2)
+                .all(|w| w[0][0].as_i64() < w[1][0].as_i64())
+        );
+        // La clé d'avant la fréquence cardiaque : celle de la même nuit sans échantillons.
+        let bare = sleep(&raw_sleep()).unwrap();
+        assert_eq!(night.key_without_heart_rate(), Some(bare.key()));
+        assert_ne!(night.key(), bare.key());
+        assert_eq!(bare.key_without_heart_rate(), None);
+    }
+
+    #[test]
+    fn a_night_without_samples_keeps_the_payload_of_before() {
+        let night = sleep(&raw_sleep()).unwrap();
+        let empty = heart_rate_samples(&json!({"heartRateValues": null})).unwrap();
+        assert!(empty.is_empty());
+        assert_eq!(with_heart_rate(night.clone(), &[&empty]), night);
+        assert_eq!(heart_rate_samples(&json!([])), None, "illisible");
+        let mut unbounded = raw_sleep();
+        unbounded["sleepEndTimestampGMT"] = Value::Null;
+        let unbounded = sleep(&unbounded).unwrap();
+        assert!(heart_rate_dates(&unbounded).is_empty());
+        let series =
+            heart_rate_samples(&raw_heart_rate(0, i64::from(i32::MAX), |_| json!(50))).unwrap();
+        assert_eq!(with_heart_rate(unbounded.clone(), &[&series]), unbounded);
     }
 
     #[test]

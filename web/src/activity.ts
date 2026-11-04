@@ -89,6 +89,15 @@ export function sleepSpan(details: SleepDetails): string | null {
 
 export const sleepText = (minutes: number) => hoursText(minutes)
 
+/** « FC la plus basse 48 bpm · moyenne 55 bpm » ; rien sans fréquence cardiaque. */
+export function sleepHeartRate(details: SleepDetails): string | null {
+  const parts = [
+    details.lowest_hr != null && `FC la plus basse ${integerText(details.lowest_hr)} bpm`,
+    details.avg_hr != null && `${details.lowest_hr != null ? 'moyenne' : 'FC moyenne'} ${integerText(details.avg_hr)} bpm`,
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
 /** Aucune donnée Garmin ce jour-là : ni pas, ni sommeil, ni calories, ni séance. */
 export function isEmpty(day: DayActivity): boolean {
   return day.steps === null && day.calories === null && day.sleep === null && day.workouts.length === 0

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DayActivity, WorkoutDetails } from './api'
-import { clockText, isEmpty, kmText, paceText, sleepSpan, sleepStages, workoutFigures, workoutType } from './activity'
+import { clockText, isEmpty, kmText, paceText, sleepHeartRate, sleepSpan, sleepStages, workoutFigures, workoutType } from './activity'
 
 const nbsp = (text: string) => text.replace(/[\u202f\u00a0]/g, ' ')
 
@@ -62,6 +62,9 @@ describe('la carte Activité', () => {
     ])
     expect(sleepSpan(details)).toBe('22:41 – 06:05')
     expect(sleepSpan({ ...details, end: null })).toBeNull()
+    expect(sleepHeartRate(details)).toBeNull()
+    expect(sleepHeartRate({ ...details, lowest_hr: 48, avg_hr: 55 })).toBe('FC la plus basse 48 bpm · moyenne 55 bpm')
+    expect(sleepHeartRate({ ...details, lowest_hr: null, avg_hr: 55 })).toBe('FC moyenne 55 bpm')
   })
 
   it('ne confond pas une journée sans données avec une journée sans séance', () => {

@@ -53,6 +53,7 @@ const GARMIN = [
   garmin('sleep:2026-10-15:a', 'garmin.sleep', '2026-10-15T12:00:00+02:00', {
     calendar_date: '2026-10-15', start: '2026-10-14T21:41:00Z', end: '2026-10-15T04:54:00Z', sleep_seconds: 25_980,
     deep_seconds: 4_920, light_seconds: 14_400, rem_seconds: 6_660, awake_seconds: 660,
+    heart_rate: [[0, 58], [120, 47], [240, 52], [360, 54]],
   }),
   garmin('activity:7:a', 'garmin.activity', '2026-10-15T07:30:00+02:00', {
     activity_id: 7, type: 'running', start: '2026-10-15T05:30:00Z', duration_s: 1802, moving_s: 1780, distance_m: 5012.3,
@@ -301,6 +302,9 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
     const sleep = metrics.find((m) => m.metric === 'sleep');
     assert.equal(sleep?.value, 433);
     assert.equal(sleep?.details?.rem_seconds, 6_660);
+    assert.equal(sleep?.details?.lowest_hr, 47);
+    assert.equal(sleep?.details?.avg_hr, 53);
+    assert.equal(sleep?.details?.heart_rate, undefined, 'la série reste au journal');
     assert.equal(metrics.find((m) => m.metric === 'calories.burned')?.details?.active, 512);
     const workout = metrics.find((m) => m.metric === 'workout');
     assert.equal(workout?.value, 1);

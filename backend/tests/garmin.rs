@@ -72,6 +72,41 @@ fn night(date: NaiveDate, seconds: i64) -> Value {
     })
 }
 
+/// La série `dailyHeartRate` d'un jour : un échantillon toutes les deux minutes, de 23:00 UTC la veille
+/// à 22:58 UTC (l'hiver de Paris), `bpm` à chaque instant (ms), avec ce que la liste blanche écarte.
+fn heart_rate(date: NaiveDate, bpm: impl Fn(i64) -> Value) -> Value {
+    let from = (date - Days::new(1))
+        .and_hms_opt(23, 0, 0)
+        .unwrap()
+        .and_utc()
+        .timestamp_millis();
+    let values: Vec<Value> = (0..720)
+        .map(|i| from + i * 120_000)
+        .map(|at| json!([at, bpm(at)]))
+        .collect();
+    json!({
+        "calendarDate": date.to_string(), "userProfilePK": 424_242,
+        "maxHeartRate": 150, "minHeartRate": 41, "restingHeartRate": 49,
+        "lastSevenDaysAvgRestingHeartRate": 50,
+        "heartRateValueDescriptors": [{"key": "timestamp", "index": 0}, {"key": "heartrate", "index": 1}],
+        "heartRateValues": values,
+    })
+}
+
+/// Un cœur fictif : 48 bpm de 01:00 à 03:00 UTC, 56 le reste de la nuit, 80 le jour, un vide à 02:00.
+fn heart(at: i64) -> Value {
+    let hour = (at / 3_600_000).rem_euclid(24);
+    if at % 3_600_000 == 0 && hour == 2 {
+        Value::Null
+    } else if (1..3).contains(&hour) {
+        json!(48)
+    } else if !(6..21).contains(&hour) {
+        json!(56)
+    } else {
+        json!(80)
+    }
+}
+
 fn workout(id: u64, date: NaiveDate, gps: bool) -> Value {
     let mut raw = json!({
         "activityId": id, "activityName": ACTIVITY_NAME,
@@ -156,6 +191,10 @@ struct Data {
     summaries: Vec<Value>,
     sleeps: Vec<Value>,
     activities: Vec<Value>,
+    /// Les séries de fréquence cardiaque par jour ; un jour absent n'a pas d'échantillon.
+    heart_rates: HashMap<String, Value>,
+    /// Un statut d'erreur pour la série d'un jour.
+    heart_rate_status: HashMap<String, u16>,
     files: HashMap<u64, Vec<u8>>,
     /// Statut de l'échange de la clé : 200, ou un refus.
     mint_status: u16,
@@ -252,6 +291,14 @@ async fn read(
                 .take(limit)
                 .cloned()
                 .collect(),
+        )
+    } else if path == "wellness-service/wellness/dailyHeartRate" {
+        let date = query["date"].clone();
+        if let Some(status) = data.heart_rate_status.get(&date) {
+            return StatusCode::from_u16(*status).unwrap().into_response();
+        }
+        data.heart_rates.get(&date).cloned().unwrap_or_else(
+            || json!({"calendarDate": date, "heartRateValues": null, "userProfilePK": 424_242}),
         )
     } else if let Some(id) = path.strip_prefix("download-service/files/activity/") {
         let id: u64 = id.parse().unwrap();
@@ -681,6 +728,282 @@ async fn a_revision_sends_the_new_version_and_cancels_the_previous() {
         .unwrap();
     assert!(rebuilt.switched);
     assert!(rebuilt.comparison.differences.is_empty());
+}
+
+/// Les jours demandés à `dailyHeartRate`, dans l'ordre.
+fn heart_rate_calls(fake: &Fake) -> Vec<String> {
+    fake.calls("wellness-service")
+        .iter()
+        .map(|q| q["date"].clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn the_heart_rate_of_a_night_comes_from_its_two_days_each_read_once() {
+    let bench = Bench::new().await;
+    let fake = Fake::start().await;
+    fake.with(|d| {
+        d.sleeps = vec![
+            night(day(3), 25_980),
+            night(day(2), 25_980),
+            night(day(1), 25_980),
+        ];
+        for ago in 1..=4 {
+            d.heart_rates
+                .insert(day(ago).to_string(), heart_rate(day(ago), heart));
+        }
+    });
+    let mut collector = bench.collector(&fake);
+    let report = collector.tick().await.unwrap();
+    assert_eq!(report.accepted, 3);
+    // Une installation neuve annule aussi la clé qu'aurait eue chaque nuit sans fréquence cardiaque :
+    // absente du journal, cette annulation est sans effet.
+    assert_eq!(report.cancelled, 3);
+    let expected: Vec<String> = (1..=4).rev().map(|ago| day(ago).to_string()).collect();
+    assert_eq!(
+        heart_rate_calls(&fake),
+        expected,
+        "un appel par jour, pas par nuit"
+    );
+
+    let samples: Value = sqlx::query_scalar(
+        "SELECT payload->'heart_rate' FROM core.records
+         WHERE kind = 'garmin.sleep' AND payload->>'calendar_date' = $1",
+    )
+    .bind(day(2).to_string())
+    .fetch_one(&bench.db.app)
+    .await
+    .unwrap();
+    let samples = samples.as_array().unwrap();
+    assert_eq!(
+        samples.len(),
+        222,
+        "de 21:36 à 05:00, deux séries, sans le vide de 02:00"
+    );
+    assert_eq!(samples[0], json!([0, 56]));
+    assert_eq!(samples[221], json!([26_640, 56]));
+    assert!(
+        samples.iter().all(|s| s[1] == 48 || s[1] == 56),
+        "rien du jour"
+    );
+
+    bench.settled().await;
+    let activity = bench.get(&format!("/v1/days/{}/activity", day(2))).await;
+    let details = &activity["sleep"]["details"];
+    assert_eq!(details["lowest_hr"], 48);
+    assert_eq!(details["avg_hr"], 54, "(59 × 48 + 163 × 56) / 222");
+    assert_eq!(details.get("heart_rate"), None, "la série reste au journal");
+    let date = day(2).to_string();
+    let (status, body) = bench
+        .as_mcp(
+            "/v1/occurrences",
+            &[("metric", "sleep"), ("from", &date), ("to", &date)],
+        )
+        .await;
+    assert_eq!(status, 200);
+    let sleep: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(sleep["total"], 1);
+    assert_eq!(sleep["occurrences"][0]["details"]["lowest_hr"], 48);
+    assert_eq!(sleep["occurrences"][0]["details"]["avg_hr"], 54);
+    assert!(!body.contains("heart_rate"), "{body}");
+
+    // Le passage suivant relit la semaine : la journée avance, pas les nuits.
+    fake.clear_calls();
+    fake.with(|d| {
+        let date = day(1).to_string();
+        d.heart_rates.insert(
+            date,
+            heart_rate(day(1), |at| {
+                if heart(at) == 80 {
+                    json!(95)
+                } else {
+                    heart(at)
+                }
+            }),
+        );
+    });
+    let report = collector.tick().await.unwrap();
+    assert_eq!((report.accepted, report.cancelled), (0, 0));
+    assert_eq!(heart_rate_calls(&fake), expected);
+
+    // Une synchro tardive de la montre complète la nuit : une révision, comme les autres.
+    fake.clear_calls();
+    fake.with(|d| {
+        let date = day(1).to_string();
+        d.heart_rates.insert(
+            date,
+            heart_rate(day(1), |at| {
+                if heart(at) == 48 {
+                    json!(44)
+                } else {
+                    heart(at)
+                }
+            }),
+        );
+    });
+    let report = collector.tick().await.unwrap();
+    assert_eq!(
+        (report.accepted, report.cancelled),
+        (1, 1),
+        "la seule nuit qui finit ce jour-là"
+    );
+    assert_eq!(heart_rate_calls(&fake), expected);
+    bench.settled().await;
+    let activity = bench.get(&format!("/v1/days/{}/activity", day(1))).await;
+    assert_eq!(activity["sleep"]["details"]["lowest_hr"], 44);
+    let rebuilt = replay::rebuild(&bench.db.admin, INTERPRETERS, false)
+        .await
+        .unwrap();
+    assert!(rebuilt.switched);
+    assert!(rebuilt.comparison.differences.is_empty());
+}
+
+#[tokio::test]
+async fn a_day_without_series_leaves_its_samples_out_and_another_failure_fails_the_pass() {
+    let bench = Bench::new().await;
+    let fake = Fake::start().await;
+    fake.with(|d| {
+        d.summaries = vec![summary(day(2), Some(8412))];
+        d.sleeps = vec![night(day(2), 25_980)];
+        d.heart_rates
+            .insert(day(2).to_string(), heart_rate(day(2), heart));
+        d.heart_rate_status.insert(day(3).to_string(), 500);
+    });
+    let mut collector = bench.collector(&fake);
+    assert_eq!(
+        collector.tick().await.unwrap_err(),
+        TickError::Service(ServiceError::Failed {
+            status: 500,
+            call: "heart_rate"
+        })
+    );
+    assert_eq!(
+        bench.journal("garmin.daily_summary").await,
+        0,
+        "rien d'envoyé"
+    );
+    assert_eq!(bench.last_seen().await, None, "aucun signal de vie");
+
+    // Un 404 : Garmin n'a pas de série ce jour-là ; la nuit part avec les échantillons de l'autre.
+    fake.with(|d| d.heart_rate_status.insert(day(3).to_string(), 404));
+    let report = collector.tick().await.unwrap();
+    assert_eq!(report.accepted, 2);
+    bench.settled().await;
+    let activity = bench.get(&format!("/v1/days/{}/activity", day(2))).await;
+    assert_eq!(activity["sleep"]["details"]["lowest_hr"], 48);
+    let samples: Value = sqlx::query_scalar(
+        "SELECT payload->'heart_rate' FROM core.records WHERE kind = 'garmin.sleep'",
+    )
+    .fetch_one(&bench.db.app)
+    .await
+    .unwrap();
+    assert_eq!(
+        samples[0],
+        json!([5_040, 56]),
+        "de 23:00, début de la série du jour"
+    );
+}
+
+/// La mise à jour de la fréquence cardiaque : un état de la version d'avant et des nuits au journal
+/// sans fréquence cardiaque, dont la plupart sont sorties de l'état. Un seul passage relit tout le
+/// sommeil, et chaque nuit garde une seule version vivante.
+#[tokio::test]
+async fn the_nights_of_before_are_read_again_once_with_their_heart_rate() {
+    let bench = Bench::new().await;
+    let fake = Fake::start().await;
+    let ages = [300, 120, 40, 20, 2];
+    fake.with(|d| {
+        d.summaries = vec![summary(day(2), Some(8412))];
+        d.sleeps = ages.iter().map(|ago| night(day(*ago), 25_980)).collect();
+    });
+    // La version d'avant : des nuits sans fréquence cardiaque, et un état qui ne connaît pas l'indicateur.
+    let report = bench.collector(&fake).tick().await.unwrap();
+    assert_eq!((report.accepted, report.cancelled), (6, 0));
+    let state_file = bench.state_dir.join("garmin-state.json");
+    let mut state: Value =
+        serde_json::from_str(&std::fs::read_to_string(&state_file).unwrap()).unwrap();
+    assert_eq!(state["heart_rate_backfilled"], true);
+    state
+        .as_object_mut()
+        .unwrap()
+        .remove("heart_rate_backfilled");
+    std::fs::write(&state_file, state.to_string()).unwrap();
+    let old_keys: Vec<String> =
+        sqlx::query_scalar("SELECT key FROM core.records WHERE kind = 'garmin.sleep' ORDER BY key")
+            .fetch_all(&bench.db.app)
+            .await
+            .unwrap();
+
+    fake.clear_calls();
+    fake.with(|d| {
+        for ago in ages {
+            for date in [day(ago + 1), day(ago)] {
+                d.heart_rates
+                    .insert(date.to_string(), heart_rate(date, heart));
+            }
+        }
+    });
+    let mut collector = bench.collector(&fake);
+    let report = collector.tick().await.unwrap();
+    assert_eq!(
+        (report.accepted, report.cancelled),
+        (5, 5),
+        "chaque nuit, et l'annulation de sa version d'avant"
+    );
+    assert_eq!(
+        fake.calls("sleep-service").len(),
+        13,
+        "tout le sommeil, par tranches de 31 jours"
+    );
+    assert_eq!(
+        fake.calls("usersummary-service")[0]["startDate"],
+        day(7).to_string(),
+        "le reste, la semaine seulement"
+    );
+    assert_eq!(heart_rate_calls(&fake).len(), 10);
+    let cancelled: Vec<String> = sqlx::query_scalar(
+        "SELECT payload->>'key' FROM core.records WHERE kind = 'record.cancel' ORDER BY 1",
+    )
+    .fetch_all(&bench.db.app)
+    .await
+    .unwrap();
+    assert_eq!(cancelled, old_keys, "les nuits que l'état a oubliées aussi");
+
+    bench.settled().await;
+    let (from, to) = (day(400).to_string(), today().to_string());
+    let list = bench
+        .mcp_json(
+            "/v1/occurrences",
+            &[
+                ("metric", "sleep"),
+                ("from", &from),
+                ("to", &to),
+                ("limit", "100"),
+            ],
+        )
+        .await;
+    let nights = list["occurrences"].as_array().unwrap();
+    assert_eq!(
+        nights.len(),
+        ages.len(),
+        "une seule version vivante par nuit"
+    );
+    for night in nights {
+        assert_eq!(night["details"]["lowest_hr"], 48);
+        assert_eq!(night["details"]["avg_hr"], 54);
+    }
+    let rebuilt = replay::rebuild(&bench.db.admin, INTERPRETERS, false)
+        .await
+        .unwrap();
+    assert!(rebuilt.switched);
+    assert!(rebuilt.comparison.differences.is_empty());
+
+    // Une fois seulement : la suite relit la semaine.
+    fake.clear_calls();
+    let report = collector.tick().await.unwrap();
+    assert_eq!((report.accepted, report.cancelled), (0, 0));
+    assert_eq!(fake.calls("sleep-service").len(), 1);
+    assert_eq!(heart_rate_calls(&fake).len(), 2);
 }
 
 #[tokio::test]

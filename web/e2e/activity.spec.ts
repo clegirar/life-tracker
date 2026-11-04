@@ -53,6 +53,8 @@ async function seed(request: APIRequestContext, cookie: string) {
       garmin(`sleep:${DAY}:e2e`, 'garmin.sleep', at, {
         calendar_date: DAY, start: `${addDays(DAY, -1)}T21:41:00Z`, end: `${DAY}T05:05:00Z`, sleep_seconds: 25_980,
         deep_seconds: 4_920, light_seconds: 14_400, rem_seconds: 6_000, awake_seconds: 660,
+        // Une nuit de 7 h 24, un échantillon toutes les deux minutes : 48 à 55 bpm, fictifs.
+        heart_rate: Array.from({ length: 223 }, (_, i) => [i * 120, 48 + Math.round(7 * Math.abs(Math.sin(i / 20)))]),
       }),
       garmin('activity:9001:e2e', 'garmin.activity', runStart, {
         activity_id: 9001, type: 'running', start: runStart, duration_s: 1802, moving_s: 1780, distance_m: 5012.3,
@@ -96,6 +98,7 @@ test('la carte Activité : pas, calories, sommeil et séances, avec le parcours'
   await expect(card).toContainText(/512 actives · 1\s838 au repos/)
   await expect(card.getByTestId('sleep')).toHaveText('7 h 13')
   await expect(card).toContainText('22:41 – 06:05')
+  await expect(card.getByTestId('sleep-heart-rate')).toHaveText('FC la plus basse 48 bpm · moyenne 53 bpm')
   await expect(card).toContainText('Paradoxal')
   const workouts = card.getByTestId('workout')
   await expect(workouts).toHaveCount(2)
