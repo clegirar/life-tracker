@@ -25,6 +25,7 @@ const EXPECTED_TOOLS = [
   'inventory',
   'last_time',
   'occurrences',
+  'route',
   'search',
   'top',
 ];
@@ -277,7 +278,7 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
     assert.equal((result.days as { first: string }[])[0]?.first, '08:10');
   });
 
-  test('Garmin : mesures du jour, séances par lieu, jamais de coordonnées', async () => {
+  test('Garmin : détails du jour, séances par lieu, parcours coupé à la zone de confidentialité', async () => {
     const outputs: string[] = [];
     const tool = async (name: string, args: Record<string, unknown>) => {
       const result = (await client.callTool({ name, arguments: args })) as ToolResult;
@@ -285,27 +286,52 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
       return parse(result);
     };
     const day = await tool('day_summary', { date: '2026-10-15' });
-    type Entry = { metric: string; value: number | null; times?: string[]; occurrences?: { time: string; items: Record<string, string>; value: number }[] };
+    type Occurrence = { id: string; time: string; items: Record<string, string>; value: number; details: Record<string, unknown> };
+    type Entry = { metric: string; value: number | null; times?: string[]; details?: Record<string, unknown>; occurrences?: Occurrence[] };
     const metrics = day.metrics as Entry[];
+    assert.deepEqual(
+      metrics.map((m) => m.metric),
+      ['coffee', 'music.listen', 'steps', 'workout', 'sleep', 'calories.burned'],
+      'l’ordre d’affichage du registre',
+    );
     const steps = metrics.find((m) => m.metric === 'steps');
     assert.equal(steps?.value, 8412);
     assert.equal(steps?.times, undefined, 'une mesure n’a pas d’heure à lister');
-    assert.equal(metrics.find((m) => m.metric === 'sleep')?.value, 433);
+    assert.equal(steps?.details?.distance_m, 6123);
+    const sleep = metrics.find((m) => m.metric === 'sleep');
+    assert.equal(sleep?.value, 433);
+    assert.equal(sleep?.details?.rem_seconds, 6_660);
+    assert.equal(metrics.find((m) => m.metric === 'calories.burned')?.details?.active, 512);
     const workout = metrics.find((m) => m.metric === 'workout');
     assert.equal(workout?.value, 1);
-    assert.deepEqual(workout?.occurrences, [{ time: '07:30', items: { activity_type: 'running', place: 'Ville Fictive' }, value: 5.012 }]);
+    const run = workout?.occurrences?.[0];
+    assert.equal(run?.time, '07:30');
+    assert.deepEqual(run?.items, { activity_type: 'running', place: 'Ville Fictive' });
+    assert.equal(run?.value, 5.012);
+    assert.equal(run?.details.avg_hr, 151);
+    assert.equal(run?.details.moving_s, 1780);
+    assert.equal(run?.details.start_lat, null, 'le départ est dans la zone');
+    assert.equal(run?.details.start_hidden, true);
+    assert.equal(run?.details.end_lat, 43.222345, 'l’arrivée est dehors');
     assert.equal(metrics.find((m) => m.metric === 'workout.track'), undefined, 'une référence ne s’affiche pas');
+
+    // Quel parcours ? Coupé à la zone : le premier point n'y est plus.
+    const route = await tool('route', { id: run!.id });
+    assert.equal(route.trimmed, true);
+    assert.deepEqual(route.segments, [[[43.21835, 5.43811], [43.22235, 5.44211]]]);
 
     // Dans combien de villes ai-je couru ?
     const places = await tool('top', { metric: 'workout', level: 'place', from: '2026-10-01', to: '2026-10-31' });
     assert.equal(places.distinct_items, 1);
+    const inventory = await tool('inventory', {});
+    const workoutTools = (inventory.metrics as { metric: string; tools: string[] }[]).find((m) => m.metric === 'workout')?.tools;
+    assert.ok(workoutTools?.includes('route'));
     await tool('occurrences', { metric: 'workout', from: '2026-10-15', to: '2026-10-15' });
     await tool('occurrences', { metric: 'workout.track', from: '2026-10-15', to: '2026-10-15' });
-    await tool('inventory', {});
     await tool('search', { query: 'ville' });
     const all = outputs.join('');
     assert.match(all, /Ville Fictive/);
-    for (const forbidden of ['43.21', '5.43', 'start_lat', '"points"']) {
+    for (const forbidden of ['43.212345', '43.21234', '43.21235', '5.432109', '"points"']) {
       assert.ok(!all.includes(forbidden), `${forbidden} visible par le MCP`);
     }
   });

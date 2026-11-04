@@ -70,7 +70,8 @@ done
 export LT_MCP_TEST_SERVICE_TOKEN LT_MCP_TEST_IOS_TOKEN LT_MCP_TEST_LASTFM_TOKEN LT_MCP_TEST_GARMIN_TOKEN
 
 API_PORT="$(free_port)"
-DATABASE_URL="$(url tracker_app app-test)" LISTEN_ADDR="127.0.0.1:$API_PORT" "$BIN" serve >"$LOG" 2>&1 &
+# Une zone de confidentialité fictive, centrée sur le départ de la séance du jeu de données.
+PRIVACY_ZONES="43.212345,5.432109,600" DATABASE_URL="$(url tracker_app app-test)" LISTEN_ADDR="127.0.0.1:$API_PORT" "$BIN" serve >"$LOG" 2>&1 &
 SERVER_PID=$!
 for _ in $(seq 50); do
   curl -sf "http://127.0.0.1:$API_PORT/health" >/dev/null && up=1 && break
@@ -95,7 +96,7 @@ records="$(docker exec "$C" psql -U postgres -d tracker -Atc 'select count(*) fr
 [ "$records" = 14 ] || { echo "ÉCHEC : $records enregistrements au journal" >&2; exit 1; }
 
 echo "▶ Les logs du backend ne contiennent aucun jeton"
-if grep -qF -e "$LT_MCP_TEST_SERVICE_TOKEN" -e "$LT_MCP_TEST_IOS_TOKEN" -e "$LT_MCP_TEST_LASTFM_TOKEN" -e "$LT_MCP_TEST_GARMIN_TOKEN" -e "Veridis" -e "Ville Fictive" -e "43.21" "$LOG"; then
+if grep -qF -e "$LT_MCP_TEST_SERVICE_TOKEN" -e "$LT_MCP_TEST_IOS_TOKEN" -e "$LT_MCP_TEST_LASTFM_TOKEN" -e "$LT_MCP_TEST_GARMIN_TOKEN" -e "Veridis" -e "Ville Fictive" -e "43.21" -e "5.432" "$LOG"; then
   echo "ÉCHEC : secret ou donnée dans les logs" >&2
   exit 1
 fi
