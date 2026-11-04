@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import type { SourcesHealth, Workout } from './api'
-import { integerText, isEmpty, kmText, sleepSpan, sleepStages, sleepText, workoutFigures, workoutType } from './activity'
+import { integerText, isEmpty, kmText, sleepHeartRate, sleepSpan, sleepStages, sleepText, workoutFigures, workoutType } from './activity'
 import type { useActivity } from './useActivity'
 
 // Leaflet et ses tuiles ne se chargent qu'à l'approche d'une carte : le reste de l'app n'en paie rien.
@@ -80,6 +80,7 @@ export function ActivityCard({ date, today, state, health }: Props) {
   const stages = activity?.sleep ? sleepStages(activity.sleep.details) : []
   const stageTotal = stages.reduce((sum, stage) => sum + stage.minutes, 0)
   const span = activity?.sleep ? sleepSpan(activity.sleep.details) : null
+  const heartRate = activity?.sleep ? sleepHeartRate(activity.sleep.details) : null
 
   return (
     <section className="card card-activity" aria-labelledby="titre-activite" data-testid="activity">
@@ -143,6 +144,11 @@ export function ActivityCard({ date, today, state, health }: Props) {
                 {activity.sleep?.value != null ? sleepText(activity.sleep.value) : '–'}
               </dd>
               {activity.sleep === null ? noData : span && <dd className="stat-note">{span}</dd>}
+              {heartRate && (
+                <dd className="stat-note" data-testid="sleep-heart-rate">
+                  {heartRate}
+                </dd>
+              )}
               {stageTotal > 0 && (
                 <dd className="sleep-stages">
                   <span className="sleep-bar" aria-hidden="true">

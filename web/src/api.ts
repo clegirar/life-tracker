@@ -231,6 +231,9 @@ export interface SleepDetails {
   light_seconds: number | null
   rem_seconds: number | null
   awake_seconds: number | null
+  /** Fréquence cardiaque de la nuit, absente sans échantillons (nuits d'avant, montre muette). */
+  lowest_hr?: number | null
+  avg_hr?: number | null
 }
 
 export interface WorkoutDetails {
