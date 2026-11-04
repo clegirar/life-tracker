@@ -263,7 +263,7 @@ export function buildServer(backend: Backend): McpServer {
     {
       title: 'Occurrences',
       description:
-        'Occurrences of a metric, or of one item of it, over a period, with their Paris local time. Forms: "list" (each occurrence with its id, items, value when the metric has one, e.g. km of a workout or minutes of sleep, and its details: sleep stages in seconds, workout duration, pace, heart rate, calories, place, start/end coordinates outside privacy zones), "daily" (count per day), "first_last" (first and last time of each day, e.g. time of the first coffee). Days absent from the result have no occurrence.',
+        'Occurrences of a metric, or of one item of it, over a period, with their Paris local time. Forms: "list" (each occurrence with its id, items, value when the metric has one, e.g. km of a workout or minutes of sleep, and its details: sleep stages in seconds and lowest and average heart rate during the night (bpm), workout duration, pace, heart rate, calories, place, start/end coordinates outside privacy zones), "daily" (count per day), "first_last" (first and last time of each day, e.g. time of the first coffee). Days absent from the result have no occurrence.',
       inputSchema: z.object({
         metric,
         from: date,
