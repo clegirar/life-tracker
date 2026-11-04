@@ -71,6 +71,10 @@ PostgreSQL 18, version majeure figée (`postgres:18.6`). Deux extensions : `pg_t
 | `lastfm.scrobble` | Connecteur Last.fm | `music.listen` |
 | `lastfm.track_info` | Connecteur Last.fm | `music.track_duration` |
 | `apple.play_history_row` | Import Apple | `music.listen` |
+| `garmin.daily_summary` | Connecteur Garmin | `steps`, `calories.burned` |
+| `garmin.sleep` | Connecteur Garmin | `sleep` |
+| `garmin.activity` | Connecteur Garmin | `workout` |
+| `garmin.activity_track` | Connecteur Garmin | `workout.track` |
 
 | Métrique | Forme | Agrégat du jour | Niveaux | Particularités |
 | --- | --- | --- | --- | --- |
@@ -78,12 +82,19 @@ PostgreSQL 18, version majeure figée (`postgres:18.6`). Deux extensions : `pg_t
 | `music.listen` | événement riche | nombre | artiste, album, titre | Découverte ; durée tirée de `music.track_duration` ; à vérifier après 3 jours sans écoute |
 | `music.known` | déclaration | aucun | artiste, album, titre | Éclaire `music.listen` |
 | `music.track_duration` | référence | aucun | titre | Valeur : durée en secondes |
+| `steps` | mesure | dernière | aucun | Pas du jour ; à vérifier après 3 jours sans donnée |
+| `calories.burned` | mesure | dernière | aucun | Calories du jour (kcal) ; détails : actives, au repos |
+| `sleep` | mesure | dernière | aucun | Minutes de sommeil, au jour du réveil ; à vérifier après 3 jours |
+| `workout` | événement riche | nombre | type, lieu | Valeur : distance en km |
+| `workout.track` | référence | aucun | aucun | Éclaire `workout` : la trace, lue par la carte seulement |
 
 Seule la source `webapp` est créée par la migration. Les sources à token (connecteur Last.fm, raccourci iOS, import Apple) sont créées par l'outil d'administration, pour qu'aucun secret ne soit dans le dépôt.
 
 Les messages sont hors POC depuis le 31 oct. 2026 : leur type et leur métrique arriveront par une migration, avec l'agent Mac. L'annuaire (`people`, `pseudonyms`) est déjà en place et testé pour les accueillir, mais rien ne s'en sert pendant le POC.
 
 **Clés et charges utiles Last.fm.** Écoute : `horodatage:SHA-256(artiste, titre)`, charge utile : le scrobble brut, date en `Z` (décalage inconnu). Fiche : SHA-256 de la clé du titre normalisée, charge utile `{"artist", "track", "info"}` : le titre tel que scrobblé et la réponse brute de `track.getInfo`. Une fiche sans durée (zéro ou absente) ne produit aucun événement. Dans les clés d'éléments, artiste et titre sont séparés par une tabulation, qu'aucun nom normalisé ne peut contenir. Pas de migration à l'étape 5 : les registres prévoyaient déjà ces types et métriques.
+
+**Clés et charges utiles Garmin** (migration `20261104120000_garmin.sql`, après le POC). Clé : le sujet, puis les 16 premiers hexadécimaux du SHA-256 de la charge utile, sérialisée clés triées : `summary:<date>:…`, `sleep:<date>:…`, `activity:<id>:…`, `track:<id>:…` (suivie de `:2`, `:3`… si ce contenu a déjà été annulé). Une révision de Garmin est un nouvel enregistrement, suivi dans le même lot d'un `record.cancel` de la version précédente, clé `cancel:<clé annulée>` : `live_events` n'en garde qu'une, sans rien de propre à Garmin. Charges utiles, en liste blanche : résumé `{calendar_date, steps, distance_m, calories_total, calories_active, calories_resting}`, nuit `{calendar_date, start, end, sleep_seconds, deep_seconds, light_seconds, rem_seconds, awake_seconds}`, séance `{activity_id, type, start, duration_s, moving_s, distance_m, avg_speed_mps, avg_hr, max_hr, calories, start_lat, start_lon, end_lat, end_lon, location_name}`, trace `{activity_id, points}` (`[lat, lon, secondes depuis le début]`, 1 000 points au plus). `occurred_at` : midi heure de Paris pour un résumé et une nuit, le début de la séance pour une séance et sa trace. Les détails reprennent ces champs ; ceux d'une séance et d'une trace portent des coordonnées, que seules les routes de session lisent (`backend/src/activity.rs`). Pas de table ni d'index de plus : `details->'activity_id'` relie une trace à sa séance, sur quelques dizaines de lignes par mois.
 
 **Un marquage « déjà connu ».** Charge utile `{"level", "artist", "album", "track"}` : le niveau et les noms tels qu'affichés, `album` ou `track` seulement au niveau qui les nomme. Il donne un événement `music.known` et ses éléments, à son seul niveau, sous la même clé qu'une écoute : un artiste « A & B » marque A et B, un album ou un titre prend l'artiste principal. Les détails gardent les noms. Pas de migration à l'étape 6 : les registres prévoyaient déjà le type, la métrique et le droit de `webapp`, et l'index des éléments suffit.
 
