@@ -10,7 +10,7 @@ Runbook de l'étape 4, joué sur le NAS (voir « Ce qui reste à vérifier »). 
 | --- | --- | --- | --- |
 | `db` | PostgreSQL 18.6, volume `life-tracker-prod-db-data` | `secrets/db.env` | `data` |
 | `migrate` | Une fois à chaque `up`, puis s'arrête (état « arrêté » normal) | `secrets/migrate.env` (`tracker_owner`) | `data` |
-| `backend` | API et interprètes | `secrets/backend.env` (`tracker_app`) | `data`, `front`, `collect` |
+| `backend` | API et interprètes | `secrets/backend.env` (`tracker_app`, zones de confidentialité du MCP) | `data`, `front`, `collect` |
 | `web` | nginx : app statique et proxy de `/v1` et `/health` | aucun secret | `front`, `edge` |
 | `collector` | Interroge Last.fm et Garmin, écrit par l'API d'ingestion ; un état par connecteur (`state.json`, `garmin-state.json`) dans le volume `life-tracker-prod-collector-state` | `secrets/collector.env` (clés, utilisateur, un token par source) | `collect`, `egress` |
 | `admin` | Profil `admin`, lancé à la main | `secrets/admin.env` (`tracker_admin`) | `data` |
@@ -740,6 +740,27 @@ Relancer ensuite demande un nouveau jeton de service (`mcp-2`) et `sudo docker c
    ```
 
 6. **Remplacer la clé** (chaque année) : en créer une dans Garmin Connect, remplacer la ligne `GARMIN_API_KEY=` de `secrets/collector.env` (en root, éditeur sans sauvegarde, ou `sed -i` avec la clé lue par `read -rs`), puis `sudo docker compose up -d collector`, et révoquer l'ancienne.
+
+**Zone de confidentialité du MCP.** Sans elle, Claude reçoit les détails des séances mais aucune coordonnée ni aucun parcours. Elle se règle dans `secrets/backend.env`, et je la saisis moi-même, jamais dans le dépôt ni dans une conversation :
+
+1. Choisir un centre **décalé de 100 à 300 m du domicile** (un carrefour voisin, par exemple) et un **rayon de 500 à 800 m**, qui couvre le domicile avec de la marge. Pourquoi : la zone coupe chaque parcours là où il y entre ; centrée sur la maison, les points de coupure de dizaines de séances dessineraient un cercle dont le centre serait la maison. Décalée et assez large, elle cache le domicile sans le désigner. Une zone par lieu à protéger (travail, famille), séparées par `;`.
+2. Sur le NAS, en root dans le dossier en `700` :
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   read -r ZONES   # lat,lon,rayon_m ; plusieurs séparées par « ; » ; en degrés décimaux, rayon en mètres
+   (umask 077; printf 'PRIVACY_ZONES=%s\n' "$ZONES" >> secrets/backend.env)
+   unset ZONES
+   ls -l secrets/backend.env   # -rw-------
+   sudo docker compose up -d backend
+   sudo docker compose logs backend | grep "zone de confidentialité"   # « zone de confidentialité : 1 zone(s) »
+   ```
+
+   « absente » ou « illisible » : le MCP ne reçoit aucune coordonnée, ce qui est sûr ; corriger la ligne et relancer. Les logs ne montrent jamais les valeurs.
+3. Vérifier depuis Claude : demander le parcours d'une séance partie de chez moi ; il doit commencer hors de la zone (`trimmed: true`), et son départ être masqué (`start_hidden`).
+
+**Ce qui part chez Anthropic.** Tout ce que lit le MCP (lieux, détails, parcours hors des zones) passe dans la conversation et reste chez Anthropic jusqu'à 30 jours après sa suppression ; l'entraînement sur mes données est désactivé.
 
 **Carte des séances.** La page du jour charge les tuiles d'OpenStreetMap (`tile.openstreetmap.org`) depuis le navigateur, seule ressource extérieure autorisée par la CSP de `web`. OpenStreetMap voit donc l'adresse IP du téléphone, l'origine de l'app (en-tête Referer, sans le chemin) et la zone affichée. Rien ne passe par le NAS.
 

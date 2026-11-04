@@ -37,7 +37,7 @@ Seul ce qui existe aujourd'hui est listé ; ajouter ici les commandes de chaque 
 Depuis `backend/`, après `set -a && . ../.env && set +a` (chaque commande lit sa propre URL) :
 
 - Migrations : `cargo run -- migrate` (`MIGRATE_DATABASE_URL`, `tracker_owner`).
-- API et interprètes : `cargo run -- serve` (`DATABASE_URL`, `tracker_app` ; `LISTEN_ADDR`, `RUST_LOG`).
+- API et interprètes : `cargo run -- serve` (`DATABASE_URL`, `tracker_app` ; `LISTEN_ADDR`, `RUST_LOG` ; `PRIVACY_ZONES`, `lat,lon,rayon_m` séparées par `;`, une zone fictive en développement).
 - Collecteur : `cargo run -- collect` (`INGEST_URL`, `COLLECTOR_STATE_DIR`, et au moins un connecteur). Last.fm si `LASTFM_API_KEY` est fourni, avec `LASTFM_USER` et `COLLECTOR_TOKEN` (le token d'une source de développement) ; facultatifs `LASTFM_API_URL`, `COLLECT_INTERVAL_SECONDS`. Garmin si `GARMIN_API_KEY` est fourni, avec `GARMIN_TOKEN` (le token de la source `garmin`) ; facultatifs `GARMIN_API_URL` (tests), `GARMIN_SOURCE` (nom de la source, `garmin` par défaut), `GARMIN_INTERVAL_SECONDS` (900). Chaque connecteur a son état (`state.json`, `garmin-state.json`). Ne connaît pas la base. Jamais de token ni de clé de production en développement : il n'existe qu'une clé Garmin par compte, et elle vit sur le NAS.
 - Administration (`ADMIN_DATABASE_URL`, `tracker_admin`) : `cargo run -- admin create-source <nom> [--silence-threshold "6 hours"]` (affiche le token une seule fois), `admin revoke-source <nom>`, `admin create-service-token <nom>` (jeton de service de l'API de lecture, pour le MCP : lecture seule, pseudonymes ; affiché une seule fois), `admin revoke-service-token <nom>`, `admin grant-kind <source> <type>`, `admin revoke-kind <source> <type>`, `admin rebuild [--allow-differences]` (génération à côté, comparaison, bascule), `admin retry-errors`, `admin set-password <identifiant>` (crée le compte web ou change son mot de passe, lu au clavier ou sur l'entrée standard, et ferme les sessions), `admin coverage <métrique>` (par source : nombre et dates, trou ou chevauchement), `admin set-precedence <métrique> <source> [--from <RFC 3339>]` (la source fait foi à partir de cette date ; sans date, sa première donnée, refusée si elle est isolée).
 
@@ -62,7 +62,7 @@ Le cookie de session est toujours `Secure`. Seule exception, pour le développem
 - Aucune donnée personnelle dans les logs : seulement des identifiants d'enregistrements.
 - Le backend tourne avec `tracker_app` et ne connaît jamais le mot de passe de `tracker_owner`. Ne pas élargir les droits pour contourner un refus de la base : un refus signale en général un défaut de conception.
 - Toute route de la web app exige la session, même derrière Tailscale.
-- Le MCP est en lecture seule et ne voit que des pseudonymes. Il voit le lieu d'une séance, jamais ses coordonnées ni sa trace : aucune route de `READ_ROUTES` ne lit les détails d'un événement.
+- Le MCP est en lecture seule et ne voit que des pseudonymes. Il ne reçoit des détails d'événements que les champs listés par `core.metrics.shared_details`, et toute coordonnée ou trace passe par les zones de confidentialité (`PRIVACY_ZONES` de `serve`, sur le NAS seulement, jamais dans le dépôt, le journal ni les logs) ; sans zone valide, aucune coordonnée ni aucun parcours pour le jeton de service.
 
 ## Conventions
 
