@@ -1,10 +1,14 @@
-//! Le collecteur : ce que tous les connecteurs ont en commun. Planification, curseur, nouveaux essais,
-//! signal de vie, envoi à l'API d'ingestion, comme n'importe quelle source : il ne connaît pas la base.
-//! Tourne à part de `serve` : lui seul a une sortie réseau, la clé d'API et le token de la source.
+//! Le collecteur : un processus, un connecteur par service (Last.fm ici, Garmin dans `garmin`). Chacun
+//! a sa planification, son état, ses nouveaux essais, son signal de vie et son token, et passe par
+//! l'API d'ingestion comme n'importe quelle source : il ne connaît pas la base. La panne de l'un
+//! n'arrête jamais l'autre. Tourne à part de `serve` : lui seul a une sortie réseau et les secrets.
 //!
 //! Ses logs ne donnent que des nombres et des motifs fixes. Jamais une erreur de reqwest affichée
 //! telle quelle, qui citerait l'URL avec la clé et l'utilisateur.
+//!
+//! Ce module porte le connecteur Last.fm et le commun : délais, état sur disque.
 
+pub mod garmin;
 pub mod lastfm;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -185,7 +189,17 @@ pub fn retry_delay(failures: u32, error: &TickError) -> Duration {
     if let TickError::Service(ServiceError::RateLimited { retry_after }) = error {
         return (*retry_after).min(MAX_RATE_LIMIT_WAIT);
     }
+    backoff(failures)
+}
+
+/// 1, 2, 4… minutes jusqu'à 30, commun à tous les connecteurs.
+pub fn backoff(failures: u32) -> Duration {
     Duration::from_secs(60u64 << failures.saturating_sub(1).min(5)).min(MAX_BACKOFF)
+}
+
+/// Une limitation de débit attend ce qu'on lui demande, bornée pour rester sous le seuil de silence.
+pub fn rate_limit_wait(retry_after: Duration) -> Duration {
+    retry_after.min(MAX_RATE_LIMIT_WAIT)
 }
 
 /// Une limitation de débit n'est jamais une erreur à signaler. Rien d'autre que des codes.
@@ -223,7 +237,7 @@ pub struct Collector {
 impl Collector {
     pub fn new(config: Config) -> anyhow::Result<Self> {
         let http = http_client()?;
-        let state = load_state(&config.state_dir)?;
+        let state = load_state(&config.state_dir, STATE_FILE)?;
         let lastfm = Lastfm {
             http: http.clone(),
             url: config.lastfm_url.clone(),
@@ -402,7 +416,7 @@ impl Collector {
     }
 
     fn save(&self) -> Result<(), TickError> {
-        save_state(&self.config.state_dir, &self.state).map_err(|_| TickError::State)
+        save_state(&self.config.state_dir, STATE_FILE, &self.state).map_err(|_| TickError::State)
     }
 
     /// Jusqu'à l'arrêt demandé. Aucune erreur n'arrête le collecteur : il réessaie, son curseur reste
@@ -452,28 +466,32 @@ impl TickReport {
     }
 }
 
-fn load_state(dir: &Path) -> anyhow::Result<State> {
-    let path = dir.join(STATE_FILE);
+/// L'état d'un connecteur, ou l'état vide s'il n'existe pas encore ou ne se lit plus.
+pub(crate) fn load_state<T: Default + serde::de::DeserializeOwned>(
+    dir: &Path,
+    file: &str,
+) -> anyhow::Result<T> {
+    let path = dir.join(file);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(State::default()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(T::default()),
         Err(err) => return Err(err).context("lecture de l'état du collecteur"),
     };
     Ok(serde_json::from_str(&text).unwrap_or_else(|_| {
         // Sans gravité : tout l'historique revient, en `duplicate`.
-        warn!("state unreadable, starting over");
-        State::default()
+        warn!(file, "state unreadable, starting over");
+        T::default()
     }))
 }
 
 /// Par renommage : un arrêt au milieu laisse l'ancien état, entier.
-fn save_state(dir: &Path, state: &State) -> std::io::Result<()> {
+pub(crate) fn save_state<T: Serialize>(dir: &Path, name: &str, state: &T) -> std::io::Result<()> {
     use std::io::Write;
-    let temporary = dir.join(format!("{STATE_FILE}.tmp"));
+    let temporary = dir.join(format!("{name}.tmp"));
     let mut file = std::fs::File::create(&temporary)?;
     file.write_all(&serde_json::to_vec(state)?)?;
     file.sync_all()?;
-    std::fs::rename(&temporary, dir.join(STATE_FILE))
+    std::fs::rename(&temporary, dir.join(name))
 }
 
 #[cfg(test)]

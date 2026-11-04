@@ -10,9 +10,9 @@ Runbook de l'étape 4, joué sur le NAS (voir « Ce qui reste à vérifier »). 
 | --- | --- | --- | --- |
 | `db` | PostgreSQL 18.6, volume `life-tracker-prod-db-data` | `secrets/db.env` | `data` |
 | `migrate` | Une fois à chaque `up`, puis s'arrête (état « arrêté » normal) | `secrets/migrate.env` (`tracker_owner`) | `data` |
-| `backend` | API et interprètes | `secrets/backend.env` (`tracker_app`) | `data`, `front`, `collect` |
+| `backend` | API et interprètes | `secrets/backend.env` (`tracker_app`, zones de confidentialité du MCP) | `data`, `front`, `collect` |
 | `web` | nginx : app statique et proxy de `/v1` et `/health` | aucun secret | `front`, `edge` |
-| `collector` | Interroge Last.fm, écrit par l'API d'ingestion ; curseur dans le volume `life-tracker-prod-collector-state` | `secrets/collector.env` (clé, utilisateur, token) | `collect`, `egress` |
+| `collector` | Interroge Last.fm et Garmin, écrit par l'API d'ingestion ; un état par connecteur (`state.json`, `garmin-state.json`) dans le volume `life-tracker-prod-collector-state` | `secrets/collector.env` (clés, utilisateur, un token par source) | `collect`, `egress` |
 | `admin` | Profil `admin`, lancé à la main | `secrets/admin.env` (`tracker_admin`) | `data` |
 | `apple-import` | Profil `import`, lancé à la main : l'import de l'export Apple | Le token sur l'entrée standard, l'archive en lecture seule | `collect` |
 | `mcp` | Serveur MCP (étape 9) : OAuth et outils en lecture seule ; jetons OAuth hachés dans le volume `life-tracker-prod-mcp-state` | `secrets/mcp.env` (jeton de service, haché du secret de connexion) | `read`, `mcp-edge` |
@@ -695,6 +695,77 @@ Relancer ensuite demande un nouveau jeton de service (`mcp-2`) et `sudo docker c
 
 **Retour arrière.** La migration de l'étape 9 ne se défait pas : l'ancienne image refuserait la base (`migrate` échoue, le backend ne démarre pas). Revenir en arrière, c'est donc couper (ci-dessus) et garder la nouvelle image : le backend ne change de comportement que pour les nouvelles routes de lecture et le jeton de service, et la web app est identique. La table `core.service_tokens` reste, vide ou révoquée, sans effet.
 
+## Mise à jour : Garmin Connect (après le POC)
+
+À faire une fois, sur le NAS déjà en service. La PR part en production à la fusion, migration comprise (`20261104120000_garmin.sql`, par le service `migrate`) : le connecteur Garmin ne démarre que lorsque sa clé est dans `secrets/collector.env`, donc rien ne change pour Last.fm d'ici là. Je ne lance rien de tout cela depuis le dépôt, et je tape moi-même chaque secret.
+
+1. **Avant la fusion**, recopier `compose.yaml` comme à l'étape 4 de « Mise à jour vers l'étape 5 » : son contrôle de santé vérifie l'état de chaque connecteur configuré (`state.json` pour Last.fm, `garmin-state.json` pour Garmin, réécrits à chaque passage réussi).
+
+2. **Une clé neuve, pour le NAS seulement.** La clé de l'essai du 4 nov. 2026 est passée par le Mac : dans Garmin Connect (Paramètres, Personal API Key), la révoquer, puis en créer une autre, d'un an au plus. Elle va dans le gestionnaire de mots de passe et dans `secrets/collector.env`, nulle part ailleurs. Garmin prévient par courriel une semaine avant son expiration : la remplacer alors (étape 6).
+
+3. Après le déploiement de la version, sur le NAS, en root dans le dossier en `700` :
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   TOKEN=$(sudo docker compose run --rm -T admin create-source garmin --silence-threshold "12 hours" </dev/null)
+   [ "${#TOKEN}" = 64 ] && echo "token ok" || echo "ÉCHEC : ne pas continuer"
+   for kind in garmin.daily_summary garmin.sleep garmin.activity garmin.activity_track record.cancel; do
+     sudo docker compose run --rm -T admin grant-kind garmin "$kind" </dev/null
+   done
+   read -rs GARMIN_API_KEY   # la clé neuve, sans écho
+   (umask 077; printf 'GARMIN_API_KEY=%s\nGARMIN_TOKEN=%s\n' "$GARMIN_API_KEY" "$TOKEN" >> secrets/collector.env)
+   unset TOKEN GARMIN_API_KEY
+   ls -l secrets/collector.env   # -rw-------
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select kind from core.source_kinds sk join core.sources s on s.id = sk.source_id where s.name = 'garmin' and revoked_at is null"   # les cinq types
+   sudo docker compose up -d collector
+   ```
+
+   `record.cancel` est nécessaire : une révision de Garmin (synchro tardive de la montre) part avec l'annulation de la version précédente. Sans ce droit, le collecteur écrit `kind_not_declared` dans ses logs et reprend seul une fois le droit accordé. Si la source doit un jour être recréée (`garmin-2`), ajouter `GARMIN_SOURCE=garmin-2` au fichier : c'est le nom que désignent ses annulations.
+
+4. Le premier passage remonte 400 jours : un appel pour les pas et calories, 13 pour le sommeil, la liste des séances, puis le fichier FIT de chaque séance avec GPS, à une seconde d'intervalle. Compter quelques minutes. Ensuite, un passage tous les quarts d'heure relit les 7 derniers jours.
+
+   ```sh
+   sudo docker compose logs collector | grep garmin | tail -3   # « garmin pass completed »
+   sudo docker compose ps collector                            # healthy après le premier passage
+   ```
+
+   « clé Garmin refusée : expirée ou révoquée » dans les logs : la clé est mauvaise ou expirée ; aucun signal de vie ne part, et le mois signale le silence de Garmin après 12 h.
+
+5. Vérifier les critères de [l'après-POC](poc.md) : un jour passé et complet, comparé à Garmin Connect (pas, calories totales, actives et au repos, sommeil et ses phases, séances, distance, allure, fréquence cardiaque) sur la page du jour et par le MCP (`day_summary`) ; puis le rejeu :
+
+   ```sh
+   sudo docker compose run --rm -T admin rebuild </dev/null   # 0 différence
+   sudo docker compose run --rm -T admin coverage steps </dev/null
+   ```
+
+6. **Remplacer la clé** (chaque année) : en créer une dans Garmin Connect, remplacer la ligne `GARMIN_API_KEY=` de `secrets/collector.env` (en root, éditeur sans sauvegarde, ou `sed -i` avec la clé lue par `read -rs`), puis `sudo docker compose up -d collector`, et révoquer l'ancienne.
+
+**Zone de confidentialité du MCP.** Sans elle, Claude reçoit les détails des séances mais aucune coordonnée ni aucun parcours. Elle se règle dans `secrets/backend.env`, et je la saisis moi-même, jamais dans le dépôt ni dans une conversation :
+
+1. Choisir un centre **décalé de 100 à 300 m du domicile** (un carrefour voisin, par exemple) et un **rayon de 500 à 800 m**, qui couvre le domicile avec de la marge. Pourquoi : la zone coupe chaque parcours là où il y entre ; centrée sur la maison, les points de coupure de dizaines de séances dessineraient un cercle dont le centre serait la maison. Décalée et assez large, elle cache le domicile sans le désigner. Une zone par lieu à protéger (travail, famille), séparées par `;`.
+2. Sur le NAS, en root dans le dossier en `700` :
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   read -r ZONES   # lat,lon,rayon_m ; plusieurs séparées par « ; » ; en degrés décimaux, rayon en mètres
+   (umask 077; printf 'PRIVACY_ZONES=%s\n' "$ZONES" >> secrets/backend.env)
+   unset ZONES
+   ls -l secrets/backend.env   # -rw-------
+   sudo docker compose up -d backend
+   sudo docker compose logs backend | grep "zone de confidentialité"   # « zone de confidentialité : 1 zone(s) »
+   ```
+
+   « absente » ou « illisible » : le MCP ne reçoit aucune coordonnée, ce qui est sûr ; corriger la ligne et relancer. Les logs ne montrent jamais les valeurs.
+3. Vérifier depuis Claude : demander le parcours d'une séance partie de chez moi ; il doit commencer hors de la zone (`trimmed: true`), et son départ être masqué (`start_hidden`).
+
+**Ce qui part chez Anthropic.** Tout ce que lit le MCP (lieux, détails, parcours hors des zones) passe dans la conversation et reste chez Anthropic jusqu'à 30 jours après sa suppression ; l'entraînement sur mes données est désactivé.
+
+**Carte des séances.** La page du jour charge les tuiles d'OpenStreetMap (`tile.openstreetmap.org`) depuis le navigateur, seule ressource extérieure autorisée par la CSP de `web`. OpenStreetMap voit donc l'adresse IP du téléphone, l'origine de l'app (en-tête Referer, sans le chemin) et la zone affichée. Rien ne passe par le NAS.
+
+**Retour arrière.** Couper Garmin seul : retirer les deux lignes `GARMIN_*` de `secrets/collector.env`, puis `sudo docker compose up -d collector`. Le journal garde ce qui est entré ; `admin revoke-source garmin` coupe le token. Revenir à une image d'avant : la migration ajoute des registres sans rien changer d'autre, l'ancienne version les ignore.
+
 ## Vérifier les critères « Terminé quand »
 
 **Un café saisi depuis l'iPhone, par la web app comme par le raccourci, apparaît.**
@@ -920,7 +991,7 @@ Si le changement touche un interprète, ensuite : `sudo docker compose run --rm 
 
 **Panne de la base.** `/health` répond 503 et le backend passe `unhealthy`, sans redémarrer : `restart` ne réagit qu'à la fin d'un processus. Il reprend seul au retour de la base. Lectures et écritures répondent 500 entre-temps, et l'app le traite comme une erreur passagère.
 
-**Collecteur.** Il réessaie seul (1, 2, 4… jusqu'à 30 min ; le délai demandé par une réponse 429), sans jamais avancer son curseur. `unhealthy` : aucun passage réussi depuis 6 h, sans redémarrage. Effacer son volume ne coûte qu'un rattrapage en doublons ignorés. Remplacer la clé : modifier `secrets/collector.env`, puis `sudo docker compose up -d collector`. Une écoute qui arrive sur Last.fm plus de 48 h après sa date n'entre pas d'elle-même ; effacer le volume la rattrape.
+**Collecteur.** Chaque connecteur réessaie seul (1, 2, 4… jusqu'à 30 min ; le délai demandé par une réponse 429), sans jamais avancer son curseur, et la panne de l'un n'arrête pas l'autre. `unhealthy` : un connecteur configuré n'a fait aucun passage réussi depuis 6 h, sans redémarrage. Effacer son volume ne coûte qu'un rattrapage en doublons ignorés, à une réserve près pour Garmin : une révision survenue entre-temps ne peut plus annuler la version d'avant (voir l'architecture, 4 nov. 2026). Remplacer la clé : modifier `secrets/collector.env`, puis `sudo docker compose up -d collector`. Une écoute qui arrive sur Last.fm plus de 48 h après sa date n'entre pas d'elle-même ; effacer le volume la rattrape.
 
 **Logs.** `sudo docker compose logs <service>`. Rotation par taille : 3 fichiers de 10 Mo par service. Docker ne sait pas purger par âge : la règle des 30 jours est un ordre de grandeur, et un service peu bavard garde ses logs plus longtemps. Le backend ne journalise aucune donnée personnelle, et nginx n'écrit pas de journal d'accès.
 

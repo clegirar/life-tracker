@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod admin;
 pub mod api;
 pub mod apple;
@@ -10,5 +11,6 @@ pub mod ingest;
 pub mod ingest_client;
 pub mod interpreters;
 pub mod music;
+pub mod privacy;
 pub mod read;
 pub mod replay;

@@ -1,0 +1,185 @@
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import type { SourcesHealth, Workout } from './api'
+import { integerText, isEmpty, kmText, sleepSpan, sleepStages, sleepText, workoutFigures, workoutType } from './activity'
+import type { useActivity } from './useActivity'
+
+// Leaflet et ses tuiles ne se chargent qu'à l'approche d'une carte : le reste de l'app n'en paie rien.
+const RouteMap = lazy(() => import('./RouteMap'))
+
+interface Props {
+  date: string
+  today: string
+  state: ReturnType<typeof useActivity>
+  health: SourcesHealth | null
+}
+
+/** La carte d'une séance, montée quand elle approche de l'écran ; d'ici là, un cadre de même taille. */
+function LazyRouteMap({ activityId, label }: { activityId: number; label: string }) {
+  const frame = useRef<HTMLDivElement>(null)
+  const [near, setNear] = useState(false)
+  useEffect(() => {
+    const el = frame.current
+    if (!el || near) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) setNear(true)
+      },
+      { rootMargin: '200px' },
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [near])
+  return (
+    <figure className="route" data-testid="route-map">
+      <div ref={frame} className="route-frame">
+        {near && (
+          <Suspense fallback={null}>
+            <RouteMap activityId={activityId} label={label} />
+          </Suspense>
+        )}
+      </div>
+      <figcaption className="route-credit">
+        <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+          © les contributeurs d’OpenStreetMap
+        </a>
+      </figcaption>
+    </figure>
+  )
+}
+
+function WorkoutRow({ workout }: { workout: Workout }) {
+  const { details } = workout
+  const type = workoutType(details.type)
+  const figures = workoutFigures(details)
+  return (
+    <li className="workout" data-testid="workout">
+      <div className="workout-head">
+        <p className="row-name">{type}</p>
+        <p className="row-detail">{[workout.time, details.location_name].filter(Boolean).join(' · ')}</p>
+      </div>
+      {figures.length > 0 && (
+        <dl className="workout-figures">
+          {figures.map((figure) => (
+            <div key={figure.label}>
+              <dt>{figure.label}</dt>
+              <dd>{figure.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {workout.has_track && <LazyRouteMap activityId={details.activity_id} label={`Parcours : ${type.toLowerCase()} de ${workout.time}`} />}
+    </li>
+  )
+}
+
+const noData = <dd className="stat-note">Pas de données</dd>
+
+export function ActivityCard({ date, today, state, health }: Props) {
+  const { activity, loadFailed } = state
+  const silent = health?.sources.find((source) => /^garmin\b/.test(source.name) && source.silent)
+  const stages = activity?.sleep ? sleepStages(activity.sleep.details) : []
+  const stageTotal = stages.reduce((sum, stage) => sum + stage.minutes, 0)
+  const span = activity?.sleep ? sleepSpan(activity.sleep.details) : null
+
+  return (
+    <section className="card card-activity" aria-labelledby="titre-activite" data-testid="activity">
+      <h2 id="titre-activite" className="card-title card-title-activity">
+        Activité
+      </h2>
+
+      {loadFailed && (
+        <div className="inline-failure" role="status">
+          <span>Impossible d'actualiser l'activité.</span>
+          <button type="button" className="notice-action" onClick={() => void state.reload()}>
+            Réessayer
+          </button>
+        </div>
+      )}
+      {silent && (
+        <p className="inline-note" role="status" data-testid="garmin-alert">
+          <strong>Garmin ne répond plus.</strong> Des données de ce jour peuvent manquer.
+        </p>
+      )}
+
+      {!activity && !loadFailed && <p className="empty">Chargement…</p>}
+      {activity && isEmpty(activity) && (
+        <p className="empty">{date === today ? "Pas encore de données Garmin aujourd'hui." : 'Pas de données Garmin ce jour-là.'}</p>
+      )}
+
+      {activity && !isEmpty(activity) && (
+        <>
+          <dl className="stats">
+            <div>
+              <dt>Pas</dt>
+              <dd className="stat-value" data-testid="steps">
+                {activity.steps?.value != null ? integerText(activity.steps.value) : '–'}
+              </dd>
+              {activity.steps === null
+                ? noData
+                : activity.steps.details.distance_m !== null && <dd className="stat-note">{kmText(activity.steps.details.distance_m)}</dd>}
+            </div>
+            <div>
+              <dt>Calories</dt>
+              <dd className="stat-value" data-testid="calories">
+                {activity.calories?.value != null ? integerText(activity.calories.value) : '–'}
+                {activity.calories?.value != null && <span className="stat-unit"> kcal</span>}
+              </dd>
+              {activity.calories === null ? (
+                noData
+              ) : (
+                <dd className="stat-note">
+                  {[
+                    activity.calories.details.active !== null && `${integerText(activity.calories.details.active)} actives`,
+                    activity.calories.details.resting !== null && `${integerText(activity.calories.details.resting)} au repos`,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </dd>
+              )}
+            </div>
+            <div className="stat-wide">
+              <dt>Sommeil</dt>
+              <dd className="stat-value" data-testid="sleep">
+                {activity.sleep?.value != null ? sleepText(activity.sleep.value) : '–'}
+              </dd>
+              {activity.sleep === null ? noData : span && <dd className="stat-note">{span}</dd>}
+              {stageTotal > 0 && (
+                <dd className="sleep-stages">
+                  <span className="sleep-bar" aria-hidden="true">
+                    {stages.map((stage) => (
+                      <span key={stage.key} className={`sleep-part sleep-${stage.key}`} style={{ flexGrow: stage.minutes }} />
+                    ))}
+                  </span>
+                  <ul className="sleep-legend">
+                    {stages.map((stage) => (
+                      <li key={stage.key}>
+                        <span className={`sleep-swatch sleep-${stage.key}`} aria-hidden="true" />
+                        {stage.label} <span className="sleep-minutes">{sleepText(stage.minutes)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </dd>
+              )}
+            </div>
+          </dl>
+
+          <section className="music-section" aria-labelledby="titre-seances" data-testid="workouts">
+            <h3 id="titre-seances" className="subsection-title">
+              Séances
+              {activity.workouts.length > 0 && <span className="subsection-count subsection-count-activity">{activity.workouts.length}</span>}
+            </h3>
+            {activity.workouts.length === 0 ? (
+              <p className="empty">Aucune séance ce jour-là.</p>
+            ) : (
+              <ul className="rows">
+                {activity.workouts.map((workout) => (
+                  <WorkoutRow key={workout.details.activity_id} workout={workout} />
+                ))}
+              </ul>
+            )}
+          </section>
+        </>
+      )}
+    </section>
+  )
+}

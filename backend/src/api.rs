@@ -22,12 +22,14 @@ use tokio::sync::Semaphore;
 use tracing::{Instrument, error, info, info_span, warn};
 use uuid::Uuid;
 
+use crate::activity;
 use crate::admin::{generate_token, token_hash};
 use crate::auth;
 use crate::calendar;
 use crate::ingest::{Envelope, RejectReason, Rejection, parse_envelope};
 use crate::music::fold;
-use crate::read::{self, Period, ReadError};
+use crate::privacy::Zones;
+use crate::read::{self, Exposure, Period, ReadError};
 
 pub const MAX_RECORDS: usize = 500;
 pub const MAX_BODY_BYTES: usize = 1_000_000;
@@ -47,9 +49,12 @@ pub const NO_SESSION_ROUTES: [&str; 3] = ["/health", LOGIN, "/v1/heartbeat"];
 /// une autorisation CORS préalable, et le serveur n'en donne jamais.
 pub const CSRF_HEADER: &str = "x-csrf-protection";
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct Config {
     pub insecure_cookie: bool,
+    /// Les zones de confidentialité, appliquées aux seules lectures du jeton de service. Par défaut,
+    /// aucune : le jeton ne reçoit alors ni coordonnée ni parcours.
+    pub zones: Zones,
 }
 
 #[derive(Clone)]
@@ -68,7 +73,7 @@ struct SessionAuth;
 
 /// Les routes que le jeton de service peut lire, en GET seulement : une liste fermée. Toute autre route,
 /// et toute écriture, le refuse (`guard`), y compris celles qu'on ajoutera.
-pub const READ_ROUTES: [&str; 11] = [
+pub const READ_ROUTES: [&str; 12] = [
     "/v1/days/{date}",
     "/v1/days/{date}/music",
     "/v1/months/{month}",
@@ -80,6 +85,7 @@ pub const READ_ROUTES: [&str; 11] = [
     "/v1/item",
     "/v1/top",
     "/v1/discoveries",
+    "/v1/route",
 ];
 
 /// Les deux niveaux de visibilité de l'API de lecture (voir l'architecture), posés par `guard` : les
@@ -114,6 +120,10 @@ fn routes() -> Router<AppState> {
         .route("/v1/auth/logout", post(logout))
         .route("/v1/days/{date}", get(get_day))
         .route("/v1/days/{date}/music", get(get_day_music))
+        // Pas dans `READ_ROUTES` : des coordonnées et des traces entières, pour la carte Activité.
+        // Le MCP lit les siennes par les occurrences et `/v1/route`, à travers les zones.
+        .route("/v1/days/{date}/activity", get(get_day_activity))
+        .route("/v1/activities/{id}/track", get(get_activity_track))
         .route("/v1/months/{month}", get(get_month))
         // Pas dans `READ_ROUTES` : la vue de l'année ne sert qu'à la web app.
         .route("/v1/years/{year}", get(get_year))
@@ -125,6 +135,7 @@ fn routes() -> Router<AppState> {
         .route("/v1/item", get(get_item))
         .route("/v1/top", get(get_top))
         .route("/v1/discoveries", get(get_discoveries))
+        .route("/v1/route", get(get_route))
         .route("/health", get(health))
 }
 
@@ -245,6 +256,8 @@ enum ApiError {
     InvalidDate,
     InvalidParameter(&'static str),
     NotFound,
+    /// Le jeton de service demande un parcours sans zone de confidentialité configurée.
+    PrivacyZoneMissing,
     InvalidJson,
     BatchTooLarge,
     Internal,
@@ -264,6 +277,7 @@ impl IntoResponse for ApiError {
             Self::InvalidDate => (StatusCode::BAD_REQUEST, "invalid_date"),
             Self::InvalidParameter(_) => (StatusCode::BAD_REQUEST, "invalid_parameter"),
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+            Self::PrivacyZoneMissing => (StatusCode::FORBIDDEN, "privacy_zone_missing"),
             Self::InvalidJson => (StatusCode::BAD_REQUEST, "invalid_json"),
             Self::BatchTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "batch_too_large"),
             Self::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
@@ -1012,6 +1026,27 @@ async fn get_day_music(
 }
 
 /// Le mois, jour par jour : valeurs, erreurs, journées en attente ou à vérifier (voir `calendar`).
+/// Pas, calories, sommeil et séances d'un jour, avec leurs détails (voir `activity`).
+async fn get_day_activity(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Result<Json<activity::DayActivity>, ApiError> {
+    let date = parse_day(&date).ok_or(ApiError::InvalidDate)?;
+    Ok(Json(activity::day(&state.pool, date).await?))
+}
+
+/// La trace simplifiée d'une séance, pour sa carte.
+async fn get_activity_track(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<activity::Track>, ApiError> {
+    let id: u64 = id.parse().map_err(|_| ApiError::InvalidParameter("id"))?;
+    activity::track(&state.pool, id)
+        .await?
+        .map(Json)
+        .ok_or(ApiError::NotFound)
+}
+
 async fn get_month(
     State(state): State<AppState>,
     Path(month): Path<String>,
@@ -1231,8 +1266,18 @@ async fn get_search(
     ))
 }
 
+/// L'exposition des coordonnées pour cette requête : la session voit tout, le jeton de service ce que
+/// les zones laissent voir.
+fn exposure(state: &AppState, visibility: Visibility) -> Exposure<'_> {
+    match visibility {
+        Visibility::Names => Exposure::Full,
+        Visibility::Pseudonyms => Exposure::Zoned(&state.config.zones),
+    }
+}
+
 async fn get_occurrences(
     State(state): State<AppState>,
+    Extension(visibility): Extension<Visibility>,
     query: ReadQuery,
 ) -> Result<Json<read::Occurrences>, ApiError> {
     let p = params(query)?;
@@ -1242,7 +1287,17 @@ async fn get_occurrences(
     let form = p.form.as_deref().unwrap_or("list");
     let limit = read::parse_limit(p.limit.as_deref(), 100, read::MAX_LIST, "limit")?;
     Ok(Json(
-        read::occurrences(&state.pool, &metric, period, level, key, form, limit).await?,
+        read::occurrences(
+            &state.pool,
+            &metric,
+            period,
+            level,
+            key,
+            form,
+            limit,
+            exposure(&state, visibility),
+        )
+        .await?,
     ))
 }
 
@@ -1297,4 +1352,62 @@ async fn get_discoveries(
     Ok(Json(
         read::discoveries(&state.pool, &metric, &level, period, limit).await?,
     ))
+}
+
+#[derive(Deserialize)]
+struct RouteQuery {
+    id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct RouteResponse {
+    id: String,
+    metric: String,
+    /// Heure de Paris du début, `AAAA-MM-JJ HH:MM`.
+    local: String,
+    /// Des morceaux de `[lat, lon]`, au cent-millième (1 m) : un seul pour la session, coupés aux
+    /// zones de confidentialité pour le jeton de service.
+    segments: Vec<Vec<[f64; 2]>>,
+    /// Des points ont été retirés : la trace passe par une zone.
+    trimmed: bool,
+}
+
+/// Le parcours d'une occurrence (voir `read::route`), pour le MCP comme pour la session. Sans zone
+/// configurée, le jeton de service n'en reçoit aucun.
+async fn get_route(
+    State(state): State<AppState>,
+    Extension(visibility): Extension<Visibility>,
+    Query(query): Query<RouteQuery>,
+) -> Result<Json<RouteResponse>, ApiError> {
+    let raw = query.id.ok_or(ApiError::InvalidParameter("id"))?;
+    let id = read::parse_occurrence_id(&raw).ok_or(ApiError::InvalidParameter("id"))?;
+    let segments = match exposure(&state, visibility) {
+        Exposure::Zoned(zones) if !zones.configured() => return Err(ApiError::PrivacyZoneMissing),
+        exposure => {
+            let route = read::route(&state.pool, id).await?;
+            let segments = match exposure {
+                Exposure::Full => vec![route.points.clone()],
+                Exposure::Zoned(zones) => zones.segments(&route.points),
+            };
+            (route, segments)
+        }
+    };
+    let (route, segments) = segments;
+    let kept: usize = segments.iter().map(Vec::len).sum();
+    let round = |v: f64| (v * 1e5).round() / 1e5;
+    Ok(Json(RouteResponse {
+        id: raw,
+        metric: route.metric,
+        local: route.local,
+        trimmed: kept < route.points.len(),
+        segments: segments
+            .into_iter()
+            .map(|segment| {
+                segment
+                    .into_iter()
+                    .map(|(lat, lon)| [round(lat), round(lon)])
+                    .collect()
+            })
+            .collect(),
+    }))
 }

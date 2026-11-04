@@ -634,10 +634,14 @@ async fn no_new_listen_for_3_days_is_to_be_checked() {
     let music = async || -> Value {
         let health = app.health().await;
         let metrics = health["metrics"].as_array().unwrap();
+        let names: Vec<&str> = metrics
+            .iter()
+            .map(|m| m["metric"].as_str().unwrap())
+            .collect();
         assert_eq!(
-            metrics.len(),
-            1,
-            "seule music.listen a un seuil de fraîcheur"
+            names,
+            ["music.listen", "sleep", "steps"],
+            "les métriques qui ont un seuil de fraîcheur"
         );
         metrics[0].clone()
     };

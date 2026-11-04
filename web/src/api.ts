@@ -208,3 +208,67 @@ export const fetchDayMusic = (date: string) => read<DayMusic>(`/v1/days/${date}/
 export const fetchMonth = (month: string) => read<Month>(`/v1/months/${month}`)
 export const fetchYear = (year: string) => read<Year>(`/v1/years/${year}`)
 export const fetchSourcesHealth = () => read<SourcesHealth>('/v1/sources/health')
+
+/** Une mesure Garmin du jour : sa valeur et ses détails, tels que l'interprète les a écrits. */
+export interface Measure<D> {
+  value: number | null
+  details: D
+}
+
+export interface StepsDetails {
+  distance_m: number | null
+}
+
+export interface CaloriesDetails {
+  active: number | null
+  resting: number | null
+}
+
+export interface SleepDetails {
+  start: string | null
+  end: string | null
+  deep_seconds: number | null
+  light_seconds: number | null
+  rem_seconds: number | null
+  awake_seconds: number | null
+}
+
+export interface WorkoutDetails {
+  activity_id: number
+  /** La clé de Garmin : `running`, `walking`, `cycling`… */
+  type: string
+  duration_s: number | null
+  moving_s: number | null
+  distance_m: number | null
+  avg_speed_mps: number | null
+  avg_hr: number | null
+  max_hr: number | null
+  calories: number | null
+  location_name: string | null
+}
+
+export interface Workout {
+  /** Heure de Paris du début. */
+  time: string
+  occurred_at: string
+  details: WorkoutDetails
+  has_track: boolean
+}
+
+/** `null` : pas de données ce jour-là (montre pas portée), jamais zéro. */
+export interface DayActivity {
+  date: string
+  steps: Measure<StepsDetails> | null
+  calories: Measure<CaloriesDetails> | null
+  sleep: Measure<SleepDetails> | null
+  workouts: Workout[]
+}
+
+export interface Track {
+  activity_id: number
+  /** `[lat, lon, secondes depuis le début]`. */
+  points: [number, number, number][]
+}
+
+export const fetchDayActivity = (date: string) => read<DayActivity>(`/v1/days/${date}/activity`)
+export const fetchTrack = (activityId: number) => read<Track>(`/v1/activities/${activityId}/track`)

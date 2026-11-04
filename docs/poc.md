@@ -6,6 +6,8 @@ Le POC couvre le compteur de cafés et les écoutes de musique (Last.fm en direc
 
 **Principe.** Le découpage suit des tranches verticales : chaque étape traverse toute la chaîne utile et s'arrête sur quelque chose d'utilisable, vérifié par des tests automatisés. Une étape n'est finie que lorsque tous ses critères « Terminé quand » sont remplis.
 
+**POC validé le 4 nov. 2026**, par ma décision : l'étape 10 sort du POC et la semaine sans intervention n'est pas attendue (voir « Fin du POC »). La suite est dans les sections « Après le POC ».
+
 **Accès.** Pendant tout le POC, la web app et l'API d'ingestion ne sont joignables que par Tailscale ; seul le serveur MCP est sur Internet. L'ouverture de la web app vient après (voir la dernière section).
 
 | Étape | Résultat | État |
@@ -19,8 +21,8 @@ Le POC couvre le compteur de cafés et les écoutes de musique (Last.fm en direc
 | 6 | Découvertes et « déjà connu » | Fait |
 | 7 | Historique Apple | Fait |
 | 8 | Calendrier et complétude | Fait |
-| 9 | Serveur MCP | Préparé, à confirmer sur le NAS |
-| 10 | Peaufiner l'interface | À faire |
+| 9 | Serveur MCP | Fait |
+| 10 | Peaufiner l'interface | Sortie du POC |
 
 ## Étape 0 : schéma de la base
 
@@ -205,7 +207,9 @@ Fait le 3 nov. 2026 sur le vrai NAS, en suivant [le runbook](deploiement.md) (co
 
 ## Étape 10 : peaufiner l'interface
 
-En cours. Le 3 nov. 2026, sur la branche `feat/interface-etape-10`, trois demandes faites et vérifiées par Playwright à 390 et 1280 px, en clair et en sombre : une barre latérale (fixe sur Mac, tiroir sur iPhone) qui accueillera les fonctionnalités suivantes et n'a pour l'instant que « Calendrier », des adresses pour chaque page (Retour et rechargement fonctionnent), une vue de l'année (`/v1/years/{AAAA}`, douze mini-mois dont l'intensité suit la métrique choisie) et une carte Musique triée par un seul sélecteur, découvertes comprises, avec « Tout afficher » au-delà de dix lignes. Les captures servent de maquette à valider. Restent l'essai tactile sur iPhone et la suite de ce que je demanderai. Les choix sont au journal des décisions de [l'architecture](architecture.md).
+Sortie du POC le 4 nov. 2026. La liste des fonctionnalités de [l'architecture](architecture.md) (idées de trackers et fonctionnalités futures) suffit comme prérequis, sans nouvelle maquette d'ensemble. Ce qui reste à reprendre, à commencer par la carte Musique de la page du jour, est dans [`TODO.md`](../TODO.md), hors POC.
+
+Le 3 nov. 2026, sur la branche `feat/interface-etape-10`, trois demandes faites et vérifiées par Playwright à 390 et 1280 px, en clair et en sombre : une barre latérale (fixe sur Mac, tiroir sur iPhone) qui accueillera les fonctionnalités suivantes et n'a pour l'instant que « Calendrier », des adresses pour chaque page (Retour et rechargement fonctionnent), une vue de l'année (`/v1/years/{AAAA}`, douze mini-mois dont l'intensité suit la métrique choisie) et une carte Musique triée par un seul sélecteur, découvertes comprises, avec « Tout afficher » au-delà de dix lignes. Plusieurs métriques s'affichent en points de couleur par jour, comme dans Calendrier d'Apple, dans le mois comme dans l'année. Déployé en v0.2.0 le 4 nov. 2026 (PR #7), et la vue de l'année essayée au toucher sur iPhone le même jour. La carte Musique de la page du jour ne me plaît pas encore : notée dans `TODO.md`. Les choix sont au journal des décisions de [l'architecture](architecture.md).
 
 **Prérequis :** la liste de toutes les fonctionnalités que j'ai en tête, y compris après le POC, que je donnerai en début d'étape.
 
@@ -223,6 +227,38 @@ En cours. Le 3 nov. 2026, sur la branche `feat/interface-etape-10`, trois demand
 ## Fin du POC
 
 Les étapes 1 à 10 sont faites, et le café comme la musique ont tourné une semaine sur le NAS sans intervention.
+
+Validé le 4 nov. 2026 par ma décision : les étapes 1 à 9 sont faites, l'étape 10 sort du POC, et je n'attends pas la semaine sans intervention (v0.2.0 en production depuis le même jour).
+
+## Après le POC : Garmin Connect
+
+Premier tracker après le POC : mes pas, mon sommeil, mes séances de course et mes calories brûlées, par jour. Les choix du 4 nov. 2026 sont au journal des décisions de [l'architecture](architecture.md).
+
+**Accès.** L'API personnelle officielle de Garmin (ouverte le 21 oct. 2026) : une clé que je crée moi-même dans Garmin Connect (Paramètres, Personal API Key, un an au plus), échangée contre un jeton de 24 h. Lecture seule, en tirage, sans mot de passe, sans MFA et sans rien d'exposé sur Internet. Un connecteur du collecteur, sur le modèle de Last.fm, avec sa propre source et son propre token.
+
+**Historique.** Par l'API seule : elle sert tout mon historique (voir l'essai ci-dessous).
+
+**Courses.** Un résumé par séance : distance, durée, allure, fréquence cardiaque moyenne et maximale, calories. Pas de fichier FIT tant qu'il n'y a pas de stockage de fichiers.
+
+**Essai sur le vrai compte, le 4 nov. 2026** (structure seulement, jamais les valeurs ; clé retirée du Mac ensuite, à révoquer et recréer pour le NAS) :
+
+- **Historique :** mes données commencent en juin 2026 et l'API les sert toutes. L'import de l'export Garmin est donc inutile.
+- **Pas et calories :** `/usersummary-service/v2/dailysummaries` donne en un appel, par jour (`calendarDate`), `movement.steps.value` et `calories.burnedActive`, `burnedResting` et `burnedTotal`. Il accepte une plage de 400 jours.
+- **Sommeil :** `/sleep-service/sleep/dailySleepSummariesByDate` (32 jours au plus) donne la durée (`sleepTimeSeconds`), les phases (profond, léger, paradoxal, éveil), le début et la fin en UTC. Pas de score de sommeil : ma montre n'en calcule pas. Des nuits manquent (montre pas portée) : ce sont des jours sans données, pas des nuits sans sommeil.
+- **Courses :** `/activitylist-service/activities/search/activities` donne `activityType.typeKey` (`running` surtout, aussi `walking` et `cycling`), `startTimeGMT`, `distance`, `duration`, `movingDuration`, `averageSpeed`, `averageHR`, `maxHR` et `calories`. La réponse contient aussi des coordonnées GPS et mon nom : la liste blanche écarte le nom ; le GPS et le lieu des séances sont gardés depuis (voir ci-dessous).
+- **Plages :** `stats/steps/daily` plafonne à 28 jours, le sommeil entre 32 et 90. Aucun en-tête de limite de débit.
+
+**Tranché le 4 nov. 2026** (voir le journal des décisions de [l'architecture](architecture.md)) : chaque version des totaux de Garmin est un fait, sous une clé qui dépend de son contenu, et une nouvelle version part avec l'annulation de la précédente ; le sommeil est une mesure en minutes, pas une durée ; le collecteur devient « un collecteur, plusieurs connecteurs ». Ajoutés le même jour à ma demande : le GPS et le lieu des séances, leur trace tirée du fichier FIT et une carte OpenStreetMap sur la page du jour, et le lieu comme élément (« dans combien de villes ai-je couru ») ; le MCP voit les lieux, jamais les coordonnées.
+
+**Construit le 4 nov. 2026**, sur la branche `feat/garmin-connect` : migration, interprètes, connecteur (contre un Garmin simulé, fichier FIT fabriqué par le test), routes de la carte Activité, MCP, web (carte Activité et calendrier à six métriques, captures à 390 et 1280 px en clair et en sombre). Le même jour, sur ma décision, le MCP voit aussi les détails, les coordonnées et les parcours, à travers des zones de confidentialité que je règle sur le NAS ; et l'ordre des métriques du calendrier devient cafés, écoutes, pas, séances, sommeil, calories. Reste à déployer et à vérifier sur le NAS avec une clé neuve (voir [le runbook](deploiement.md), « Mise à jour : Garmin Connect ») : les critères ci-dessous qui demandent la vraie journée, le vrai historique et l'iPhone.
+
+**Terminé quand**
+
+- Les pas, les calories, le sommeil et les courses d'une journée réelle correspondent à Garmin Connect, dans le calendrier comme par le MCP.
+- Une révision de Garmin (synchro tardive) corrige la journée sans double compte, et `admin rebuild` donne 0 différence.
+- La clé n'apparaît ni dans le dépôt ni dans les logs ; le connecteur n'a pas accès à la base.
+- Tout l'historique (depuis juin 2026) est collecté, sans doublon à la relecture.
+- L'affichage est vérifié à la largeur d'un iPhone et sur Mac, en clair et en sombre.
 
 ## Après le POC : ouvrir la web app sur Internet
 

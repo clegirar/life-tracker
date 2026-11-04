@@ -338,8 +338,15 @@ async fn days_before_a_metric_starts_have_no_data_and_no_alert() {
         .collect();
     assert_eq!(
         metrics,
-        ["coffee", "music.listen"],
-        "ni déclarations ni références"
+        [
+            "coffee",
+            "music.listen",
+            "steps",
+            "workout",
+            "sleep",
+            "calories.burned"
+        ],
+        "ni déclarations ni références, dans l'ordre d'affichage du registre"
     );
     assert_eq!(month["metrics"][0]["label"], "Cafés");
 }

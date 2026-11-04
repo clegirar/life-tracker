@@ -79,6 +79,11 @@ ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin grant-kind las
 E2E_APPLE_TOKEN="$(ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin create-source apple 2>/dev/null)"
 export E2E_APPLE_TOKEN
 ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin grant-kind apple apple.play_history_row 2>/dev/null
+E2E_GARMIN_TOKEN="$(ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin create-source garmin --silence-threshold "12 hours" 2>/dev/null)"
+export E2E_GARMIN_TOKEN
+for kind in garmin.daily_summary garmin.sleep garmin.activity garmin.activity_track record.cancel; do
+  ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin grant-kind garmin "$kind" 2>/dev/null
+done
 
 API_PORT="$(free_port)"
 # Sans DEV_INSECURE_COOKIE : le cookie est Secure, comme en production.
@@ -102,7 +107,7 @@ echo "▶ Playwright"
 npx playwright test "$@"
 
 echo "▶ Les logs du backend ne contiennent ni mot de passe ni token"
-if grep -qF -e "$E2E_PASSWORD" -e "$E2E_IOS_TOKEN" -e "$E2E_LASTFM_TOKEN" -e "$E2E_APPLE_TOKEN" -e "Artiste Fictif" -e "Titre fictif" "$LOG"; then
+if grep -qF -e "$E2E_PASSWORD" -e "$E2E_IOS_TOKEN" -e "$E2E_LASTFM_TOKEN" -e "$E2E_APPLE_TOKEN" -e "$E2E_GARMIN_TOKEN" -e "Ville Fictive" -e "48.85" -e "Artiste Fictif" -e "Titre fictif" "$LOG"; then
   echo "ÉCHEC : secret dans les logs" >&2
   exit 1
 fi

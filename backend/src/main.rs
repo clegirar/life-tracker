@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use life_tracker::interpreters::INTERPRETERS;
-use life_tracker::{admin, api, apple, collector, db, engine, replay};
+use life_tracker::{admin, api, apple, collector, db, engine, privacy, replay};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
@@ -13,6 +13,8 @@ use tracing_subscriber::EnvFilter;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const LASTFM_PAUSE: Duration = Duration::from_millis(250);
+/// Garmin n'annonce aucune limite : une seconde entre deux appels, le rattrapage reste de quelques minutes.
+const GARMIN_PAUSE: Duration = Duration::from_secs(1);
 
 #[derive(Parser)]
 #[command(
@@ -36,28 +38,46 @@ enum Command {
         /// Développement seulement : retire `Secure` du cookie de session (Safari sur http://localhost)
         #[arg(long, env = "DEV_INSECURE_COOKIE")]
         dev_insecure_cookie: bool,
+        /// Les zones de confidentialité du MCP, `lat,lon,rayon_m` séparées par `;`, sur le NAS seulement
+        #[arg(long, env = "PRIVACY_ZONES", hide_env_values = true)]
+        privacy_zones: Option<String>,
     },
-    /// Interroge Last.fm et envoie à l'API d'ingestion, sans jamais connaître la base
+    /// Interroge Last.fm et Garmin, chacun si sa clé est fournie, et envoie à l'API d'ingestion, sans
+    /// jamais connaître la base. Chaque connecteur a son token, son état et ses nouveaux essais
     Collect {
         #[arg(long, env = "LASTFM_API_KEY", hide_env_values = true)]
-        lastfm_api_key: String,
+        lastfm_api_key: Option<String>,
         #[arg(long, env = "LASTFM_USER", hide_env_values = true)]
-        lastfm_user: String,
+        lastfm_user: Option<String>,
+        /// Le token de la source Last.fm
         #[arg(long, env = "COLLECTOR_TOKEN", hide_env_values = true)]
-        token: String,
-        #[arg(long, env = "INGEST_URL")]
-        ingest_url: String,
+        token: Option<String>,
         #[arg(long, env = "LASTFM_API_URL", default_value = collector::DEFAULT_LASTFM_URL)]
         lastfm_url: String,
-        /// Où garder le curseur ; le perdre ne coûte qu'un rattrapage
+        #[arg(long, env = "COLLECT_INTERVAL_SECONDS", default_value_t = 300)]
+        interval_seconds: u64,
+        /// La clé de l'API personnelle de Garmin, créée dans Garmin Connect
+        #[arg(long, env = "GARMIN_API_KEY", hide_env_values = true)]
+        garmin_api_key: Option<String>,
+        /// Le token de la source Garmin
+        #[arg(long, env = "GARMIN_TOKEN", hide_env_values = true)]
+        garmin_token: Option<String>,
+        #[arg(long, env = "GARMIN_API_URL", default_value = collector::garmin::DEFAULT_GARMIN_URL)]
+        garmin_url: String,
+        /// Le nom de la source Garmin dans le registre, que désignent ses annulations
+        #[arg(long, env = "GARMIN_SOURCE", default_value = "garmin")]
+        garmin_source: String,
+        #[arg(long, env = "GARMIN_INTERVAL_SECONDS", default_value_t = 900)]
+        garmin_interval_seconds: u64,
+        #[arg(long, env = "INGEST_URL")]
+        ingest_url: String,
+        /// Où garder l'état de chaque connecteur ; le perdre ne coûte qu'un rattrapage
         #[arg(
             long,
             env = "COLLECTOR_STATE_DIR",
             default_value = "/var/lib/life-tracker"
         )]
         state_dir: PathBuf,
-        #[arg(long, env = "COLLECT_INTERVAL_SECONDS", default_value_t = 300)]
-        interval_seconds: u64,
     },
     /// Envoie l'export Apple à l'API d'ingestion, sans jamais connaître la base. Le token se lit sur
     /// l'entrée standard, jamais en argument. Reprendre, c'est relancer : tout revient en duplicate
@@ -132,27 +152,68 @@ async fn main() -> Result<()> {
             database_url,
             listen,
             dev_insecure_cookie,
-        } => serve(&database_url, &listen, dev_insecure_cookie).await,
+            privacy_zones,
+        } => {
+            serve(
+                &database_url,
+                &listen,
+                dev_insecure_cookie,
+                privacy_zones.as_deref(),
+            )
+            .await
+        }
         Command::Collect {
             lastfm_api_key,
             lastfm_user,
             token,
-            ingest_url,
             lastfm_url,
-            state_dir,
             interval_seconds,
+            garmin_api_key,
+            garmin_token,
+            garmin_url,
+            garmin_source,
+            garmin_interval_seconds,
+            ingest_url,
+            state_dir,
         } => {
-            collect(collector::Config {
-                lastfm_url,
-                api_key: lastfm_api_key,
-                user: lastfm_user,
-                ingest_url: ingest_url.trim_end_matches('/').to_owned(),
-                token,
-                state_dir,
-                interval: Duration::from_secs(interval_seconds),
-                pause: LASTFM_PAUSE,
-            })
-            .await
+            let ingest_url = ingest_url.trim_end_matches('/').to_owned();
+            let set = |value: Option<String>| value.filter(|v| !v.is_empty());
+            let lastfm = match (set(lastfm_api_key), set(lastfm_user), set(token)) {
+                (None, None, None) => None,
+                (Some(api_key), Some(user), Some(token)) => Some(collector::Config {
+                    lastfm_url,
+                    api_key,
+                    user,
+                    ingest_url: ingest_url.clone(),
+                    token,
+                    state_dir: state_dir.clone(),
+                    interval: Duration::from_secs(interval_seconds),
+                    pause: LASTFM_PAUSE,
+                }),
+                _ => {
+                    bail!("Last.fm demande LASTFM_API_KEY, LASTFM_USER et COLLECTOR_TOKEN ensemble")
+                }
+            };
+            let garmin = match (set(garmin_api_key), set(garmin_token)) {
+                (None, None) => None,
+                (Some(api_key), Some(token)) => Some(collector::garmin::Config {
+                    api_url: garmin_url,
+                    api_key,
+                    ingest_url,
+                    token,
+                    source: garmin_source,
+                    state_dir,
+                    interval: Duration::from_secs(garmin_interval_seconds),
+                    pause: GARMIN_PAUSE,
+                }),
+                _ => bail!("Garmin demande GARMIN_API_KEY et GARMIN_TOKEN ensemble"),
+            };
+            if lastfm.is_none() && garmin.is_none() {
+                bail!(
+                    "aucun connecteur : LASTFM_API_KEY (Last.fm) ou GARMIN_API_KEY (Garmin) est requis"
+                );
+            }
+            collect(lastfm, garmin).await
         }
         Command::ImportApple {
             archive,
@@ -172,7 +233,11 @@ async fn main() -> Result<()> {
 }
 
 /// Même à `RUST_LOG=trace`, les bibliothèques HTTP se taisent : elles citeraient l'URL, donc la clé.
-async fn collect(config: collector::Config) -> Result<()> {
+/// Un connecteur par tâche : la panne de l'un n'arrête jamais l'autre.
+async fn collect(
+    lastfm: Option<collector::Config>,
+    garmin: Option<collector::garmin::Config>,
+) -> Result<()> {
     let filter = [
         "reqwest=off",
         "hyper=off",
@@ -189,12 +254,21 @@ async fn collect(config: collector::Config) -> Result<()> {
         .json()
         .with_env_filter(filter)
         .init();
-    let collector = collector::Collector::new(config)?;
     let (stop, stopped) = watch::channel(false);
-    let worker = tokio::spawn(collector.run(stopped));
+    let mut workers = Vec::new();
+    if let Some(config) = lastfm {
+        let connector = collector::Collector::new(config)?;
+        workers.push(tokio::spawn(connector.run(stopped.clone())));
+    }
+    if let Some(config) = garmin {
+        let connector = collector::garmin::Collector::new(config)?;
+        workers.push(tokio::spawn(connector.run(stopped.clone())));
+    }
     shutdown_signal().await;
     stop.send_replace(true);
-    worker.await?;
+    for worker in workers {
+        worker.await?;
+    }
     tracing::info!("stopped");
     Ok(())
 }
@@ -249,7 +323,12 @@ async fn import_apple(archive_dir: PathBuf, ingest_url: String) -> Result<()> {
     Ok(())
 }
 
-async fn serve(database_url: &str, listen: &str, insecure_cookie: bool) -> Result<()> {
+async fn serve(
+    database_url: &str,
+    listen: &str,
+    insecure_cookie: bool,
+    privacy_zones: Option<&str>,
+) -> Result<()> {
     tracing_subscriber::fmt()
         .json()
         .with_env_filter(
@@ -258,6 +337,19 @@ async fn serve(database_url: &str, listen: &str, insecure_cookie: bool) -> Resul
         .init();
     if insecure_cookie {
         tracing::warn!("cookie de session sans Secure : développement seulement");
+    }
+    // Le nombre de zones seulement, jamais leurs valeurs.
+    let (zones, status) = privacy::Zones::parse(privacy_zones);
+    match status {
+        privacy::Status::Zones(count) => {
+            tracing::info!("zone de confidentialité : {count} zone(s)")
+        }
+        privacy::Status::Absent => {
+            tracing::warn!("zone de confidentialité absente : coordonnées masquées pour le MCP");
+        }
+        privacy::Status::Invalid => {
+            tracing::warn!("zone de confidentialité illisible : coordonnées masquées pour le MCP");
+        }
     }
     let pool = db::pool(database_url)?;
     let listener = TcpListener::bind(listen).await.context("écoute")?;
@@ -271,7 +363,13 @@ async fn serve(database_url: &str, listen: &str, insecure_cookie: bool) -> Resul
     ));
     let served = axum::serve(
         listener,
-        api::router_with(pool.clone(), api::Config { insecure_cookie }),
+        api::router_with(
+            pool.clone(),
+            api::Config {
+                insecure_cookie,
+                zones,
+            },
+        ),
     )
     .with_graceful_shutdown(shutdown_signal())
     .await;

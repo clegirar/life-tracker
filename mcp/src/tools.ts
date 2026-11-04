@@ -26,6 +26,7 @@ interface RegistryMetric {
   duration_from: string | null;
   freshness_threshold_seconds: number | null;
   description: string | null;
+  shared_details: string[];
   events: number;
   first_at: string | null;
   last_at: string | null;
@@ -94,6 +95,10 @@ function toolsFor(m: RegistryMetric): string[] {
   if (m.duration_from || m.shape === 'duration') {
     tools.push('cumulative_duration');
   }
+  // Des coordonnées dans les détails : la métrique a des parcours (séances).
+  if (m.shared_details.some((field) => field.endsWith('_lat'))) {
+    tools.push('route');
+  }
   return tools;
 }
 
@@ -123,6 +128,8 @@ function failure(error: unknown): { content: { type: 'text'; text: string }[]; i
       message = 'Not found: this item has no occurrence and no "already known" mark. Use `search` to find its exact key.';
     } else if (error.status === 401) {
       message = 'The life tracker refused the MCP service token.';
+    } else if (error.status === 403) {
+      message = 'Routes and coordinates are withheld: no privacy zone is configured on the server.';
     }
   } else if (error instanceof Error && error.message.startsWith('invalid:')) {
     message = error.message.slice('invalid:'.length).trim();
@@ -187,7 +194,8 @@ export function buildServer(backend: Backend): McpServer {
     { name: 'life-tracker', version: '0.1.0' },
     {
       instructions:
-        'Read-only access to the life tracker of one person (coffee, music listens…). Call `inventory` first: it lists the tracked metrics, their item levels and which tools apply. ' +
+        'Read-only access to the life tracker of one person (coffee, music listens, steps, sleep, workouts…). Call `inventory` first: it lists the tracked metrics, their item levels and which tools apply. ' +
+        'Coordinates near the person\'s home are hidden by a privacy zone (`*_hidden: true`, routes cut where they enter it): never try to infer what was hidden. ' +
         'Dates are local days in Europe/Paris (YYYY-MM-DD, bounds included) and times are Paris local time. Item keys are normalized: get them from `search`, `top` or `discoveries`. ' +
         'A day without occurrences is not necessarily a day without activity: use `completeness` before concluding.',
     },
@@ -255,7 +263,7 @@ export function buildServer(backend: Backend): McpServer {
     {
       title: 'Occurrences',
       description:
-        'Occurrences of a metric, or of one item of it, over a period, with their Paris local time. Forms: "list" (each occurrence, with its items), "daily" (count per day), "first_last" (first and last time of each day, e.g. time of the first coffee). Days absent from the result have no occurrence.',
+        'Occurrences of a metric, or of one item of it, over a period, with their Paris local time. Forms: "list" (each occurrence with its id, items, value when the metric has one, e.g. km of a workout or minutes of sleep, and its details: sleep stages in seconds, workout duration, pace, heart rate, calories, place, start/end coordinates outside privacy zones), "daily" (count per day), "first_last" (first and last time of each day, e.g. time of the first coffee). Days absent from the result have no occurrence.',
       inputSchema: z.object({
         metric,
         from: date,
@@ -271,7 +279,13 @@ export function buildServer(backend: Backend): McpServer {
       guarded(async () => {
         const result = await backend.get<Json>('/v1/occurrences', { metric: m, from, to, form, level: l, key: k, limit });
         if (result.form === 'list' && Array.isArray(result.occurrences)) {
-          result.occurrences = (result.occurrences as Json[]).map((o) => ({ local: o.local, items: o.items }));
+          result.occurrences = (result.occurrences as Json[]).map((o) => ({
+            id: o.id,
+            local: o.local,
+            items: o.items,
+            value: o.value,
+            details: o.details,
+          }));
         }
         return result;
       }),
@@ -389,7 +403,7 @@ export function buildServer(backend: Backend): McpServer {
     {
       title: 'Day summary',
       description:
-        'Everything the calendar shows for one day: the value of each metric (null means no data that day), times of counted events, top items, discoveries, minutes, and the completeness signals of the day.',
+        'Everything the calendar shows for one day: the value of each metric (null means no data that day, never zero; a measure such as steps or sleep minutes is the value of the day), times of counted events, each workout with its items and value, top items, discoveries, minutes, and the completeness signals of the day.',
       inputSchema: z.object({ date }),
       annotations: READ_ONLY,
     },
@@ -401,7 +415,14 @@ export function buildServer(backend: Backend): McpServer {
         const metrics: Json[] = [];
         for (const m of inventory.metrics.filter(displayable)) {
           const entry: Json = { metric: m.metric, label: m.label, value: signals?.values[m.metric] ?? null };
-          if (m.item_levels.length === 0) {
+          if (m.shape === 'measure') {
+            // Une mesure du jour (pas, sommeil…) : sa valeur et ses détails, sans heure (midi est une convention).
+            if (m.shared_details.length > 0) {
+              const list = await backend.get<Json>('/v1/occurrences', { metric: m.metric, from: day, to: day, form: 'list', limit: 10 });
+              const last = ((list.occurrences as Json[]) ?? []).at(-1);
+              entry.details = last?.details ?? null;
+            }
+          } else if (m.item_levels.length === 0) {
             const list = await backend.get<Json>('/v1/occurrences', {
               metric: m.metric,
               from: day,
@@ -416,6 +437,17 @@ export function buildServer(backend: Backend): McpServer {
               top[l] = await backend.get('/v1/top', { metric: m.metric, level: l, from: day, to: day, limit: 10 });
             }
             entry.top = top;
+            if (!m.discovery) {
+              // Peu d'occurrences par jour (des séances) : chacune, avec son heure, ses éléments et sa valeur.
+              const list = await backend.get<Json>('/v1/occurrences', { metric: m.metric, from: day, to: day, form: 'list', limit: 50 });
+              entry.occurrences = ((list.occurrences as Json[]) ?? []).map((o) => ({
+                id: o.id,
+                time: String(o.local).slice(11),
+                items: o.items,
+                value: o.value,
+                details: o.details,
+              }));
+            }
             if (m.discovery) {
               const found: Json = {};
               for (const l of m.item_levels) {
@@ -439,6 +471,22 @@ export function buildServer(backend: Backend): McpServer {
           metrics,
         };
       }),
+  );
+
+  // Un outil de plus que l'architecture n'en prévoyait : « quel parcours », « où ai-je couru » échouent
+  // sans lui (voir le journal des décisions, 4 nov. 2026). Générique : le parcours d'une occurrence.
+  server.registerTool(
+    'route',
+    {
+      title: 'Route',
+      description:
+        'The route of one occurrence (e.g. a run), from its `id` in `occurrences` or `day_summary`: segments of [lat, lon] points in degrees. Points inside the privacy zone are removed and the route is cut there (`trimmed: true`); segments must never be joined across the gap.',
+      inputSchema: z.object({
+        id: z.string().regex(/^\d+:\d+$/).describe('The occurrence id, e.g. "1234:0"'),
+      }),
+      annotations: READ_ONLY,
+    },
+    async ({ id }) => guarded(() => backend.get('/v1/route', { id })),
   );
 
   server.registerTool(

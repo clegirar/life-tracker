@@ -160,7 +160,7 @@ test('une journée sans écoute et une panne ne se confondent pas', async ({ pag
   await page.route('**/v1/sources/health', async (route) => {
     const response = await route.fetch()
     const health = await response.json()
-    health.sources[0].silent = true
+    health.sources.find((source: { name: string }) => source.name === 'lastfm').silent = true
     await route.fulfill({ response, json: health })
   })
   // L'adresse garde le jour.

@@ -195,6 +195,7 @@ fn read_paths() -> Vec<String> {
         "/v1/item?metric=music.listen&level=artist&key=daft%20punk".to_owned(),
         "/v1/top?metric=music.listen&level=artist&from=2026-10-01&to=2026-10-31".to_owned(),
         "/v1/discoveries?metric=music.listen&level=artist&from=2026-10-01&to=2026-10-31".to_owned(),
+        "/v1/route?id=1:0".to_owned(),
     ];
     assert_eq!(
         paths.len(),
@@ -243,6 +244,11 @@ async fn the_service_token_reads_every_read_route() {
     let app = App::new().await;
     seed(&app).await;
     for path in read_paths() {
+        if path.starts_with("/v1/route") {
+            // Sans zone de confidentialité, aucun parcours pour le jeton (voir tests/garmin.rs).
+            assert_eq!(app.read(&path).await.0, 403, "{path}");
+            continue;
+        }
         app.ok(&path).await;
     }
 }

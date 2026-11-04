@@ -13,6 +13,7 @@ const backendUrl = process.env.LT_MCP_TEST_BACKEND_URL;
 const serviceToken = process.env.LT_MCP_TEST_SERVICE_TOKEN ?? '';
 const iosToken = process.env.LT_MCP_TEST_IOS_TOKEN ?? '';
 const lastfmToken = process.env.LT_MCP_TEST_LASTFM_TOKEN ?? '';
+const garminToken = process.env.LT_MCP_TEST_GARMIN_TOKEN ?? '';
 const skip = backendUrl === undefined ? 'sans backend : lancer mcp/test.sh' : false;
 
 const EXPECTED_TOOLS = [
@@ -24,6 +25,7 @@ const EXPECTED_TOOLS = [
   'inventory',
   'last_time',
   'occurrences',
+  'route',
   'search',
   'top',
 ];
@@ -41,6 +43,26 @@ function scrobble(at: string, artist: string, track: string, album: string) {
     payload: { artist: { mbid: '', '#text': artist }, album: { mbid: '', '#text': album }, name: track, date: { uts: '0' } },
   };
 }
+
+// Garmin, tel que l'envoie le connecteur : listes blanches, coordonnées et lieu fictifs.
+const garmin = (key: string, kind: string, at: string, payload: Record<string, unknown>) => ({ key, kind, schema_version: 1, occurred_at: at, payload });
+const GARMIN = [
+  garmin('summary:2026-10-15:a', 'garmin.daily_summary', '2026-10-15T12:00:00+02:00', {
+    calendar_date: '2026-10-15', steps: 8412, distance_m: 6123, calories_total: 2350, calories_active: 512, calories_resting: 1838,
+  }),
+  garmin('sleep:2026-10-15:a', 'garmin.sleep', '2026-10-15T12:00:00+02:00', {
+    calendar_date: '2026-10-15', start: '2026-10-14T21:41:00Z', end: '2026-10-15T04:54:00Z', sleep_seconds: 25_980,
+    deep_seconds: 4_920, light_seconds: 14_400, rem_seconds: 6_660, awake_seconds: 660,
+  }),
+  garmin('activity:7:a', 'garmin.activity', '2026-10-15T07:30:00+02:00', {
+    activity_id: 7, type: 'running', start: '2026-10-15T05:30:00Z', duration_s: 1802, moving_s: 1780, distance_m: 5012.3,
+    avg_speed_mps: 2.78, avg_hr: 151, max_hr: 176, calories: 389, start_lat: 43.212345, start_lon: 5.432109,
+    end_lat: 43.222345, end_lon: 5.442109, location_name: 'Ville Fictive',
+  }),
+  garmin('track:7:a', 'garmin.activity_track', '2026-10-15T07:30:00+02:00', {
+    activity_id: 7, points: [[43.212345, 5.432109, 0], [43.218345, 5.438109, 600], [43.222345, 5.442109, 1200]],
+  }),
+];
 
 async function ingest(token: string, records: unknown[]): Promise<void> {
   const response = await fetch(`${backendUrl}/v1/records`, {
@@ -61,7 +83,14 @@ async function settled(): Promise<void> {
     const response = await fetch(`${backendUrl}/v1/inventory`, { headers: { authorization: `Bearer ${serviceToken}` } });
     const body = (await response.json()) as { metrics: { metric: string; events: number }[] };
     const events = (name: string) => body.metrics.find((m) => m.metric === name)?.events ?? 0;
-    if (events('coffee') === 4 && events('music.listen') === 5 && events('music.track_duration') === 1) {
+    if (
+      events('coffee') === 4 &&
+      events('music.listen') === 5 &&
+      events('music.track_duration') === 1 &&
+      events('workout') === 1 &&
+      events('workout.track') === 1 &&
+      events('sleep') === 1
+    ) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -106,6 +135,7 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
         payload: { artist: 'Daft Punk', track: 'Veridis Quo', info: { track: { duration: '345000' } } },
       },
     ]);
+    await ingest(garminToken, GARMIN);
     await settled();
     h = await startServer({ backendUrl, serviceToken });
     const tokens = await login(h);
@@ -246,5 +276,63 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
       })) as ToolResult,
     );
     assert.equal((result.days as { first: string }[])[0]?.first, '08:10');
+  });
+
+  test('Garmin : détails du jour, séances par lieu, parcours coupé à la zone de confidentialité', async () => {
+    const outputs: string[] = [];
+    const tool = async (name: string, args: Record<string, unknown>) => {
+      const result = (await client.callTool({ name, arguments: args })) as ToolResult;
+      outputs.push(result.content[0]?.text ?? '');
+      return parse(result);
+    };
+    const day = await tool('day_summary', { date: '2026-10-15' });
+    type Occurrence = { id: string; time: string; items: Record<string, string>; value: number; details: Record<string, unknown> };
+    type Entry = { metric: string; value: number | null; times?: string[]; details?: Record<string, unknown>; occurrences?: Occurrence[] };
+    const metrics = day.metrics as Entry[];
+    assert.deepEqual(
+      metrics.map((m) => m.metric),
+      ['coffee', 'music.listen', 'steps', 'workout', 'sleep', 'calories.burned'],
+      'l’ordre d’affichage du registre',
+    );
+    const steps = metrics.find((m) => m.metric === 'steps');
+    assert.equal(steps?.value, 8412);
+    assert.equal(steps?.times, undefined, 'une mesure n’a pas d’heure à lister');
+    assert.equal(steps?.details?.distance_m, 6123);
+    const sleep = metrics.find((m) => m.metric === 'sleep');
+    assert.equal(sleep?.value, 433);
+    assert.equal(sleep?.details?.rem_seconds, 6_660);
+    assert.equal(metrics.find((m) => m.metric === 'calories.burned')?.details?.active, 512);
+    const workout = metrics.find((m) => m.metric === 'workout');
+    assert.equal(workout?.value, 1);
+    const run = workout?.occurrences?.[0];
+    assert.equal(run?.time, '07:30');
+    assert.deepEqual(run?.items, { activity_type: 'running', place: 'Ville Fictive' });
+    assert.equal(run?.value, 5.012);
+    assert.equal(run?.details.avg_hr, 151);
+    assert.equal(run?.details.moving_s, 1780);
+    assert.equal(run?.details.start_lat, null, 'le départ est dans la zone');
+    assert.equal(run?.details.start_hidden, true);
+    assert.equal(run?.details.end_lat, 43.222345, 'l’arrivée est dehors');
+    assert.equal(metrics.find((m) => m.metric === 'workout.track'), undefined, 'une référence ne s’affiche pas');
+
+    // Quel parcours ? Coupé à la zone : le premier point n'y est plus.
+    const route = await tool('route', { id: run!.id });
+    assert.equal(route.trimmed, true);
+    assert.deepEqual(route.segments, [[[43.21835, 5.43811], [43.22235, 5.44211]]]);
+
+    // Dans combien de villes ai-je couru ?
+    const places = await tool('top', { metric: 'workout', level: 'place', from: '2026-10-01', to: '2026-10-31' });
+    assert.equal(places.distinct_items, 1);
+    const inventory = await tool('inventory', {});
+    const workoutTools = (inventory.metrics as { metric: string; tools: string[] }[]).find((m) => m.metric === 'workout')?.tools;
+    assert.ok(workoutTools?.includes('route'));
+    await tool('occurrences', { metric: 'workout', from: '2026-10-15', to: '2026-10-15' });
+    await tool('occurrences', { metric: 'workout.track', from: '2026-10-15', to: '2026-10-15' });
+    await tool('search', { query: 'ville' });
+    const all = outputs.join('');
+    assert.match(all, /Ville Fictive/);
+    for (const forbidden of ['43.212345', '43.21234', '43.21235', '5.432109', '"points"']) {
+      assert.ok(!all.includes(forbidden), `${forbidden} visible par le MCP`);
+    }
   });
 });

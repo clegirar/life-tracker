@@ -11,6 +11,7 @@ import { MenuButton, Sidebar, useWide } from './Sidebar'
 import { parisDate } from './time'
 import { useCoffee } from './useCoffee'
 import { useMonth } from './useMonth'
+import { useActivity } from './useActivity'
 import { useMusic } from './useMusic'
 import { useYear } from './useYear'
 import { YearPage } from './YearPage'
@@ -48,6 +49,7 @@ export function App() {
   // Vit au-dessus de l'écran de connexion : une écriture refusée par une session expirée y survit.
   const coffee = useCoffee(date, onSessionLost, auth === 'in')
   const music = useMusic(date, onSessionLost, auth === 'in')
+  const activity = useActivity(date, onSessionLost, auth === 'in')
   // Le mois affiché, ou celui du jour : la page du jour y lit si sa journée est incomplète.
   const calendar = useMonth(shownMonth ?? monthOf(date), onSessionLost, auth === 'in', shownMonth)
   // L'année n'est lue que vue ouverte : la rouvrir la relit.
@@ -128,6 +130,7 @@ export function App() {
         calendarDay={calendar.month?.days.find((day) => day.date === date) ?? null}
         coffee={coffee}
         music={music}
+        activity={activity}
       />
     )
   }
@@ -144,6 +147,7 @@ export function App() {
           await logout().catch(() => undefined)
           coffee.reset()
           music.reset()
+          activity.reset()
           calendar.reset()
           year.reset()
           setLastDay(null)

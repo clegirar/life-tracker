@@ -1,16 +1,17 @@
 # Life tracker
 
-App auto-hébergée sur un NAS Synology qui retrace ma vie jour par jour, avec un calendrier web et un serveur MCP pour Claude. On construit le POC : le compteur de cafés et la musique.
+App auto-hébergée sur un NAS Synology qui retrace ma vie jour par jour, avec un calendrier web et un serveur MCP pour Claude. Le POC (compteur de cafés et musique) est validé depuis le 4 nov. 2026 ; on construit le premier tracker après le POC : Garmin Connect.
 
 ## Où trouver quoi
 
 - `docs/poc.md` : les étapes du POC et leurs critères. On travaille une étape à la fois, dans l'ordre ; une étape n'est finie que si tous ses critères « Terminé quand » sont remplis.
 - `docs/architecture.md` : les principes, le contrat de l'API d'ingestion et le journal des décisions. À lire avant toute décision de conception.
 - `docs/database.md` : le schéma et ses raisons.
+- `TODO.md` : les reprises notées pour plus tard, à ne traiter que sur demande.
 
 ## Périmètre
 
-Hors POC : les messages et l'agent Mac, l'annuaire côté interface, les autres trackers, les « fonctionnalités futures » de l'architecture, les sauvegardes, l'ouverture de la web app sur Internet. Ne rien construire pour eux par anticipation ; le design des messages reste dans l'architecture pour plus tard.
+En cours : Garmin Connect (section « Après le POC » de `docs/poc.md`). Hors champ tant que je ne les demande pas : les messages et l'agent Mac, l'annuaire côté interface, les autres trackers, les « fonctionnalités futures » de l'architecture, les sauvegardes, l'ouverture de la web app sur Internet, le contenu de `TODO.md`. Ne rien construire pour eux par anticipation ; le design des messages reste dans l'architecture pour plus tard.
 
 ## Commandes
 
@@ -36,8 +37,8 @@ Seul ce qui existe aujourd'hui est listé ; ajouter ici les commandes de chaque 
 Depuis `backend/`, après `set -a && . ../.env && set +a` (chaque commande lit sa propre URL) :
 
 - Migrations : `cargo run -- migrate` (`MIGRATE_DATABASE_URL`, `tracker_owner`).
-- API et interprètes : `cargo run -- serve` (`DATABASE_URL`, `tracker_app` ; `LISTEN_ADDR`, `RUST_LOG`).
-- Collecteur : `cargo run -- collect` (`LASTFM_API_KEY`, `LASTFM_USER`, `COLLECTOR_TOKEN` : le token d'une source de développement, `INGEST_URL`, `COLLECTOR_STATE_DIR` ; facultatifs `LASTFM_API_URL`, `COLLECT_INTERVAL_SECONDS`). Ne connaît pas la base. Jamais de token ni de clé de production en développement.
+- API et interprètes : `cargo run -- serve` (`DATABASE_URL`, `tracker_app` ; `LISTEN_ADDR`, `RUST_LOG` ; `PRIVACY_ZONES`, `lat,lon,rayon_m` séparées par `;`, une zone fictive en développement).
+- Collecteur : `cargo run -- collect` (`INGEST_URL`, `COLLECTOR_STATE_DIR`, et au moins un connecteur). Last.fm si `LASTFM_API_KEY` est fourni, avec `LASTFM_USER` et `COLLECTOR_TOKEN` (le token d'une source de développement) ; facultatifs `LASTFM_API_URL`, `COLLECT_INTERVAL_SECONDS`. Garmin si `GARMIN_API_KEY` est fourni, avec `GARMIN_TOKEN` (le token de la source `garmin`) ; facultatifs `GARMIN_API_URL` (tests), `GARMIN_SOURCE` (nom de la source, `garmin` par défaut), `GARMIN_INTERVAL_SECONDS` (900). Chaque connecteur a son état (`state.json`, `garmin-state.json`). Ne connaît pas la base. Jamais de token ni de clé de production en développement : il n'existe qu'une clé Garmin par compte, et elle vit sur le NAS.
 - Administration (`ADMIN_DATABASE_URL`, `tracker_admin`) : `cargo run -- admin create-source <nom> [--silence-threshold "6 hours"]` (affiche le token une seule fois), `admin revoke-source <nom>`, `admin create-service-token <nom>` (jeton de service de l'API de lecture, pour le MCP : lecture seule, pseudonymes ; affiché une seule fois), `admin revoke-service-token <nom>`, `admin grant-kind <source> <type>`, `admin revoke-kind <source> <type>`, `admin rebuild [--allow-differences]` (génération à côté, comparaison, bascule), `admin retry-errors`, `admin set-password <identifiant>` (crée le compte web ou change son mot de passe, lu au clavier ou sur l'entrée standard, et ferme les sessions), `admin coverage <métrique>` (par source : nombre et dates, trou ou chevauchement), `admin set-precedence <métrique> <source> [--from <RFC 3339>]` (la source fait foi à partir de cette date ; sans date, sa première donnée, refusée si elle est isolée).
 
 Import Apple, depuis `backend/` : `INGEST_URL=http://127.0.0.1:8080 cargo run -- import-apple --archive <dossier> < <fichier du token>` (dossier des trois fichiers lus, voir `docs/deploiement.md` ; aucun accès à la base, relancer reprend). Jamais de vraie archive dans le dépôt : les fixtures de `backend/tests/fixtures/apple/` sont fictives.
@@ -61,7 +62,7 @@ Le cookie de session est toujours `Secure`. Seule exception, pour le développem
 - Aucune donnée personnelle dans les logs : seulement des identifiants d'enregistrements.
 - Le backend tourne avec `tracker_app` et ne connaît jamais le mot de passe de `tracker_owner`. Ne pas élargir les droits pour contourner un refus de la base : un refus signale en général un défaut de conception.
 - Toute route de la web app exige la session, même derrière Tailscale.
-- Le MCP est en lecture seule et ne voit que des pseudonymes.
+- Le MCP est en lecture seule et ne voit que des pseudonymes. Il ne reçoit des détails d'événements que les champs listés par `core.metrics.shared_details`, et toute coordonnée ou trace passe par les zones de confidentialité (`PRIVACY_ZONES` de `serve`, sur le NAS seulement, jamais dans le dépôt, le journal ni les logs) ; sans zone valide, aucune coordonnée ni aucun parcours pour le jeton de service.
 
 ## Conventions
 

@@ -207,6 +207,7 @@ async fn only_the_explicit_dev_setting_removes_secure() {
         web.db.app.clone(),
         Config {
             insecure_cookie: true,
+            ..Config::default()
         },
     );
     tokio::spawn(async move { axum::serve(listener, router).await });

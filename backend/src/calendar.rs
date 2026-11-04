@@ -162,7 +162,7 @@ pub async fn range(pool: &PgPool, start: NaiveDate, end: NaiveDate) -> Result<Pe
                   extract(epoch FROM freshness_threshold)::float8 AS freshness
            FROM core.metrics
            WHERE shape NOT IN ('declaration', 'reference') AND daily_aggregation <> 'none'
-           ORDER BY metric"#
+           ORDER BY display_order NULLS LAST, metric"#
     )
     .fetch_all(pool)
     .await?;

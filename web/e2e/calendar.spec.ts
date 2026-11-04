@@ -124,7 +124,7 @@ test('un jour passé n’est jamais gardé : une donnée tardive le change', asy
   await login(page)
   const day = await openMonthOf(page, date)
   const before = (await serverMonthDay(request, cookie, date)).values.coffee
-  await expect(day).toHaveAccessibleName(before === null ? /^[^:]+ : pas de données|cafés : pas de données/ : new RegExp(`: ${before} cafés?,`))
+  await expect(day).toHaveAccessibleName(before === null ? /^[^:]+ : pas de données|cafés : pas de données/ : new RegExp(`(: |, )${before} cafés?,`))
 
   // Un café noté après coup par le raccourci, pendant que le mois est à l'écran.
   const response = await request.post(`${API_URL}/v1/records`, {
@@ -138,7 +138,7 @@ test('un jour passé n’est jamais gardé : une donnée tardive le change', asy
   await day.click()
   await expect(page.getByTestId('count').locator('.count-value')).toHaveText('1')
   await page.getByRole('button', { name: /^Voir le mois/ }).click()
-  await expect(cell(page, date)).toHaveAccessibleName(/: 1 café(,|$)/)
+  await expect(cell(page, date)).toHaveAccessibleName(/(: |, )1 café(,|$)/)
   expect(await serverDay(request, cookie, date)).toHaveLength(1)
   await clearDay(request, cookie, date)
 })

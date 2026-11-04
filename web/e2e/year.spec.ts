@@ -64,6 +64,17 @@ const chip = (page: Page, name: 'Cafés' | 'Écoutes') => page.getByRole('group'
 const cell = (page: Page, date: string) => page.locator(`.cell[data-date="${date}"]`)
 
 const ALL = ['coffee', 'music.listen']
+
+/**
+ * Ces tests parlent du café et de la musique : le choix part de ces deux métriques, comme avant Garmin
+ * (une seule fois, pour que les changements survivent au rechargement). Le choix par défaut de toutes
+ * les métriques est vérifié par activity.spec.ts.
+ */
+async function coffeeAndMusic(page: Page) {
+  await page.addInitScript((metrics) => {
+    if (window.localStorage.getItem('calendar.metrics') === null) window.localStorage.setItem('calendar.metrics', metrics)
+  }, JSON.stringify(ALL))
+}
 type ServerDay = { date: string; values: Record<string, number | null> }
 
 /** Les jours passés de l'année, lus au serveur : de quoi trouver un jour sans données et un jour sans activité. */
@@ -88,10 +99,11 @@ test('une métrique : chiffres du mois et intensité de l’année ; plusieurs :
   expect(empty, 'un jour sans données').toBeDefined()
   expect(quiet, 'un jour sans activité').toBeDefined()
 
+  await coffeeAndMusic(page)
   await login(page)
   await page.goto(`/annee/${yearOf(FIRST_CUP)}`)
   const grid = page.getByTestId('year-grid')
-  // Par défaut, toutes les métriques : un point par métrique active, dans sa couleur.
+  // Le café et la musique : un point par métrique active, dans sa couleur.
   await expect(chip(page, 'Cafés')).toHaveAttribute('aria-pressed', 'true')
   await expect(chip(page, 'Écoutes')).toHaveAttribute('aria-pressed', 'true')
   await expect(grid).toHaveAttribute('data-mode', 'plusieurs')
@@ -209,6 +221,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
             .toBe(cups)
         }
         await page.setViewportSize(viewport)
+        await coffeeAndMusic(page)
         await login(page)
         const width = label === '390' ? '390' : '1280'
         const shot = (name: string) => fullShot(page, `${SHOTS}/${width}-${colorScheme}-${name}.png`)
