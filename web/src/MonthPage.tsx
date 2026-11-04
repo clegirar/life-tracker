@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
-import type { Month, SourcesHealth } from './api'
-import { addMonths, cellLabel, compact, errorCountText, marker, MARKER_LABELS, monthGrid, monthName, monthOf, WEEKDAYS, type Marker } from './calendar'
+import type { Month, MonthMetric, SourcesHealth } from './api'
+import { addMonths, cellLabel, cellText, errorCountText, marker, MARKER_LABELS, monthGrid, monthName, monthOf, WEEKDAYS, type Marker } from './calendar'
 import { DayDots, MetricsLegend } from './DayDots'
 import { MetricFilters } from './MetricFilters'
 import { dayActivity, effectiveSelection, metricTone } from './metrics'
@@ -34,10 +34,10 @@ function Chevron({ d }: { d: string }) {
 }
 
 /** Le chiffre d'une seule métrique : sans chiffre, pas de données ; 0, rien ce jour-là. */
-function DayValue({ value, metric }: { value: number | null; metric: string }) {
+function DayValue({ value, metric, info }: { value: number | null; metric: string; info: MonthMetric | undefined }) {
   return (
     <span className={`cell-value ${metricTone(metric)} ${value === 0 ? 'is-zero' : ''}`} data-metric={metric} aria-hidden="true">
-      {value === null ? ' ' : compact(value)}
+      {value === null ? ' ' : cellText(info, value)}
     </span>
   )
 }
@@ -138,7 +138,7 @@ export function MonthPage({ menu, onShowYear, month, today, selected, data, load
                     onClick={() => onOpenDay(date)}
                   >
                     <span className="cell-number">{Number(date.slice(8))}</span>
-                    {single && !future && <DayValue value={day?.values[single] ?? null} metric={single} />}
+                    {single && !future && <DayValue value={day?.values[single] ?? null} metric={single} info={chosen[0]} />}
                     {activity && <DayDots active={activity.active} size="month" />}
                     {mark && <span className={`mark mark-${mark}`} aria-hidden="true" />}
                   </button>

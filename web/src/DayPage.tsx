@@ -1,5 +1,7 @@
 import { useRef, useState, type ReactNode } from 'react'
 import type { MonthDay } from './api'
+import { ActivityCard } from './ActivityCard'
+import type { useActivity } from './useActivity'
 import { monthName, monthOf } from './calendar'
 import type { Op } from './reconcile'
 import { isAdd } from './reconcile'
@@ -20,6 +22,7 @@ interface Props {
   calendarDay: MonthDay | null
   coffee: ReturnType<typeof useCoffee>
   music: ReturnType<typeof useMusic>
+  activity: ReturnType<typeof useActivity>
 }
 
 function Chevron({ d }: { d: string }) {
@@ -40,7 +43,7 @@ function failureText(op: Op, date: string, today: string): string {
     : `${what} de ${when} n'a pas été enregistré${e}.`
 }
 
-export function DayPage({ menu, date, today, onSelect, onShowMonth, calendarDay, coffee, music }: Props) {
+export function DayPage({ menu, date, today, onSelect, onShowMonth, calendarDay, coffee, music, activity }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [picked, setPicked] = useState('12:00')
   const [pickError, setPickError] = useState<string | null>(null)
@@ -211,6 +214,7 @@ export function DayPage({ menu, date, today, onSelect, onShowMonth, calendarDay,
         </button>
       </section>
 
+      <ActivityCard date={date} today={today} state={activity} health={music.health} />
       <MusicCard date={date} today={today} state={music} />
       </div>
     </main>

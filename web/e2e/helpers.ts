@@ -6,6 +6,7 @@ export const API_URL = process.env.E2E_API_URL!
 export const IOS_TOKEN = process.env.E2E_IOS_TOKEN!
 export const LASTFM_TOKEN = process.env.E2E_LASTFM_TOKEN!
 export const APPLE_TOKEN = process.env.E2E_APPLE_TOKEN!
+export const GARMIN_TOKEN = process.env.E2E_GARMIN_TOKEN!
 
 export function parisToday(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date())

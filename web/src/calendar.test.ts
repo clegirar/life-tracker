@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MonthDay, MonthMetric } from './api'
-import { addMonths, cellLabel, compact, dayNotes, errorCountText, marker, monthGrid, monthName, sourceName, valueText } from './calendar'
+import { addMonths, cellLabel, cellText, compact, dayNotes, errorCountText, hoursText, marker, monthGrid, monthName, sourceName, valueText } from './calendar'
 
 const METRICS: MonthMetric[] = [
   { metric: 'coffee', label: 'Cafés', unit: 'tasse' },
@@ -78,5 +78,34 @@ describe('les textes', () => {
     expect(compact(312)).toBe('312')
     expect(compact(1000)).toBe('1 k')
     expect(compact(1240)).toBe('1,2 k')
+  })
+})
+
+describe('les unités de Garmin', () => {
+  const metric = (label: string, unit: string) => ({ metric: label, label, unit })
+  const nbsp = (text: string) => text.replace(/\u202f/g, ' ')
+
+  it('dit des pas, des kcal, une durée de sommeil et des séances', () => {
+    expect(nbsp(valueText(metric('Pas', 'pas'), 8412))).toBe('8 412 pas')
+    expect(nbsp(valueText(metric('Calories brûlées', 'kcal'), 2350))).toBe('2 350 kcal')
+    expect(valueText(metric('Sommeil', 'min'), 432)).toBe('7 h 12')
+    expect(valueText(metric('Sommeil', 'min'), 45)).toBe('45 min')
+    expect(valueText(metric('Séances', 'séance'), 1)).toBe('1 séance')
+    expect(valueText(metric('Séances', 'séance'), 2)).toBe('2 séances')
+    expect(valueText(metric('Pas', 'pas'), 0)).toBe('0 pas')
+    expect(valueText(metric('Pas', 'pas'), null)).toBe('pas : pas de données')
+  })
+
+  it('met le sommeil en heures dans une case', () => {
+    expect(cellText(metric('Sommeil', 'min'), 432)).toBe('7,2 h')
+    expect(cellText(metric('Sommeil', 'min'), 420)).toBe('7 h')
+    expect(cellText(metric('Sommeil', 'min'), 40)).toBe('40')
+    expect(cellText(metric('Pas', 'pas'), 8412)).toBe('8,4 k')
+    expect(hoursText(60)).toBe('1 h 00')
+  })
+
+  it('nomme la source Garmin', () => {
+    expect(sourceName('garmin')).toBe('Garmin')
+    expect(sourceName('garmin-2')).toBe('Garmin')
   })
 })

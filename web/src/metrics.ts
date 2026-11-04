@@ -8,7 +8,14 @@ import type { MonthDay } from './api'
 const STORAGE_KEY = 'calendar.metrics'
 
 // La couleur de chaque métrique connue ; une métrique nouvelle prend la teinte neutre, sans code à changer.
-const TONES: Record<string, string> = { coffee: 'heat-coffee', 'music.listen': 'heat-music' }
+const TONES: Record<string, string> = {
+  coffee: 'heat-coffee',
+  'music.listen': 'heat-music',
+  steps: 'heat-steps',
+  'calories.burned': 'heat-calories',
+  sleep: 'heat-sleep',
+  workout: 'heat-workout',
+}
 
 /** La classe qui pose `--heat`, la couleur de la métrique : chiffres, points, pastilles, filtres et rampes. */
 export const metricTone = (metric: string) => TONES[metric] ?? 'heat-neutral'

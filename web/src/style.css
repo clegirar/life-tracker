@@ -16,6 +16,11 @@
   --error: #b3261e;
   --music: #c8102e;
   --on-music: #ffffff;
+  /* Garmin : les couleurs système d'Apple, en version accessible sur fond clair. */
+  --steps: #248a3d;
+  --calories: #c93400;
+  --sleep: #5856d6;
+  --workout: #0071a4;
   --segment-on: #ffffff;
   --check: #c98500;
   /* La barre latérale : un cran sous le fond de page, comme la barre de Réglages sur Mac. */
@@ -58,6 +63,10 @@
     --error: #ff8a80;
     --music: #ff7a8a;
     --on-music: #2a0509;
+    --steps: #30d158;
+    --calories: #ff9f0a;
+    --sleep: #7d7aff;
+    --workout: #64d2ff;
     --segment-on: #636366;
     --check: #ffcc4d;
     --sidebar-bg: #121214;
@@ -354,6 +363,11 @@ button:disabled {
   min-width: 0;
 }
 
+.card-activity {
+  flex: 2 1 420px;
+  min-width: 0;
+}
+
 .card {
   padding: 16px;
   border-radius: 20px;
@@ -570,6 +584,18 @@ button:disabled {
   font-size: 15px;
   line-height: 20px;
   color: var(--muted);
+}
+
+.inline-note {
+  margin-top: 8px;
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--muted);
+}
+
+.inline-note strong {
+  font-weight: 600;
+  color: var(--fg);
 }
 
 .notice strong {
@@ -1080,24 +1106,34 @@ button:disabled {
   --heat: var(--music);
 }
 
+.heat-steps {
+  --heat: var(--steps);
+}
+
+.heat-calories {
+  --heat: var(--calories);
+}
+
+.heat-sleep {
+  --heat: var(--sleep);
+}
+
+.heat-workout {
+  --heat: var(--workout);
+}
+
 .heat-neutral {
   --heat: var(--muted);
 }
 
 /* Les filtres du calendrier : une pastille par métrique, plusieurs à la fois. La rangée défile sans
    barre si un jour les trackers ne tiennent plus en largeur. */
+/* Les pastilles passent à la ligne : avec Garmin, six métriques ne tiennent plus sur la largeur d'un
+   iPhone, et une rangée qui défile cacherait celles du bout. */
 .filters {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  margin: -2px;
-  padding: 2px;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-}
-
-.filters::-webkit-scrollbar {
-  display: none;
 }
 
 .chip {
@@ -1417,5 +1453,185 @@ button:disabled {
   .sidebar-item:active {
     transform: none;
     transition: background-color 120ms linear;
+  }
+}
+
+/* ─── La carte Activité (Garmin) ─────────────────────────────────────────── */
+
+.card-title-activity {
+  color: var(--steps);
+}
+
+/* L'unité après un chiffre du jour : présente, sans lui disputer la taille. */
+.stat-unit {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+
+.subsection-count-activity {
+  color: var(--workout);
+}
+
+/* Les phases de la nuit : une barre en parts, dans les teintes du sommeil, puis la légende. */
+.sleep-stages {
+  margin-top: 10px;
+}
+
+.sleep-bar {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.sleep-part {
+  flex-basis: 0;
+  min-width: 2px;
+}
+
+.sleep-deep {
+  background: color-mix(in srgb, var(--sleep) 100%, var(--card));
+}
+
+.sleep-light {
+  background: color-mix(in srgb, var(--sleep) 55%, var(--card));
+}
+
+.sleep-rem {
+  background: color-mix(in srgb, var(--sleep) 30%, var(--workout));
+}
+
+.sleep-awake {
+  background: color-mix(in srgb, var(--calories) 75%, var(--card));
+}
+
+.sleep-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted);
+}
+
+.sleep-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sleep-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+}
+
+.sleep-minutes {
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+.workout {
+  padding: 10px 0 12px;
+  border-bottom: 0.5px solid var(--separator);
+}
+
+.workout:last-child {
+  border-bottom: 0;
+}
+
+.workout-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px 12px;
+  margin-top: 8px;
+}
+
+.workout-figures dt {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted);
+}
+
+.workout-figures dd {
+  font-size: 17px;
+  line-height: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.route {
+  margin: 12px 0 0;
+}
+
+/* Un cadre de taille fixe dès le départ : la carte qui arrive ne pousse rien. */
+.route-frame {
+  aspect-ratio: 16 / 10;
+  max-height: 320px;
+  width: 100%;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--field);
+}
+
+.route-map {
+  width: 100%;
+  height: 100%;
+  background: var(--field);
+  opacity: 0;
+  transition: opacity 200ms var(--ease-out);
+}
+
+/* Les tuiles reçues, la carte apparaît d'un fondu : pas de damier gris qui se remplit. */
+.route-map[data-state='ready'] {
+  opacity: 1;
+}
+
+.route-map .leaflet-container,
+.route-map.leaflet-container {
+  background: var(--field);
+  font: inherit;
+}
+
+.route-failed {
+  margin-top: -40px;
+  padding: 0 12px 12px;
+  font-size: 13px;
+  color: var(--muted);
+  position: relative;
+}
+
+.route-credit {
+  font-size: 11px;
+  line-height: 14px;
+  text-align: right;
+}
+
+/* La mention due à OpenStreetMap, discrète mais touchable : 44 px de haut. */
+.route-credit a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .route-credit a:hover {
+    text-decoration: underline;
+  }
+}
+
+/* En sombre, les tuiles claires d'OpenStreetMap sont inversées, teintes gardées : la carte ne
+   s'allume pas au milieu de la page. Le tracé et les marqueurs, hors des tuiles, gardent leurs couleurs. */
+@media (prefers-color-scheme: dark) {
+  .route-map .leaflet-tile-pane {
+    filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.6);
   }
 }
