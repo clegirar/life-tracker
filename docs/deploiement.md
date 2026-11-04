@@ -244,7 +244,7 @@ Une nouvelle clé naît à chaque lancement. Si le réseau coupe après l'écrit
    (umask 077; printf 'LASTFM_API_KEY=%s\nLASTFM_USER=%s\nCOLLECTOR_TOKEN=%s\n' "$LASTFM_API_KEY" "$LASTFM_USER" "$TOKEN" > secrets/collector.env)
    unset TOKEN LASTFM_API_KEY LASTFM_USER
    ls -l secrets/collector.env   # -rw-------
-   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select kind from core.source_kinds sk join core.sources s on s.id = sk.source_id where s.name = 'lastfm' and revoked_at is null"   # les deux types
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select sk.kind from core.source_kinds sk join core.sources s on s.id = sk.source_id where s.name = 'lastfm' and revoked_at is null"   # les deux types
    ```
 
    `</dev/null` : sans lui, `run -T` peut avaler la ligne collée suivante, ce qui a fait sauter un droit au premier déploiement (cause probable). Si un droit manque, le collecteur l'indique par `kind_not_declared` dans ses logs et reprend seul une fois le droit accordé. Le token n'est gardé que là : s'il se perd, voir l'étape 9 pour le remplacer (`lastfm-2`, reconnu aussi par la page du jour). `create-source` échoue si le nom existe déjà.
@@ -717,13 +717,13 @@ Relancer ensuite demande un nouveau jeton de service (`mcp-2`) et `sudo docker c
    (umask 077; printf 'GARMIN_API_KEY=%s\nGARMIN_TOKEN=%s\n' "$GARMIN_API_KEY" "$TOKEN" >> secrets/collector.env)
    unset TOKEN GARMIN_API_KEY
    ls -l secrets/collector.env   # -rw-------
-   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select kind from core.source_kinds sk join core.sources s on s.id = sk.source_id where s.name = 'garmin' and revoked_at is null"   # les cinq types
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select sk.kind from core.source_kinds sk join core.sources s on s.id = sk.source_id where s.name = 'garmin' and sk.revoked_at is null"   # les cinq types
    sudo docker compose up -d collector
    ```
 
    `record.cancel` est nécessaire : une révision de Garmin (synchro tardive de la montre) part avec l'annulation de la version précédente. Sans ce droit, le collecteur écrit `kind_not_declared` dans ses logs et reprend seul une fois le droit accordé. Si la source doit un jour être recréée (`garmin-2`), ajouter `GARMIN_SOURCE=garmin-2` au fichier : c'est le nom que désignent ses annulations.
 
-4. Le premier passage remonte 400 jours : un appel pour les pas et calories, 13 pour le sommeil, la liste des séances, puis le fichier FIT de chaque séance avec GPS, à une seconde d'intervalle. Compter quelques minutes. Ensuite, un passage tous les quarts d'heure relit les 7 derniers jours.
+4. Le premier passage remonte 400 jours : 13 appels pour les pas et calories, 13 pour le sommeil (tranches de 31 jours), la liste des séances, puis le fichier FIT de chaque séance avec GPS, à une seconde d'intervalle. Compter quelques minutes. Ensuite, un passage tous les quarts d'heure relit les 7 derniers jours.
 
    ```sh
    sudo docker compose logs collector | grep garmin | tail -3   # « garmin pass completed »

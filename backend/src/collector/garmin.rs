@@ -48,8 +48,9 @@ pub const MAX_TRACK_POINTS: usize = 1000;
 pub const BACKFILL_DAYS: u64 = 400;
 /// Chaque passage relit ces jours-là, aujourd'hui compris : une synchro tardive révise le passé.
 pub const REREAD_DAYS: u64 = 7;
-/// Les plages que l'API accepte : 400 jours pour les résumés, 32 pour le sommeil.
-const SUMMARY_CHUNK_DAYS: u64 = 400;
+/// Les plages que l'API accepte : 90 jours passent pour les résumés et 400 sont refusés (400),
+/// 32 pour le sommeil. 31 pour les deux, avec de la marge.
+const SUMMARY_CHUNK_DAYS: u64 = 31;
 pub const SLEEP_CHUNK_DAYS: u64 = 31;
 pub const ACTIVITY_PAGE_SIZE: usize = 100;
 /// Au-delà de la fenêtre relue, un sujet n'est plus jamais redemandé : l'état l'oublie.
@@ -82,9 +83,10 @@ pub enum ServiceError {
     RateLimited {
         retry_after: Duration,
     },
-    /// Réponse d'erreur : son statut seul, jamais son corps.
+    /// Réponse d'erreur : son statut et l'appel refusé, jamais son corps.
     Failed {
         status: u16,
+        call: &'static str,
     },
     /// Rien d'exploitable : coupure, délai dépassé, réponse illisible.
     Unavailable {
@@ -608,6 +610,7 @@ impl Garmin {
         if !status.is_success() {
             return Err(ServiceError::Failed {
                 status: status.as_u16(),
+                call: "token",
             });
         }
         let body = response.text().await.map_err(|err| unavailable(&err))?;
@@ -671,6 +674,7 @@ impl Garmin {
             if !status.is_success() {
                 return Err(ServiceError::Failed {
                     status: status.as_u16(),
+                    call: call_name(path),
                 });
             }
             let body = response
@@ -680,7 +684,10 @@ impl Garmin {
             *calls += 1;
             return Ok(body);
         }
-        Err(ServiceError::Failed { status: 401 })
+        Err(ServiceError::Failed {
+            status: 401,
+            call: call_name(path),
+        })
     }
 }
 
@@ -721,6 +728,7 @@ impl Garmin {
             if !status.is_success() {
                 return Err(ServiceError::Failed {
                     status: status.as_u16(),
+                    call: "download",
                 });
             }
             if response
@@ -740,7 +748,20 @@ impl Garmin {
             *calls += 1;
             return Ok(Some(bytes.to_vec()));
         }
-        Err(ServiceError::Failed { status: 401 })
+        Err(ServiceError::Failed {
+            status: 401,
+            call: "download",
+        })
+    }
+}
+
+/// Le nom d'un appel de lecture, pour les logs.
+fn call_name(path: &str) -> &'static str {
+    match path {
+        SUMMARIES_PATH => "summaries",
+        SLEEP_PATH => "sleep",
+        ACTIVITIES_PATH => "activities",
+        _ => "other",
     }
 }
 
@@ -838,8 +859,8 @@ fn log_failure(error: &TickError, failures: u32) {
                 "garmin rate limit, waiting"
             );
         }
-        TickError::Service(ServiceError::Failed { status }) => {
-            warn!(status, failures, "garmin refused");
+        TickError::Service(ServiceError::Failed { status, call }) => {
+            warn!(status, call, failures, "garmin refused");
         }
         TickError::Service(ServiceError::Unavailable { reason }) => {
             warn!(reason, failures, "garmin unavailable");
@@ -1339,7 +1360,7 @@ mod tests {
         );
         assert_eq!(chunks(d("2026-01-01"), d("2026-01-01"), 31).len(), 1);
         let from = d("2026-11-04") - Days::new(BACKFILL_DAYS - 1);
-        assert_eq!(chunks(from, d("2026-11-04"), SUMMARY_CHUNK_DAYS).len(), 1);
+        assert_eq!(chunks(from, d("2026-11-04"), SUMMARY_CHUNK_DAYS).len(), 13);
         assert_eq!(chunks(from, d("2026-11-04"), SLEEP_CHUNK_DAYS).len(), 13);
     }
 
