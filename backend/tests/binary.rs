@@ -794,3 +794,46 @@ async fn serve_logs_nothing_of_a_login_or_a_session() {
 fn leak(logs: &str) -> &str {
     logs.lines().find(|l| l.contains(SENTINEL)).unwrap_or("")
 }
+
+/// Les zones de confidentialité ne se lisent jamais dans les logs, même à `trace` et même quand le
+/// jeton de service lit un parcours : seulement leur nombre, ou leur absence.
+#[tokio::test]
+async fn privacy_zones_are_counted_never_logged() {
+    let db = TestDb::new().await;
+    let service = life_tracker::admin::create_service_token(&db.admin, "mcp")
+        .await
+        .unwrap();
+    let zones = "43.123457,5.654321,700;44.987654,1.234567,550";
+    let server = Server::start_with(&db.app_url(), "trace", &[("PRIVACY_ZONES", zones)]).await;
+    let response = client()
+        .get(format!("{}/v1/route?id=1:0", server.base))
+        .bearer_auth(&service)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
+    let logs = server.stop();
+    assert!(
+        logs.contains("zone de confidentialité : 2 zone(s)"),
+        "{logs}"
+    );
+    // Les rayons, de simples nombres, pourraient se lire dans un horodatage : les coordonnées suffisent.
+    for secret in ["43.12", "5.654", "44.98", "1.2345", zones] {
+        assert!(!logs.contains(secret), "{secret} dans les logs");
+    }
+    for (value, line) in [
+        (
+            "",
+            "zone de confidentialité absente : coordonnées masquées pour le MCP",
+        ),
+        (
+            "43.123457,5.654321",
+            "zone de confidentialité illisible : coordonnées masquées pour le MCP",
+        ),
+    ] {
+        let server = Server::start_with(&db.app_url(), "info", &[("PRIVACY_ZONES", value)]).await;
+        let logs = server.stop();
+        assert!(logs.contains(line), "{logs}");
+        assert!(!logs.contains("43.12"), "{logs}");
+    }
+}

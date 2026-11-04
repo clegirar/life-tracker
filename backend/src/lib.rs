@@ -11,5 +11,6 @@ pub mod ingest;
 pub mod ingest_client;
 pub mod interpreters;
 pub mod music;
+pub mod privacy;
 pub mod read;
 pub mod replay;

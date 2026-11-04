@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT metric, shape::text AS \"shape!\", item_levels, discovery, duration_from\n           FROM core.metrics WHERE metric = $1",
+  "query": "SELECT metric, shape::text AS \"shape!\", item_levels, discovery, duration_from,\n                  shared_details\n           FROM core.metrics WHERE metric = $1",
   "describe": {
     "columns": [
       {
@@ -52,6 +52,17 @@
             "name": "duration_from"
           }
         }
+      },
+      {
+        "ordinal": 5,
+        "name": "shared_details",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "core.metrics",
+            "name": "shared_details"
+          }
+        }
       }
     ],
     "parameters": {
@@ -64,8 +75,9 @@
       null,
       false,
       false,
-      true
+      true,
+      false
     ]
   },
-  "hash": "34e1c20ac5ee7ee353af0608ff7548cdb5e36a4c8430b1613e5990967efa1730"
+  "hash": "f0863ac478d381759e4e9d68c66580c45e32a2b4f6ea37456405271a24c6d708"
 }

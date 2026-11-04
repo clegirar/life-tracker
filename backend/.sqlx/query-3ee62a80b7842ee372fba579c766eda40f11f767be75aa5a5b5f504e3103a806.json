@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT metric, label, unit, daily_aggregation::text AS \"aggregation!\",\n                  extract(epoch FROM freshness_threshold)::float8 AS freshness\n           FROM core.metrics\n           WHERE shape NOT IN ('declaration', 'reference') AND daily_aggregation <> 'none'\n           ORDER BY metric",
+  "query": "SELECT metric, label, unit, daily_aggregation::text AS \"aggregation!\",\n                  extract(epoch FROM freshness_threshold)::float8 AS freshness\n           FROM core.metrics\n           WHERE shape NOT IN ('declaration', 'reference') AND daily_aggregation <> 'none'\n           ORDER BY display_order NULLS LAST, metric",
   "describe": {
     "columns": [
       {
@@ -60,5 +60,5 @@
       null
     ]
   },
-  "hash": "19f30aeba27ff0d0f21db0bcfcb72fdc676c136c578429b727137d115ecb6805"
+  "hash": "3ee62a80b7842ee372fba579c766eda40f11f767be75aa5a5b5f504e3103a806"
 }

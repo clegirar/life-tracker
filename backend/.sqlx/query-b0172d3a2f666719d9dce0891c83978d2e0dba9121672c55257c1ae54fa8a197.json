@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT metric, label, shape::text AS \"shape!\", unit, domain,\n                  daily_aggregation::text AS \"aggregation!\", item_levels, discovery, applies_to,\n                  duration_from, extract(epoch FROM freshness_threshold)::float8 AS freshness,\n                  description\n           FROM core.metrics ORDER BY metric",
+  "query": "SELECT metric, label, shape::text AS \"shape!\", unit, domain,\n                  daily_aggregation::text AS \"aggregation!\", item_levels, discovery, applies_to,\n                  duration_from, extract(epoch FROM freshness_threshold)::float8 AS freshness,\n                  description, shared_details\n           FROM core.metrics ORDER BY display_order NULLS LAST, metric",
   "describe": {
     "columns": [
       {
@@ -119,6 +119,17 @@
             "name": "description"
           }
         }
+      },
+      {
+        "ordinal": 12,
+        "name": "shared_details",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "core.metrics",
+            "name": "shared_details"
+          }
+        }
       }
     ],
     "parameters": {
@@ -136,8 +147,9 @@
       true,
       true,
       null,
-      true
+      true,
+      false
     ]
   },
-  "hash": "869b433afd316de6482211b5dbc4487e8d268a16c5144b590c6841d3269c8080"
+  "hash": "b0172d3a2f666719d9dce0891c83978d2e0dba9121672c55257c1ae54fa8a197"
 }

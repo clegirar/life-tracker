@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use life_tracker::interpreters::INTERPRETERS;
-use life_tracker::{admin, api, apple, collector, db, engine, replay};
+use life_tracker::{admin, api, apple, collector, db, engine, privacy, replay};
 use tokio::net::TcpListener;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
@@ -38,6 +38,9 @@ enum Command {
         /// Développement seulement : retire `Secure` du cookie de session (Safari sur http://localhost)
         #[arg(long, env = "DEV_INSECURE_COOKIE")]
         dev_insecure_cookie: bool,
+        /// Les zones de confidentialité du MCP, `lat,lon,rayon_m` séparées par `;`, sur le NAS seulement
+        #[arg(long, env = "PRIVACY_ZONES", hide_env_values = true)]
+        privacy_zones: Option<String>,
     },
     /// Interroge Last.fm et Garmin, chacun si sa clé est fournie, et envoie à l'API d'ingestion, sans
     /// jamais connaître la base. Chaque connecteur a son token, son état et ses nouveaux essais
@@ -149,7 +152,16 @@ async fn main() -> Result<()> {
             database_url,
             listen,
             dev_insecure_cookie,
-        } => serve(&database_url, &listen, dev_insecure_cookie).await,
+            privacy_zones,
+        } => {
+            serve(
+                &database_url,
+                &listen,
+                dev_insecure_cookie,
+                privacy_zones.as_deref(),
+            )
+            .await
+        }
         Command::Collect {
             lastfm_api_key,
             lastfm_user,
@@ -311,7 +323,12 @@ async fn import_apple(archive_dir: PathBuf, ingest_url: String) -> Result<()> {
     Ok(())
 }
 
-async fn serve(database_url: &str, listen: &str, insecure_cookie: bool) -> Result<()> {
+async fn serve(
+    database_url: &str,
+    listen: &str,
+    insecure_cookie: bool,
+    privacy_zones: Option<&str>,
+) -> Result<()> {
     tracing_subscriber::fmt()
         .json()
         .with_env_filter(
@@ -320,6 +337,19 @@ async fn serve(database_url: &str, listen: &str, insecure_cookie: bool) -> Resul
         .init();
     if insecure_cookie {
         tracing::warn!("cookie de session sans Secure : développement seulement");
+    }
+    // Le nombre de zones seulement, jamais leurs valeurs.
+    let (zones, status) = privacy::Zones::parse(privacy_zones);
+    match status {
+        privacy::Status::Zones(count) => {
+            tracing::info!("zone de confidentialité : {count} zone(s)")
+        }
+        privacy::Status::Absent => {
+            tracing::warn!("zone de confidentialité absente : coordonnées masquées pour le MCP");
+        }
+        privacy::Status::Invalid => {
+            tracing::warn!("zone de confidentialité illisible : coordonnées masquées pour le MCP");
+        }
     }
     let pool = db::pool(database_url)?;
     let listener = TcpListener::bind(listen).await.context("écoute")?;
@@ -333,7 +363,13 @@ async fn serve(database_url: &str, listen: &str, insecure_cookie: bool) -> Resul
     ));
     let served = axum::serve(
         listener,
-        api::router_with(pool.clone(), api::Config { insecure_cookie }),
+        api::router_with(
+            pool.clone(),
+            api::Config {
+                insecure_cookie,
+                zones,
+            },
+        ),
     )
     .with_graceful_shutdown(shutdown_signal())
     .await;

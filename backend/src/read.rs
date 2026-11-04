@@ -14,6 +14,7 @@ use serde::Serialize;
 use sqlx::PgPool;
 
 use crate::music::fold;
+use crate::privacy::Zones;
 
 pub const MAX_LIST: i64 = 1000;
 pub const MAX_TOP: i64 = 200;
@@ -41,6 +42,39 @@ pub struct Metric {
     pub item_levels: Vec<String>,
     pub discovery: bool,
     pub duration_from: Option<String>,
+    /// Les champs des détails qu'une lecture générique peut rendre (registre, `shared_details`).
+    pub shared_details: Vec<String>,
+}
+
+/// Ce qu'une lecture rend des coordonnées d'un événement : tout pour la session de la web app,
+/// et pour le jeton de service, ce qui est hors des zones de confidentialité (`privacy`).
+#[derive(Clone, Copy)]
+pub enum Exposure<'a> {
+    Full,
+    Zoned(&'a Zones),
+}
+
+impl Exposure<'_> {
+    /// Les détails partagés d'un événement : les seuls champs que le registre liste pour sa métrique,
+    /// coordonnées masquées selon l'exposition. Aucun champ listé : rien, comme pour la musique.
+    pub fn details(
+        self,
+        metric: &Metric,
+        details: &serde_json::Value,
+    ) -> Option<serde_json::Value> {
+        if metric.shared_details.is_empty() {
+            return None;
+        }
+        let mut shared: serde_json::Map<String, serde_json::Value> = metric
+            .shared_details
+            .iter()
+            .filter_map(|field| Some((field.clone(), details.get(field)?.clone())))
+            .collect();
+        if let Self::Zoned(zones) = self {
+            zones.hide_coordinates(&mut shared);
+        }
+        Some(serde_json::Value::Object(shared))
+    }
 }
 
 impl Metric {
@@ -56,7 +90,8 @@ impl Metric {
 pub async fn metric(pool: &PgPool, name: &str) -> Result<Metric> {
     sqlx::query_as!(
         Metric,
-        r#"SELECT metric, shape::text AS "shape!", item_levels, discovery, duration_from
+        r#"SELECT metric, shape::text AS "shape!", item_levels, discovery, duration_from,
+                  shared_details
            FROM core.metrics WHERE metric = $1"#,
         name,
     )
@@ -211,6 +246,9 @@ pub struct InventoryMetric {
     duration_from: Option<String>,
     freshness_threshold_seconds: Option<f64>,
     description: Option<String>,
+    /// Les champs des détails que rendent les occurrences ; une paire `<x>_lat`/`<x>_lon` est une
+    /// coordonnée, vue à travers les zones de confidentialité.
+    shared_details: Vec<String>,
     events: i64,
     first_at: Option<DateTime<Utc>>,
     last_at: Option<DateTime<Utc>>,
@@ -247,8 +285,8 @@ pub async fn inventory(pool: &PgPool) -> Result<Inventory> {
         r#"SELECT metric, label, shape::text AS "shape!", unit, domain,
                   daily_aggregation::text AS "aggregation!", item_levels, discovery, applies_to,
                   duration_from, extract(epoch FROM freshness_threshold)::float8 AS freshness,
-                  description
-           FROM core.metrics ORDER BY metric"#
+                  description, shared_details
+           FROM core.metrics ORDER BY display_order NULLS LAST, metric"#
     )
     .fetch_all(pool)
     .await?;
@@ -297,6 +335,7 @@ pub async fn inventory(pool: &PgPool) -> Result<Inventory> {
                     duration_from: m.duration_from,
                     freshness_threshold_seconds: m.freshness,
                     description: m.description,
+                    shared_details: m.shared_details,
                 }
             })
             .collect(),
@@ -412,13 +451,19 @@ pub async fn search(
 
 #[derive(Serialize)]
 pub struct Occurrence {
+    /// L'identifiant de l'occurrence, `<numéro du journal>:<rang>`, pour en demander le parcours.
+    id: String,
     at: DateTime<Utc>,
     /// Heure de Paris, `AAAA-MM-JJ HH:MM`.
     local: String,
     /// La valeur de l'événement (pas d'un jour, minutes de sommeil, km d'une séance), si la métrique
-    /// en a une. Jamais ses détails : ils peuvent porter des coordonnées, que le MCP ne voit pas.
+    /// en a une.
     #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<f64>,
+    /// Les détails que le registre partage (`Exposure::details`) ; absents pour une métrique qui n'en
+    /// partage aucun.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     items: Option<HashMap<String, String>>,
 }
@@ -467,12 +512,13 @@ pub async fn occurrences(
     key: Option<&str>,
     form: &str,
     limit: i64,
+    exposure: Exposure<'_>,
 ) -> Result<Occurrences> {
     match form {
         "list" => {
             let rows = sqlx::query!(
                 r#"SELECT e.seq AS "seq!", e.ordinal AS "ordinal!", e.occurred_at AS "occurred_at!",
-                          e.value::float8 AS value,
+                          e.value::float8 AS value, e.details AS "details!",
                           to_char(e.occurred_at AT TIME ZONE (SELECT timezone FROM core.settings),
                                   'YYYY-MM-DD HH24:MI') AS "local!",
                           count(*) OVER () AS "total!"
@@ -505,7 +551,9 @@ pub async fn occurrences(
                 occurrences: rows
                     .into_iter()
                     .map(|r| Occurrence {
+                        id: format!("{}:{}", r.seq, r.ordinal),
                         items: context_of(&contexts, (r.seq, r.ordinal), None, &[]),
+                        details: exposure.details(metric, &r.details),
                         at: r.occurred_at,
                         local: r.local,
                         value: r.value,
@@ -965,5 +1013,62 @@ pub async fn discoveries(
                 first_local: r.first_local,
             })
             .collect(),
+    })
+}
+
+// ─── Parcours ────────────────────────────────────────────────────────────────
+
+/// Le parcours d'une occurrence : la référence à points (`details.points`, `[lat, lon, …]`) d'une
+/// métrique qui l'éclaire (`applies_to`), rattachée par l'identifiant que les deux portent dans leurs
+/// détails (`activity_id`, le seul que partagent une séance et sa trace). Générique : une autre source
+/// de parcours n'aurait qu'à déclarer sa référence.
+pub struct Route {
+    pub metric: String,
+    pub local: String,
+    pub points: Vec<(f64, f64)>,
+}
+
+/// `<numéro du journal>:<rang>`, tel que le rendent les occurrences.
+pub fn parse_occurrence_id(value: &str) -> Option<(i64, i16)> {
+    let (seq, ordinal) = value.split_once(':')?;
+    let seq = seq.parse().ok().filter(|s: &i64| *s > 0)?;
+    let ordinal = ordinal.parse().ok().filter(|o: &i16| *o >= 0)?;
+    Some((seq, ordinal))
+}
+
+pub async fn route(pool: &PgPool, (seq, ordinal): (i64, i16)) -> Result<Route> {
+    let row = sqlx::query!(
+        r#"SELECT e.metric AS "metric!",
+                  to_char(e.occurred_at AT TIME ZONE (SELECT timezone FROM core.settings),
+                          'YYYY-MM-DD HH24:MI') AS "local!",
+                  (SELECT t.details->'points'
+                   FROM derived.live_events t
+                   JOIN core.metrics m ON m.metric = t.metric
+                   WHERE t.generation = e.generation
+                     AND m.applies_to = e.metric AND m.shape = 'reference'
+                     AND t.details ? 'points'
+                     AND t.details->'activity_id' = e.details->'activity_id'
+                   ORDER BY t.seq DESC LIMIT 1) AS points
+           FROM derived.live_events e
+           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+             AND e.seq = $1 AND e.ordinal = $2"#,
+        seq,
+        ordinal,
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or(ReadError::NotFound)?;
+    let points: Vec<(f64, f64)> = row
+        .points
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .ok_or(ReadError::NotFound)?
+        .iter()
+        .filter_map(|p| Some((p.get(0)?.as_f64()?, p.get(1)?.as_f64()?)))
+        .collect();
+    Ok(Route {
+        metric: row.metric,
+        local: row.local,
+        points,
     })
 }

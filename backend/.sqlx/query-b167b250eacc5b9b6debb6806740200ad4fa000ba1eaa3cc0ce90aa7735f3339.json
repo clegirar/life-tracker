@@ -1,0 +1,43 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.metric AS \"metric!\",\n                  to_char(e.occurred_at AT TIME ZONE (SELECT timezone FROM core.settings),\n                          'YYYY-MM-DD HH24:MI') AS \"local!\",\n                  (SELECT t.details->'points'\n                   FROM derived.live_events t\n                   JOIN core.metrics m ON m.metric = t.metric\n                   WHERE t.generation = e.generation\n                     AND m.applies_to = e.metric AND m.shape = 'reference'\n                     AND t.details ? 'points'\n                     AND t.details->'activity_id' = e.details->'activity_id'\n                   ORDER BY t.seq DESC LIMIT 1) AS points\n           FROM derived.live_events e\n           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND e.seq = $1 AND e.ordinal = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "metric!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "metric"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "local!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "points",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int2"
+      ]
+    },
+    "nullable": [
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "b167b250eacc5b9b6debb6806740200ad4fa000ba1eaa3cc0ce90aa7735f3339"
+}

@@ -339,16 +339,16 @@ async fn days_before_a_metric_starts_have_no_data_and_no_alert() {
     assert_eq!(
         metrics,
         [
-            "calories.burned",
             "coffee",
             "music.listen",
-            "sleep",
             "steps",
-            "workout"
+            "workout",
+            "sleep",
+            "calories.burned"
         ],
-        "ni déclarations ni références"
+        "ni déclarations ni références, dans l'ordre d'affichage du registre"
     );
-    assert_eq!(month["metrics"][1]["label"], "Cafés");
+    assert_eq!(month["metrics"][0]["label"], "Cafés");
 }
 
 #[tokio::test]

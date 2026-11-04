@@ -17,6 +17,7 @@ use life_tracker::collector::garmin::{
     self, Collector, Config, ServiceError, TickError, paris_today,
 };
 use life_tracker::interpreters::INTERPRETERS;
+use life_tracker::privacy::Zones;
 use life_tracker::{admin, engine, replay};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -333,6 +334,11 @@ impl Drop for Bench {
 
 impl Bench {
     async fn new() -> Self {
+        Self::with_zones(None).await
+    }
+
+    /// Le vrai routeur, avec ses zones de confidentialité comme `serve` les lit.
+    async fn with_zones(zones: Option<&str>) -> Self {
         let db = TestDb::new().await;
         admin::set_password(&db.admin, "moi", PASSWORD)
             .await
@@ -357,7 +363,16 @@ impl Bench {
             Duration::from_millis(20),
             stopped,
         ));
-        let base = serve(db.app.clone()).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let router = api::router_with(
+            db.app.clone(),
+            api::Config {
+                zones: Zones::parse(zones).0,
+                ..api::Config::default()
+            },
+        );
+        tokio::spawn(async move { axum::serve(listener, router).await });
         let http = client();
         let login = http
             .post(format!("{base}/v1/auth/login"))
@@ -844,24 +859,156 @@ async fn a_day_without_data_is_never_a_day_without_activity() {
     assert_eq!(empty["workouts"], json!([]));
 }
 
-/// Décision du 4 nov. 2026 : le MCP voit les villes, jamais les coordonnées ni les traces. Toute
-/// route que le jeton de service peut lire est essayée sur une séance avec GPS et trace.
+// ─── Ce que voit le MCP : tout, à travers les zones de confidentialité ────────
+
+/// Une zone fictive de 600 m centrée sur le départ des séances fictives.
+const ZONE: &str = "43.212345,5.432109,600";
+const ZONE_RADIUS_M: f64 = 600.0;
+
+/// La distance en mètres au centre de la zone, sur un plan local.
+fn from_zone(lat: f64, lon: f64) -> f64 {
+    let m = 6_371_008.8 * std::f64::consts::PI / 180.0;
+    ((lon - LON) * m * LAT.to_radians().cos()).hypot((lat - LAT) * m)
+}
+
+/// La distance au centre de la zone du segment le plus proche : jamais une ligne à travers.
+fn segment_from_zone(a: [f64; 2], b: [f64; 2]) -> f64 {
+    let (n, step) = (50, 1.0 / 50.0);
+    (0..=n)
+        .map(|i| {
+            let t = f64::from(i) * step;
+            from_zone(a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// Un tracé en zigzag de 30 m, un point tous les 50 m environ : la simplification les garde tous.
+fn path(stops: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let mut points = Vec::new();
+    for pair in stops.windows(2) {
+        let ((lat0, lon0), (lat1, lon1)) = (pair[0], pair[1]);
+        // Environ 50 m par point : un degré vaut au plus 111 km.
+        let n = (((lat1 - lat0).abs() + (lon1 - lon0).abs()) * 111_000.0 / 50.0).ceil() as i32;
+        for i in 0..n {
+            let t = f64::from(i) / f64::from(n);
+            let wiggle = if i % 2 == 0 { 0.0 } else { 0.0003 };
+            points.push((lat0 + t * (lat1 - lat0) + wiggle, lon0 + t * (lon1 - lon0)));
+        }
+    }
+    points.push(*stops.last().unwrap());
+    points
+}
+
+fn run_with_track(id: u64, date: NaiveDate, stops: &[(f64, f64)]) -> (Value, Vec<u8>) {
+    let mut raw = workout(id, date, true);
+    let (first, last) = (stops[0], *stops.last().unwrap());
+    raw["startLatitude"] = json!(first.0);
+    raw["startLongitude"] = json!(first.1);
+    raw["endLatitude"] = json!(last.0);
+    raw["endLongitude"] = json!(last.1);
+    (raw, zipped(&format!("{id}.fit"), &fit(&path(stops))))
+}
+
+/// Trois séances : départ dans la zone et arrivée dehors, boucle qui part et revient dans la zone,
+/// et une séance loin de tout.
+fn three_runs(fake: &Fake) {
+    let date = day(1);
+    let runs = [
+        run_with_track(11, date, &[(LAT, LON), (LAT, LON + 0.037)]),
+        run_with_track(
+            12,
+            date,
+            &[
+                (LAT, LON),
+                (LAT, LON + 0.025),
+                (LAT + 0.01, LON + 0.025),
+                (LAT, LON),
+            ],
+        ),
+        run_with_track(13, date, &[(LAT + 0.05, LON), (LAT + 0.05, LON + 0.03)]),
+    ];
+    fake.with(|d| {
+        for (raw, file) in runs {
+            let id = raw["activityId"].as_u64().unwrap();
+            d.activities.push(raw);
+            d.files.insert(id, file);
+        }
+        d.summaries = vec![summary(date, Some(8412))];
+        d.sleeps = vec![night(date, 25_980)];
+    });
+}
+
+impl Bench {
+    async fn mcp_json(&self, path: &str, query: &[(&str, &str)]) -> Value {
+        let (status, body) = self.as_mcp(path, query).await;
+        assert_eq!(status, 200, "{path} : {body}");
+        serde_json::from_str(&body).unwrap()
+    }
+
+    /// Les séances du jour, telles que le jeton de service les lit.
+    async fn mcp_workouts(&self) -> Vec<Value> {
+        let date = day(1).to_string();
+        let list = self
+            .mcp_json(
+                "/v1/occurrences",
+                &[("metric", "workout"), ("from", &date), ("to", &date)],
+            )
+            .await;
+        list["occurrences"].as_array().unwrap().clone()
+    }
+}
+
+/// Décision du 4 nov. 2026 : le MCP voit les détails des métriques Garmin, et leurs coordonnées à
+/// travers les zones. Sans zone, aucune coordonnée ni aucun parcours ; le reste, si.
 #[tokio::test]
-async fn the_mcp_sees_places_but_never_coordinates_or_tracks() {
+async fn without_a_zone_the_mcp_gets_every_detail_but_no_coordinate_nor_route() {
     let bench = Bench::new().await;
     let fake = Fake::start().await;
-    let date = day(1).to_string();
-    let month = &date[..7];
-    fake.with(|d| {
-        d.activities = vec![workout(1, day(1), true)];
-        d.files.insert(1, zipped("1.fit", &fit(&route())));
-        d.summaries = vec![summary(day(1), Some(8412))];
-    });
+    three_runs(&fake);
     bench.collector(&fake).tick().await.unwrap();
     bench.settled().await;
+    let date = day(1).to_string();
 
+    let workouts = bench.mcp_workouts().await;
+    assert_eq!(workouts.len(), 3);
+    for workout in &workouts {
+        let details = &workout["details"];
+        assert_eq!(details["avg_hr"], 151);
+        assert_eq!(details["max_hr"], 176);
+        assert_eq!(details["moving_s"], 1780);
+        assert_eq!(details["location_name"], PLACE);
+        for point in ["start", "end"] {
+            assert_eq!(details[format!("{point}_lat")], Value::Null);
+            assert_eq!(details[format!("{point}_hidden")], true);
+        }
+        let id = workout["id"].as_str().unwrap();
+        let (status, body) = bench.as_mcp("/v1/route", &[("id", id)]).await;
+        assert_eq!(status, 403, "{body}");
+        assert!(body.contains("privacy_zone_missing"));
+    }
+    let sleep = bench
+        .mcp_json(
+            "/v1/occurrences",
+            &[("metric", "sleep"), ("from", &date), ("to", &date)],
+        )
+        .await;
+    assert_eq!(sleep["occurrences"][0]["details"]["rem_seconds"], 6_660);
+    let calories = bench
+        .mcp_json(
+            "/v1/occurrences",
+            &[
+                ("metric", "calories.burned"),
+                ("from", &date),
+                ("to", &date),
+            ],
+        )
+        .await;
+    assert_eq!(calories["occurrences"][0]["details"]["active"], 512);
+
+    // Toutes les routes du jeton : ni coordonnée, ni point de trace.
+    let month = &date[..7];
     let mut reads: Vec<(String, Vec<(&str, &str)>)> = Vec::new();
-    for metric in ["workout", "workout.track", "steps"] {
+    for metric in ["workout", "workout.track", "steps", "sleep"] {
         for form in ["list", "daily", "first_last"] {
             reads.push((
                 "/v1/occurrences".into(),
@@ -899,21 +1046,8 @@ async fn the_mcp_sees_places_but_never_coordinates_or_tracks() {
     reads.push((format!("/v1/months/{month}"), vec![]));
     reads.push(("/v1/inventory".into(), vec![]));
     reads.push(("/v1/sources/health".into(), vec![]));
-    let routes: Vec<&str> = READ_ROUTES.to_vec();
-    let mut seen = Vec::new();
-    for (path, query) in &reads {
-        let (status, body) = bench.as_mcp(path, query).await;
-        assert!(status == 200 || status == 400, "{path} : {status}");
-        for forbidden in ["43.21", "5.43", "\"points\"", "start_lat", "end_lon"] {
-            assert!(
-                !body.contains(forbidden),
-                "{forbidden} dans {path} : {body}"
-            );
-        }
-        seen.push(body);
-    }
-    // Toutes les routes du jeton sont couvertes, sauf les durées et découvertes (sans objet ici).
-    for route in routes {
+    reads.push(("/v1/route".into(), vec![("id", "1:0")]));
+    for route in READ_ROUTES {
         let prefix = route.split('{').next().unwrap();
         assert!(
             reads.iter().any(|(p, _)| p.starts_with(prefix))
@@ -921,19 +1055,120 @@ async fn the_mcp_sees_places_but_never_coordinates_or_tracks() {
             "{route} non essayée"
         );
     }
-    let all = seen.join("");
-    assert!(all.contains(PLACE), "la ville, elle, est visible");
-
-    // Les routes de la carte restent à la session.
-    for path in [
-        format!("/v1/days/{date}/activity"),
-        "/v1/activities/1/track".to_owned(),
-    ] {
-        assert!(!READ_ROUTES.contains(&path.as_str()));
-        let (status, body) = bench.as_mcp(&path, &[]).await;
-        assert_eq!(status, 401, "{path}");
-        assert!(!body.contains("43.21"));
+    for (path, query) in &reads {
+        let (status, body) = bench.as_mcp(path, query).await;
+        assert!([200, 400, 403].contains(&status), "{path} : {status}");
+        for forbidden in [
+            "43.2",
+            "43.26",
+            "5.43",
+            "5.46",
+            "\"points\"",
+            "\"segments\"",
+        ] {
+            assert!(
+                !body.contains(forbidden),
+                "{forbidden} dans {path} : {body}"
+            );
+        }
     }
+
+    // La session voit tout, sans zone : un seul morceau, départ compris.
+    let id = workouts[0]["id"].as_str().unwrap().to_owned();
+    let full = bench.get(&format!("/v1/route?id={id}")).await;
+    assert_eq!(full["segments"].as_array().unwrap().len(), 1);
+    assert_eq!(full["trimmed"], false);
+    let start: [f64; 2] = serde_json::from_value(full["segments"][0][0].clone()).unwrap();
+    assert!(from_zone(start[0], start[1]) < 2.0, "au mètre près");
+}
+
+#[tokio::test]
+async fn a_zone_hides_every_coordinate_and_point_inside_it() {
+    let bench = Bench::with_zones(Some(ZONE)).await;
+    let fake = Fake::start().await;
+    three_runs(&fake);
+    bench.collector(&fake).tick().await.unwrap();
+    bench.settled().await;
+
+    let workouts = bench.mcp_workouts().await;
+    let by_id = |id: u64| {
+        workouts
+            .iter()
+            .find(|w| w["details"]["activity_id"] == id)
+            .unwrap()
+            .clone()
+    };
+    // Départ dans la zone, arrivée dehors ; boucle de la zone à la zone ; loin de tout.
+    for (id, start_hidden, end_hidden) in [(11, true, false), (12, true, true), (13, false, false)]
+    {
+        let details = &by_id(id)["details"];
+        for (point, hidden) in [("start", start_hidden), ("end", end_hidden)] {
+            if hidden {
+                assert_eq!(details[format!("{point}_lat")], Value::Null, "{id} {point}");
+                assert_eq!(details[format!("{point}_hidden")], true);
+            } else {
+                let (lat, lon) = (
+                    details[format!("{point}_lat")].as_f64().unwrap(),
+                    details[format!("{point}_lon")].as_f64().unwrap(),
+                );
+                assert!(from_zone(lat, lon) > ZONE_RADIUS_M, "{id} {point}");
+                assert_eq!(details.get(format!("{point}_hidden")), None);
+            }
+        }
+    }
+
+    for (id, trimmed) in [(11, true), (12, true), (13, false)] {
+        let occurrence = by_id(id)["id"].as_str().unwrap().to_owned();
+        let route = bench.mcp_json("/v1/route", &[("id", &occurrence)]).await;
+        assert_eq!(route["trimmed"], trimmed, "{id}");
+        let segments = route["segments"].as_array().unwrap();
+        assert!(
+            !segments.is_empty(),
+            "{id} : il reste un parcours hors de la zone"
+        );
+        let mut points = 0;
+        for segment in segments {
+            let segment: Vec<[f64; 2]> = serde_json::from_value(segment.clone()).unwrap();
+            assert!(segment.len() >= 2);
+            points += segment.len();
+            for point in &segment {
+                assert!(
+                    from_zone(point[0], point[1]) > ZONE_RADIUS_M,
+                    "{id} : {point:?}"
+                );
+            }
+            for pair in segment.windows(2) {
+                assert!(
+                    segment_from_zone(pair[0], pair[1]) > ZONE_RADIUS_M,
+                    "{id} : ligne à travers"
+                );
+            }
+        }
+        // La boucle sort et rentre : deux morceaux au moins, jamais reliés à travers la zone.
+        if id == 12 {
+            assert!(points > 10);
+        }
+
+        // La session voit tout le parcours, un seul morceau, zone comprise.
+        let full = bench.get(&format!("/v1/route?id={occurrence}")).await;
+        let full: Vec<Vec<[f64; 2]>> = serde_json::from_value(full["segments"].clone()).unwrap();
+        assert_eq!(full.len(), 1);
+        assert_eq!(full[0].len() > points, trimmed);
+        if trimmed {
+            assert!(
+                full[0]
+                    .iter()
+                    .any(|p| from_zone(p[0], p[1]) < ZONE_RADIUS_M)
+            );
+        }
+        let track = bench.get(&format!("/v1/activities/{id}/track")).await;
+        assert_eq!(track["points"].as_array().unwrap().len(), full[0].len());
+    }
+    // Une occurrence sans parcours, ou inconnue.
+    let (status, _) = bench.as_mcp("/v1/route", &[("id", "999999:0")]).await;
+    assert_eq!(status, 404);
+    let (status, _) = bench.as_mcp("/v1/route", &[("id", "x")]).await;
+    assert_eq!(status, 400);
 }
 
 // ─── Le vrai binaire : ce qui sort dans les logs ──────────────────────────────
