@@ -732,7 +732,7 @@ Relancer ensuite demande un nouveau jeton de service (`mcp-2`) et `sudo docker c
 
    « clé Garmin refusée : expirée ou révoquée » dans les logs : la clé est mauvaise ou expirée ; aucun signal de vie ne part, et le mois signale le silence de Garmin après 12 h.
 
-5. Vérifier les critères de [l'après-POC](poc.md) : un jour passé et complet, comparé à Garmin Connect (pas, calories totales, actives et au repos, sommeil et ses phases, séances, distance, allure, fréquence cardiaque) sur la page du jour et par le MCP (`day_summary`) ; puis le rejeu :
+5. Vérifier les critères du chantier Garmin dans [les chantiers](chantiers.md) : un jour passé et complet, comparé à Garmin Connect (pas, calories totales, actives et au repos, sommeil et ses phases, séances, distance, allure, fréquence cardiaque) sur la page du jour et par le MCP (`day_summary`) ; puis le rejeu :
 
    ```sh
    sudo docker compose run --rm -T admin rebuild </dev/null   # 0 différence

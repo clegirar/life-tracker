@@ -268,7 +268,7 @@ Seul le serveur MCP est exposé sur Internet, car Claude.ai l'appelle depuis ses
 | Serveur MCP | Internet, par Tailscale Funnel sur le port 443 (depuis le 3 nov. 2026) ; sa page de connexion, depuis le tailnet seulement | HTTPS + OAuth (serveur d'autorisation intégré, Claude seul client) ; pseudonymes uniquement ; en lecture seule |
 | Base de données | Le NAS uniquement | Non exposée |
 
-Cette exposition vaut pour le POC. À terme, la web app sera elle aussi ouverte sur Internet, avec une authentification : voir [le POC](poc.md). Sa sécurité ne compte donc jamais sur Tailscale, et toute route exige la session.
+Cette exposition vaut pour le POC. À terme, la web app sera elle aussi ouverte sur Internet, avec une authentification : voir [les chantiers](chantiers.md). Sa sécurité ne compte donc jamais sur Tailscale, et toute route exige la session.
 
 Le NAS est partagé avec d'autres personnes : les données du tracker doivent rester isolées de leurs comptes.
 
@@ -477,7 +477,7 @@ Notées telles quelles, faisabilité à étudier plus tard.
 - [ ] Consommation électrique du logement (compteur Linky)
 - [ ] Nombre de tokens Claude utilisés
 - [ ] API GitHub
-- [ ] API Garmin Connect (entraînements et sommeil) : en cours, par l'API personnelle, voir [l'après-POC](poc.md)
+- [ ] API Garmin Connect (entraînements et sommeil) : en cours, par l'API personnelle, voir [les chantiers](chantiers.md)
 - [ ] Temps d'écran sur l'iPhone
 - [ ] Boîte mail (API Gmail ?)
 - [ ] Déplacements via géolocalisation

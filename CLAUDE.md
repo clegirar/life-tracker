@@ -4,14 +4,15 @@ App auto-hébergée sur un NAS Synology qui retrace ma vie jour par jour, avec u
 
 ## Où trouver quoi
 
-- `docs/poc.md` : les étapes du POC et leurs critères. On travaille une étape à la fois, dans l'ordre ; une étape n'est finie que si tous ses critères « Terminé quand » sont remplis.
+- `docs/chantiers.md` : les chantiers en cours depuis la fin du POC, leurs choix et leurs critères. Un chantier n'est fini que si tous ses critères « Terminé quand » sont remplis.
+- `docs/poc.md` : les étapes du POC, terminé le 4 nov. 2026 ; figé, pour l'historique.
 - `docs/architecture.md` : les principes, le contrat de l'API d'ingestion et le journal des décisions. À lire avant toute décision de conception.
 - `docs/database.md` : le schéma et ses raisons.
 - `TODO.md` : les reprises notées pour plus tard, à ne traiter que sur demande.
 
 ## Périmètre
 
-En cours : Garmin Connect (section « Après le POC » de `docs/poc.md`). Hors champ tant que je ne les demande pas : les messages et l'agent Mac, l'annuaire côté interface, les autres trackers, les « fonctionnalités futures » de l'architecture, les sauvegardes, l'ouverture de la web app sur Internet, le contenu de `TODO.md`. Ne rien construire pour eux par anticipation ; le design des messages reste dans l'architecture pour plus tard.
+En cours : Garmin Connect (voir `docs/chantiers.md`). Hors champ tant que je ne les demande pas : les messages et l'agent Mac, l'annuaire côté interface, les autres trackers, les « fonctionnalités futures » de l'architecture, les sauvegardes, l'ouverture de la web app sur Internet, le contenu de `TODO.md`. Ne rien construire pour eux par anticipation ; le design des messages reste dans l'architecture pour plus tard.
 
 ## Commandes
 
@@ -70,7 +71,7 @@ Le cookie de session est toujours `Secure`. Seule exception, pour le développem
 - Migrations dans `backend/migrations/`, sans version descendante. Elles restent modifiables jusqu'au premier déploiement sur le NAS (étape 4) ; ensuite, on en ajoute une nouvelle.
 - Versions d'images explicites, jamais `latest`. PostgreSQL 18 reste figé.
 - Git : une branche `type/sujet` par travail (par exemple `feat/compteur-the`), une PR par `gh pr create`. Messages et titres de PR en Conventional Commits : `type(scope): description en français`. Types : `feat`, `fix`, `perf`, `refactor`, `test`, `docs`, `chore`, `ci`, `build` ; scopes facultatifs : `backend`, `web`, `mcp`, `db`, `deploy`, `ci` ; `!` ou `BREAKING CHANGE:` pour une rupture. Fusion en squash : le titre de la PR devient le commit sur `main`. Toute PR qui change le code des images (`backend/`, `web/`, `mcp/`, hors tests et Markdown) part en production à la fusion, une fois la CI verte ; son type ne fixe que la version : `feat` donne une mineure, le reste un correctif, une rupture une mineure avant 1.0.0. Une PR qui demande une action sur le NAS (`compose.yaml` à recopier avant la fusion, secret, `admin rebuild`) le dit dans sa description. Une PR qui change l'interface de `web/` montre ses captures dans sa description : celles de Playwright (`web/e2e-artifacts/`, données fictives seulement), à la largeur d'un iPhone et d'un Mac, en clair et en sombre, pour chaque écran touché. `gh` ne téléverse pas d'image : elles vont dans la branche orpheline `captures`, sous `pr-<numéro>/`, jamais dans `main`, et la description les affiche par `https://github.com/clegirar/life-tracker/blob/captures/pr-<numéro>/<fichier>.png?raw=true`. Chaque commit est signé (`git commit -s`, pour le contrôle DCO). C'est l'utilisateur qui fusionne. Commit, push et PR seulement à sa demande.
-- Le plus simple qui respecte les principes. Toute décision de conception s'ajoute au journal des décisions de l'architecture, et chaque étape terminée se note dans `docs/poc.md`.
+- Le plus simple qui respecte les principes. Toute décision de conception s'ajoute au journal des décisions de l'architecture, et l'avancement de chaque chantier se note dans `docs/chantiers.md`.
 
 ## Interface
 
