@@ -107,7 +107,8 @@ echo "▶ Playwright"
 npx playwright test "$@"
 
 echo "▶ Les logs du backend ne contiennent ni mot de passe ni token"
-if grep -qF -e "$E2E_PASSWORD" -e "$E2E_IOS_TOKEN" -e "$E2E_LASTFM_TOKEN" -e "$E2E_APPLE_TOKEN" -e "$E2E_GARMIN_TOKEN" -e "Ville Fictive" -e "48.85" -e "Artiste Fictif" -e "Titre fictif" "$LOG"; then
+# Sans l'horodatage : « …:48.853Z » ressemble à la latitude des parcours fictifs.
+if sed 's/"timestamp":"[^"]*"//' "$LOG" | grep -qF -e "$E2E_PASSWORD" -e "$E2E_IOS_TOKEN" -e "$E2E_LASTFM_TOKEN" -e "$E2E_APPLE_TOKEN" -e "$E2E_GARMIN_TOKEN" -e "Ville Fictive" -e "48.85" -e "Artiste Fictif" -e "Titre fictif"; then
   echo "ÉCHEC : secret dans les logs" >&2
   exit 1
 fi
