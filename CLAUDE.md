@@ -1,16 +1,17 @@
 # Life tracker
 
-App auto-hébergée sur un NAS Synology qui retrace ma vie jour par jour, avec un calendrier web et un serveur MCP pour Claude. On construit le POC : le compteur de cafés et la musique.
+App auto-hébergée sur un NAS Synology qui retrace ma vie jour par jour, avec un calendrier web et un serveur MCP pour Claude. Le POC (compteur de cafés et musique) est validé depuis le 4 nov. 2026 ; on construit le premier tracker après le POC : Garmin Connect.
 
 ## Où trouver quoi
 
 - `docs/poc.md` : les étapes du POC et leurs critères. On travaille une étape à la fois, dans l'ordre ; une étape n'est finie que si tous ses critères « Terminé quand » sont remplis.
 - `docs/architecture.md` : les principes, le contrat de l'API d'ingestion et le journal des décisions. À lire avant toute décision de conception.
 - `docs/database.md` : le schéma et ses raisons.
+- `TODO.md` : les reprises notées pour plus tard, à ne traiter que sur demande.
 
 ## Périmètre
 
-Hors POC : les messages et l'agent Mac, l'annuaire côté interface, les autres trackers, les « fonctionnalités futures » de l'architecture, les sauvegardes, l'ouverture de la web app sur Internet. Ne rien construire pour eux par anticipation ; le design des messages reste dans l'architecture pour plus tard.
+En cours : Garmin Connect (section « Après le POC » de `docs/poc.md`). Hors champ tant que je ne les demande pas : les messages et l'agent Mac, l'annuaire côté interface, les autres trackers, les « fonctionnalités futures » de l'architecture, les sauvegardes, l'ouverture de la web app sur Internet, le contenu de `TODO.md`. Ne rien construire pour eux par anticipation ; le design des messages reste dans l'architecture pour plus tard.
 
 ## Commandes
 
