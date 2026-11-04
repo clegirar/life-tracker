@@ -519,9 +519,13 @@ async fn the_first_pass_backfills_in_chunks_then_rereads_a_week_with_the_same_to
     assert!(collector.backfilled());
 
     let summaries = fake.calls("usersummary-service");
-    assert_eq!(summaries.len(), 1, "400 jours en un appel");
+    assert_eq!(
+        summaries.len(),
+        13,
+        "des plages de 31 jours : Garmin refuse 400 jours"
+    );
     assert_eq!(summaries[0]["startDate"], day(399).to_string());
-    assert_eq!(summaries[0]["endDate"], today().to_string());
+    assert_eq!(summaries[12]["endDate"], today().to_string());
     let sleeps = fake.calls("sleep-service");
     assert_eq!(sleeps.len(), 13, "des plages de 31 jours");
     assert_eq!(sleeps[0]["startDate"], day(399).to_string());
