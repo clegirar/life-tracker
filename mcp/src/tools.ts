@@ -187,7 +187,7 @@ export function buildServer(backend: Backend): McpServer {
     { name: 'life-tracker', version: '0.1.0' },
     {
       instructions:
-        'Read-only access to the life tracker of one person (coffee, music listens…). Call `inventory` first: it lists the tracked metrics, their item levels and which tools apply. ' +
+        'Read-only access to the life tracker of one person (coffee, music listens, steps, sleep, workouts…). Call `inventory` first: it lists the tracked metrics, their item levels and which tools apply. ' +
         'Dates are local days in Europe/Paris (YYYY-MM-DD, bounds included) and times are Paris local time. Item keys are normalized: get them from `search`, `top` or `discoveries`. ' +
         'A day without occurrences is not necessarily a day without activity: use `completeness` before concluding.',
     },
@@ -255,7 +255,7 @@ export function buildServer(backend: Backend): McpServer {
     {
       title: 'Occurrences',
       description:
-        'Occurrences of a metric, or of one item of it, over a period, with their Paris local time. Forms: "list" (each occurrence, with its items), "daily" (count per day), "first_last" (first and last time of each day, e.g. time of the first coffee). Days absent from the result have no occurrence.',
+        'Occurrences of a metric, or of one item of it, over a period, with their Paris local time. Forms: "list" (each occurrence, with its items and its value when the metric has one, e.g. km of a workout, minutes of sleep), "daily" (count per day), "first_last" (first and last time of each day, e.g. time of the first coffee). Days absent from the result have no occurrence.',
       inputSchema: z.object({
         metric,
         from: date,
@@ -271,7 +271,7 @@ export function buildServer(backend: Backend): McpServer {
       guarded(async () => {
         const result = await backend.get<Json>('/v1/occurrences', { metric: m, from, to, form, level: l, key: k, limit });
         if (result.form === 'list' && Array.isArray(result.occurrences)) {
-          result.occurrences = (result.occurrences as Json[]).map((o) => ({ local: o.local, items: o.items }));
+          result.occurrences = (result.occurrences as Json[]).map((o) => ({ local: o.local, items: o.items, value: o.value }));
         }
         return result;
       }),
@@ -389,7 +389,7 @@ export function buildServer(backend: Backend): McpServer {
     {
       title: 'Day summary',
       description:
-        'Everything the calendar shows for one day: the value of each metric (null means no data that day), times of counted events, top items, discoveries, minutes, and the completeness signals of the day.',
+        'Everything the calendar shows for one day: the value of each metric (null means no data that day, never zero; a measure such as steps or sleep minutes is the value of the day), times of counted events, each workout with its items and value, top items, discoveries, minutes, and the completeness signals of the day.',
       inputSchema: z.object({ date }),
       annotations: READ_ONLY,
     },
@@ -401,7 +401,9 @@ export function buildServer(backend: Backend): McpServer {
         const metrics: Json[] = [];
         for (const m of inventory.metrics.filter(displayable)) {
           const entry: Json = { metric: m.metric, label: m.label, value: signals?.values[m.metric] ?? null };
-          if (m.item_levels.length === 0) {
+          if (m.shape === 'measure') {
+            // Une mesure du jour (pas, sommeil…) : sa valeur suffit, son heure est conventionnelle.
+          } else if (m.item_levels.length === 0) {
             const list = await backend.get<Json>('/v1/occurrences', {
               metric: m.metric,
               from: day,
@@ -416,6 +418,15 @@ export function buildServer(backend: Backend): McpServer {
               top[l] = await backend.get('/v1/top', { metric: m.metric, level: l, from: day, to: day, limit: 10 });
             }
             entry.top = top;
+            if (!m.discovery) {
+              // Peu d'occurrences par jour (des séances) : chacune, avec son heure, ses éléments et sa valeur.
+              const list = await backend.get<Json>('/v1/occurrences', { metric: m.metric, from: day, to: day, form: 'list', limit: 50 });
+              entry.occurrences = ((list.occurrences as Json[]) ?? []).map((o) => ({
+                time: String(o.local).slice(11),
+                items: o.items,
+                value: o.value,
+              }));
+            }
             if (m.discovery) {
               const found: Json = {};
               for (const l of m.item_levels) {
