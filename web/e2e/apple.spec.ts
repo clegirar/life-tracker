@@ -50,5 +50,7 @@ test('une écoute de l\'historique sans artiste compte, se voit, et n\'invente r
   await music.getByRole('button', { name: 'Artistes' }).click()
   await expect(rows).toHaveCount(1)
   await expect(rows.first()).toContainText('Groupe Importé')
-  await expect(music.locator('.find')).toHaveCount(3)
+  // Les découvertes suivent l'onglet : un seul artiste découvert, aucun inventé.
+  await expect(music.locator('.find')).toHaveCount(1)
+  await expect(music.locator('.find')).toContainText('Groupe Importé')
 })

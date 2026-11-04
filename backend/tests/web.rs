@@ -420,6 +420,7 @@ async fn every_route_refuses_a_request_without_session() {
         ),
         ("day", c.get(format!("{base}/v1/days/2026-10-25"))),
         ("month", c.get(format!("{base}/v1/months/2026-10"))),
+        ("year", c.get(format!("{base}/v1/years/2026"))),
         ("invalid day", c.get(format!("{base}/v1/days/pas-une-date"))),
         ("head day", c.head(format!("{base}/v1/days/2026-10-25"))),
         ("unknown", c.get(format!("{base}/v1/inconnu"))),

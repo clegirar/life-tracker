@@ -98,13 +98,9 @@ export function visibleFirstListens(rows: FirstListen[], ops: MarkOp[], date: st
   })
 }
 
-const LEVELS = { artist: 'Artiste', album: 'Album', track: 'Titre' }
-const DISCOVERED = { artist: 'Artiste découvert', album: 'Album découvert', track: 'Titre découvert' }
-
-/** Un élément marqué n'est plus une découverte : la ligne cesse de le prétendre. */
-export function discoveryDetail(row: Pick<FirstListen, 'level' | 'artist'>, known: boolean): string {
-  const label = known ? LEVELS[row.level] : DISCOVERED[row.level]
-  return row.level === 'artist' ? label : `${label} · ${row.artist}`
+/** La ligne de détail : l'onglet dit déjà le niveau, il reste l'artiste d'un titre ou d'un album. */
+export function discoveryDetail(row: Pick<FirstListen, 'level' | 'artist'>): string | null {
+  return row.level === 'artist' ? null : row.artist
 }
 
 export function markFailureText(op: MarkOp): string {

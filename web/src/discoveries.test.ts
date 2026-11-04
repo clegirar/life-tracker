@@ -69,10 +69,10 @@ describe("ce que montre l'écran", () => {
     expect(visibleFirstListens([row()], [op], '2026-10-17')[0].known).toBe(false)
   })
 
-  it('une ligne marquée ne se dit plus découverte', () => {
-    expect(discoveryDetail({ level: 'artist', artist: 'A' }, false)).toBe('Artiste découvert')
-    expect(discoveryDetail({ level: 'album', artist: 'A' }, false)).toBe('Album découvert · A')
-    expect(discoveryDetail({ level: 'track', artist: 'A' }, true)).toBe('Titre · A')
+  it("le détail ne répète pas le niveau : l'artiste d'un titre ou d'un album", () => {
+    expect(discoveryDetail({ level: 'artist', artist: 'A' })).toBeNull()
+    expect(discoveryDetail({ level: 'album', artist: 'A' })).toBe('A')
+    expect(discoveryDetail({ level: 'track', artist: 'A' })).toBe('A')
   })
 
   it("l'échec nomme le geste", () => {

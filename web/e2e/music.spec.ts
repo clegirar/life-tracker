@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
-import { addDays, apiSession, checkLayout, login, noon, parisToday, previousDay, scrobble, send, waitForListens, type Listen } from './helpers'
+import { addDays, apiSession, checkLayout, fullShot, login, noon, parisToday, previousDay, scrobble, send, waitForListens, type Listen } from './helpers'
 
 // Les écoutes entrent par la vraie API d'ingestion, avec le token de la source, comme le collecteur.
 // Noms fictifs. Chaque test a sa journée : le journal n'efface rien.
@@ -65,6 +65,44 @@ test('la section musique montre le nombre, le temps, l\'artiste du jour et les t
   await expect(rows.getByText('Sans album')).toHaveCount(0)
 })
 
+test('une liste longue montre dix lignes, puis « Tout afficher » la déplie', async ({ page, request }) => {
+  const date = addDays(today, -25)
+  const cookie = await apiSession(request)
+  // Douze titres jamais entendus : douze découvertes et douze lignes d'écoutes.
+  await send(request, Array.from({ length: 12 }, (_, i) => scrobble(date, i, { artist: 'Groupe Bavard', track: `Titre bavard ${i + 1}`, album: 'Album Bavard' })))
+  await waitForListens(request, cookie, date, 12)
+
+  await login(page)
+  await page.goto(`/jour/${date}`)
+  const finds = page.getByTestId('discoveries')
+  const list = page.getByTestId('listens-list')
+  await expect(page.getByTestId('listens')).toHaveText('12')
+  await expect(finds.locator('.find')).toHaveCount(10)
+  await expect(finds.getByTestId('discoveries-count')).toHaveText('12')
+  await expect(list.locator('.row')).toHaveCount(10)
+
+  await list.getByRole('button', { name: 'Tout afficher (12)' }).click()
+  await expect(list.locator('.row')).toHaveCount(12)
+  await expect(list.getByRole('button', { name: 'Réduire' })).toHaveAttribute('aria-expanded', 'true')
+  // Chaque section se déplie seule.
+  await expect(finds.locator('.find')).toHaveCount(10)
+  await finds.getByRole('button', { name: 'Tout afficher (12)' }).click()
+  await expect(finds.locator('.find')).toHaveCount(12)
+  await checkLayout(page)
+
+  // Changer d'onglet replie ; une liste courte n'a pas de bouton.
+  await music(page).getByRole('button', { name: 'Artistes' }).click()
+  await expect(list.locator('.row')).toHaveCount(1)
+  await expect(music(page).getByRole('button', { name: /Tout afficher|Réduire/ })).toHaveCount(0)
+  await music(page).getByRole('button', { name: 'Titres' }).click()
+  await expect(list.locator('.row')).toHaveCount(10)
+  await expect(finds.locator('.find')).toHaveCount(10)
+
+  await list.getByRole('button', { name: 'Tout afficher (12)' }).click()
+  await list.getByRole('button', { name: 'Réduire' }).click()
+  await expect(list.locator('.row')).toHaveCount(10)
+})
+
 test('une écoute à trois artistes compte une écoute, un titre et trois artistes', async ({ page, request }) => {
   const date = addDays(today, -19)
   const cookie = await apiSession(request)
@@ -125,8 +163,8 @@ test('une journée sans écoute et une panne ne se confondent pas', async ({ pag
     health.sources[0].silent = true
     await route.fulfill({ response, json: health })
   })
+  // L'adresse garde le jour.
   await page.reload()
-  await previousDay(page, 1)
   await expect(page.getByRole('heading', { name: 'Hier' })).toBeVisible()
   await expect(page.getByTestId('music-alert')).toContainText('Last.fm ne répond plus.')
   await expect(music(page)).toContainText('Pas de données')
@@ -168,6 +206,13 @@ for (const [colorScheme, daysAgo] of [['light', 4], ['dark', 5]] as const) {
       await music(page).getByRole('button', { name: 'Albums' }).click()
       await checkLayout(page)
       await shot('3-albums')
+
+      // Sur Mac : la barre latérale à gauche, la carte à côté du café.
+      await page.setViewportSize({ width: 1280, height: 800 })
+      await music(page).getByRole('button', { name: 'Titres' }).click()
+      await checkLayout(page)
+      await fullShot(page, `${SHOTS}/${colorScheme}-large-musique.png`)
+      await page.setViewportSize({ width: 390, height: 844 })
 
       await page.route('**/v1/sources/health', async (route) => {
         const response = await route.fetch()

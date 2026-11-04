@@ -158,6 +158,13 @@ impl App {
             .clone()
     }
 
+    async fn year(&self, year: i32) -> Value {
+        let response = self.response(&format!("/v1/years/{year}")).await;
+        assert_eq!(response.status(), 200, "{year}");
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        response.json().await.unwrap()
+    }
+
     async fn sql_date(&self, sql: &str) -> String {
         let date: chrono::NaiveDate = sqlx::query_scalar(sqlx::AssertSqlSafe(sql.to_owned()))
             .fetch_one(&self.db.app)
@@ -473,6 +480,139 @@ async fn the_month_requires_a_session() {
     let with_token = app
         .http
         .get(format!("{}/v1/months/2026-10", app.base))
+        .bearer_auth(&app.lastfm)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(with_token.status(), 401);
+}
+
+#[tokio::test]
+async fn each_day_of_a_year_is_the_same_day_as_in_its_month() {
+    let app = App::new().await;
+    let history = app.history_source().await;
+    let today = app
+        .sql_date("SELECT (now() AT TIME ZONE 'Europe/Paris')::date")
+        .await;
+    let this_year: i32 = today[..4].parse().unwrap();
+    let last = this_year - 1;
+    // L'an dernier : un historique avec un vrai zéro, un trou entre deux sources, une erreur, le
+    // premier café ; Last.fm s'arrête et devient à vérifier, puis se tait (en attente).
+    app.send_as(
+        &history,
+        vec![
+            scrobble(&format!("{last}-03-01T10:00:00Z"), "A"),
+            scrobble(&format!("{last}-03-02T10:00:00Z"), "B"),
+            scrobble(&format!("{last}-03-04T10:00:00Z"), "C"),
+        ],
+    )
+    .await;
+    app.send(vec![
+        scrobble(&format!("{last}-03-10T10:00:00Z"), "D"),
+        scrobble(&format!("{last}-03-10T11:00:00Z"), "E"),
+        broken(&format!("{last}-06-15T12:00:00Z")),
+    ])
+    .await;
+    app.write_as_webapp(vec![cup(
+        "premier",
+        &format!("{last}-08-01T08:00:00+02:00"),
+    )])
+    .await;
+    sqlx::query(
+        "UPDATE core.sources SET last_seen_at = now() - interval '3 days' WHERE name = 'lastfm'",
+    )
+    .execute(&app.db.app)
+    .await
+    .unwrap();
+
+    for year in [last, this_year] {
+        let whole = app.year(year).await;
+        assert_eq!(whole["year"], year);
+        let days = whole["days"].as_array().unwrap();
+        let leap = chrono::NaiveDate::from_ymd_opt(year, 2, 29).is_some();
+        assert_eq!(days.len(), if leap { 366 } else { 365 });
+        for month in 1..=12 {
+            let month = format!("{year}-{month:02}");
+            let alone = app.month(&month).await;
+            assert_eq!(alone["metrics"], whole["metrics"]);
+            assert_eq!(alone["today"], whole["today"]);
+            let part: Vec<&Value> = days
+                .iter()
+                .filter(|d| d["date"].as_str().unwrap().starts_with(&month))
+                .collect();
+            let alone: Vec<&Value> = alone["days"].as_array().unwrap().iter().collect();
+            assert_eq!(part, alone, "{month}");
+        }
+    }
+
+    // De quoi comparer : chaque cas apparaît bien dans l'année.
+    let whole = app.year(last).await;
+    let day = |date: String| {
+        whole["days"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["date"] == date.as_str())
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(day(format!("{last}-03-03"))["values"]["music.listen"], 0.0);
+    assert_eq!(
+        day(format!("{last}-03-06"))["values"]["music.listen"],
+        Value::Null
+    );
+    assert_eq!(day(format!("{last}-03-10"))["values"]["music.listen"], 2.0);
+    assert_eq!(day(format!("{last}-06-15"))["errors"], 1);
+    assert_eq!(
+        day(format!("{last}-07-31"))["values"]["coffee"],
+        Value::Null
+    );
+    assert_eq!(day(format!("{last}-08-02"))["values"]["coffee"], 0.0);
+    assert_eq!(
+        day(format!("{last}-03-20"))["to_check"],
+        json!(["music.listen"])
+    );
+    assert_eq!(app.day(&today).await["pending"], json!(["lastfm"]));
+}
+
+#[tokio::test]
+async fn a_future_or_malformed_year_is_refused() {
+    let app = App::new().await;
+    let today = app
+        .sql_date("SELECT (now() AT TIME ZONE 'Europe/Paris')::date")
+        .await;
+    let next: i32 = today[..4].parse::<i32>().unwrap() + 1;
+    for year in [
+        next.to_string(),
+        "9999".to_owned(),
+        "26".to_owned(),
+        "20266".to_owned(),
+        "2026-01".to_owned(),
+        "deux-mille".to_owned(),
+    ] {
+        let response = app.response(&format!("/v1/years/{year}")).await;
+        assert_eq!(response.status(), 400, "{year}");
+    }
+    // Une année passée, même sans aucune donnée, se lit : tout y est « pas de données ».
+    let old = app.year(1999).await;
+    assert_eq!(old["days"].as_array().unwrap().len(), 365);
+    assert!(
+        old["days"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|d| d["values"]["coffee"].is_null())
+    );
+}
+
+#[tokio::test]
+async fn the_year_requires_a_session() {
+    let app = App::new().await;
+    let url = format!("{}/v1/years/2026", app.base);
+    assert_eq!(app.http.get(&url).send().await.unwrap().status(), 401);
+    let with_token = app
+        .http
+        .get(&url)
         .bearer_auth(&app.lastfm)
         .send()
         .await

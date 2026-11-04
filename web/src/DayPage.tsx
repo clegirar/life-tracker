@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import type { MonthDay } from './api'
 import { monthName, monthOf } from './calendar'
 import type { Op } from './reconcile'
@@ -10,6 +10,8 @@ import { addDays, dayTitle, emptyLabel, longDate, parisInstant, parisTime } from
 import type { useCoffee } from './useCoffee'
 
 interface Props {
+  /** Le bouton du tiroir, sur iPhone. */
+  menu: ReactNode
   date: string
   today: string
   onSelect: (date: string) => void
@@ -18,7 +20,6 @@ interface Props {
   calendarDay: MonthDay | null
   coffee: ReturnType<typeof useCoffee>
   music: ReturnType<typeof useMusic>
-  onLogout: () => void
 }
 
 function Chevron({ d }: { d: string }) {
@@ -39,7 +40,7 @@ function failureText(op: Op, date: string, today: string): string {
     : `${what} de ${when} n'a pas été enregistré${e}.`
 }
 
-export function DayPage({ date, today, onSelect, onShowMonth, calendarDay, coffee, music, onLogout }: Props) {
+export function DayPage({ menu, date, today, onSelect, onShowMonth, calendarDay, coffee, music }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [picked, setPicked] = useState('12:00')
   const [pickError, setPickError] = useState<string | null>(null)
@@ -83,10 +84,13 @@ export function DayPage({ date, today, onSelect, onShowMonth, calendarDay, coffe
 
   return (
     <main className="page">
-      <button type="button" className="back" onClick={onShowMonth} aria-label={`Voir le mois : ${monthName(monthOf(date)).toLowerCase()}`}>
-        <Chevron d="M15 5l-7 7 7 7" />
-        {monthName(monthOf(date))}
-      </button>
+      <div className="topbar">
+        {menu}
+        <button type="button" className="back" onClick={onShowMonth} aria-label={`Voir le mois : ${monthName(monthOf(date)).toLowerCase()}`}>
+          <Chevron d="M15 5l-7 7 7 7" />
+          {monthName(monthOf(date))}
+        </button>
+      </div>
       <header className="header">
         <div className="header-text">
           <p className="subtitle">{longDate(date, today)}</p>
@@ -209,10 +213,6 @@ export function DayPage({ date, today, onSelect, onShowMonth, calendarDay, coffe
 
       <MusicCard date={date} today={today} state={music} />
       </div>
-
-      <button type="button" className="quiet" onClick={onLogout}>
-        Se déconnecter
-      </button>
     </main>
   )
 }

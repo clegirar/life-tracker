@@ -205,6 +205,8 @@ Fait le 3 nov. 2026 sur le vrai NAS, en suivant [le runbook](deploiement.md) (co
 
 ## Étape 10 : peaufiner l'interface
 
+En cours. Le 3 nov. 2026, sur la branche `feat/interface-etape-10`, trois demandes faites et vérifiées par Playwright à 390 et 1280 px, en clair et en sombre : une barre latérale (fixe sur Mac, tiroir sur iPhone) qui accueillera les fonctionnalités suivantes et n'a pour l'instant que « Calendrier », des adresses pour chaque page (Retour et rechargement fonctionnent), une vue de l'année (`/v1/years/{AAAA}`, douze mini-mois dont l'intensité suit la métrique choisie) et une carte Musique triée par un seul sélecteur, découvertes comprises, avec « Tout afficher » au-delà de dix lignes. Les captures servent de maquette à valider. Restent l'essai tactile sur iPhone et la suite de ce que je demanderai. Les choix sont au journal des décisions de [l'architecture](architecture.md).
+
 **Prérequis :** la liste de toutes les fonctionnalités que j'ai en tête, y compris après le POC, que je donnerai en début d'étape.
 
 **Contenu**

@@ -7,6 +7,9 @@ const today = parisToday()
 const SHOTS = process.env.E2E_SCREENSHOTS ?? 'e2e-artifacts/screenshots'
 const section = (page: Page) => page.getByTestId('discoveries')
 const button = (page: Page, name: string) => section(page).getByRole('button', { name: `${name} : déjà connu` })
+/** Le sélecteur de la carte : il trie aussi les découvertes. */
+const tab = (page: Page, name: 'Titres' | 'Artistes' | 'Albums') => page.getByTestId('music').getByRole('button', { name, exact: true }).click()
+const discovered = (page: Page) => section(page).getByTestId('discoveries-count')
 
 interface ServerRow {
   level: string
@@ -37,9 +40,17 @@ test('marquer un artiste ne touche que lui, et annuler rétablit la découverte'
 
   await login(page)
   await previousDay(page, 10)
-  await expect(section(page).getByText('Artiste découvert')).toBeVisible()
-  await expect(section(page).getByText('Album découvert · Duo Casqué')).toBeVisible()
-  await expect(section(page).getByText('Titre découvert · Duo Casqué')).toBeVisible()
+  // Titres d'abord : seule la découverte du titre, avec son artiste.
+  await expect(section(page).locator('.find')).toHaveCount(1)
+  await expect(button(page, 'Titre Casqué')).toBeVisible()
+  await expect(section(page).locator('.find .row-detail')).toHaveText('Duo Casqué')
+  await expect(discovered(page)).toHaveText('1')
+  await tab(page, 'Albums')
+  await expect(button(page, 'Album Casqué')).toBeVisible()
+  await expect(section(page).locator('.find .row-detail')).toHaveText('Duo Casqué')
+  await tab(page, 'Artistes')
+  await expect(section(page).locator('.find')).toHaveCount(1)
+  await expect(section(page).locator('.find .row-detail')).toHaveCount(0)
 
   await button(page, 'Duo Casqué').click()
   // Le geste se voit tout de suite, puis le serveur confirme, à ce seul niveau.
@@ -47,19 +58,23 @@ test('marquer un artiste ne touche que lui, et annuler rétablit la découverte'
   await expect(button(page, 'Duo Casqué')).toHaveText('Marqué connu')
   await expect.poll(() => levelsOf(request, cookie, date), { timeout: 30_000 }).toEqual(['album', 'track'])
   await expect(button(page, 'Duo Casqué')).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 })
+  // Marqué, il n'est plus compté parmi les découvertes.
+  await expect(discovered(page)).toHaveCount(0)
+  await tab(page, 'Albums')
   await expect(button(page, 'Album Casqué')).toHaveAttribute('aria-pressed', 'false')
+  await tab(page, 'Titres')
   await expect(button(page, 'Titre Casqué')).toHaveAttribute('aria-pressed', 'false')
 
-  // Il tient après un rechargement : c'est le serveur qui le dit.
+  // Il tient après un rechargement : c'est le serveur qui le dit. L'adresse garde le jour.
   await page.reload()
-  await previousDay(page, 10)
+  await tab(page, 'Artistes')
   await expect(button(page, 'Duo Casqué')).toHaveAttribute('aria-pressed', 'true')
-  await expect(section(page).getByText('Artiste découvert')).toHaveCount(0)
+  await expect(discovered(page)).toHaveCount(0)
 
   await button(page, 'Duo Casqué').click()
   await expect(button(page, 'Duo Casqué')).toHaveAttribute('aria-pressed', 'false')
   await expect.poll(() => levelsOf(request, cookie, date), { timeout: 30_000 }).toEqual(['artist', 'album', 'track'])
-  await expect(section(page).getByText('Artiste découvert')).toBeVisible()
+  await expect(discovered(page)).toHaveText('1')
 })
 
 test('un double toucher ne marque qu\'une fois', async ({ page, request }) => {
@@ -68,6 +83,7 @@ test('un double toucher ne marque qu\'une fois', async ({ page, request }) => {
   await seed(request, cookie, date, 'Groupe Double', 'Album Double', 'Titre Double')
   await login(page)
   await previousDay(page, 11)
+  await tab(page, 'Albums')
   await button(page, 'Album Double').dblclick()
   await expect(button(page, 'Album Double')).toHaveAttribute('aria-pressed', 'true')
   await expect.poll(() => marksOf(request, cookie, date, 'Album Double'), { timeout: 30_000 }).toBe(1)
@@ -104,7 +120,16 @@ test('une journée sans découverte le dit, sans cacher ses écoutes', async ({ 
   await login(page)
   await previousDay(page, 13)
   await expect(page.getByTestId('listens')).toHaveText('1')
-  await expect(section(page).getByText('Aucune découverte ce jour-là.')).toBeVisible()
+  for (const [name, text] of [
+    ['Titres', 'Aucun titre découvert ce jour-là.'],
+    ['Artistes', 'Aucun artiste découvert ce jour-là.'],
+    ['Albums', 'Aucun album découvert ce jour-là.'],
+  ] as const) {
+    await tab(page, name)
+    await expect(section(page).getByText(text)).toBeVisible()
+  }
+  // Les écoutes restent là, sous les découvertes.
+  await expect(page.getByTestId('listens-list').locator('.row')).toHaveCount(1)
 })
 
 test('un album partagé par deux crédits est une seule découverte, à l\'artiste principal', async ({ page, request }) => {
@@ -118,8 +143,11 @@ test('un album partagé par deux crédits est une seule découverte, à l\'artis
 
   await login(page)
   await previousDay(page, 21)
-  await expect(section(page).getByText('Artiste découvert')).toHaveCount(3)
-  await expect(section(page).getByText('Album découvert · Duo Principal', { exact: true })).toHaveCount(1)
+  await tab(page, 'Artistes')
+  await expect(section(page).locator('.find')).toHaveCount(3)
+  await tab(page, 'Albums')
+  await expect(section(page).locator('.find')).toHaveCount(1)
+  await expect(section(page).locator('.find .row-detail')).toHaveText('Duo Principal')
 
   await button(page, 'Album Partagé').click()
   await expect.poll(() => levelsOf(request, cookie, date), { timeout: 30_000 }).toEqual(['artist', 'artist', 'artist', 'track', 'track'])
@@ -143,7 +171,8 @@ for (const [colorScheme, daysAgo] of [['light', 15], ['dark', 16]] as const) {
 
       await login(page)
       await previousDay(page, daysAgo)
-      await expect(section(page).locator('.find')).toHaveCount(6)
+      await expect(section(page).locator('.find')).toHaveCount(2)
+      await tab(page, 'Albums')
       await button(page, `Album Écran ${colorScheme}`).click()
       await expect(button(page, `Album Écran ${colorScheme}`)).toHaveAttribute('aria-busy', 'false', { timeout: 30_000 })
       expect(page.viewportSize()!.width).toBe(390)

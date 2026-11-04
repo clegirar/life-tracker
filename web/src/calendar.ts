@@ -1,5 +1,6 @@
 // La vue du mois : la grille, et ce que chaque case dit de sa journée.
-// Une case sans chiffre n'a pas de données ; un 0 est une journée sans activité. Jamais l'un pour l'autre.
+// Une case sans chiffre ou au numéro grisé n'a pas de données ; un 0 ou une case sans point est une
+// journée sans activité. Jamais l'un pour l'autre.
 
 import type { MonthDay, MonthMetric } from './api'
 import { longDate } from './time'
@@ -96,9 +97,11 @@ export function dayNotes(day: MonthDay, metrics: MonthMetric[]): string[] {
   return notes
 }
 
-/** Ce que lit un lecteur d'écran sur une case. */
+/** Ce que lit un lecteur d'écran sur une case : chaque métrique par son nom, jamais par sa couleur. */
 export function cellLabel(day: MonthDay, metrics: MonthMetric[], today: string): string {
-  const parts = metrics.map((metric) => valueText(metric, day.values[metric.metric] ?? null))
+  const known = metrics.some((metric) => (day.values[metric.metric] ?? null) !== null)
+  const parts =
+    metrics.length > 1 && !known ? ['pas de données'] : metrics.map((metric) => valueText(metric, day.values[metric.metric] ?? null))
   return [longDate(day.date, today), [...parts, ...dayNotes(day, metrics)].join(', ')].join(' : ')
 }
 

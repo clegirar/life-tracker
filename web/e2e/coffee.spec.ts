@@ -7,6 +7,7 @@ import {
   count,
   IOS_TOKEN,
   login,
+  logoutFromMenu,
   parisToday,
   PASSWORD,
   serverDay,
@@ -72,7 +73,7 @@ test('parcours complet : connexion, +1, café visible, annulation, déconnexion'
   await page.reload()
   await expect(count(page)).toHaveText('0')
 
-  await page.getByRole('button', { name: 'Se déconnecter' }).click()
+  await logoutFromMenu(page)
   await expect(page.getByRole('heading', { name: 'Connexion' })).toBeVisible()
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Connexion' })).toBeVisible()

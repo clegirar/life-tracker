@@ -1,4 +1,4 @@
-//! La vue du mois : ce que chaque journée contient, et ce que l'on sait de sa complétude.
+//! Les vues du mois et de l'année : ce que chaque journée contient, et ce que l'on sait de sa complétude.
 //!
 //! Tout se calcule à la lecture, rien n'est stocké (principe 3) : un enregistrement tardif, un import
 //! ou une annulation changent l'apparence d'un jour passé dès la lecture suivante (règle 7). Générique :
@@ -14,7 +14,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use chrono::{DateTime, Days, Months, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, Days, Months, NaiveDate, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
 
@@ -38,12 +38,26 @@ pub struct MonthDay {
     to_check: Vec<String>,
 }
 
+/// Une période, jour par jour : la forme commune du mois et de l'année.
 #[derive(Serialize)]
-pub struct Month {
-    month: String,
+pub struct Period {
     today: NaiveDate,
     metrics: Vec<MonthMetric>,
     days: Vec<MonthDay>,
+}
+
+#[derive(Serialize)]
+pub struct Month {
+    month: String,
+    #[serde(flatten)]
+    period: Period,
+}
+
+#[derive(Serialize)]
+pub struct Year {
+    year: i32,
+    #[serde(flatten)]
+    period: Period,
 }
 
 /// `AAAA-MM` strict : le premier jour du mois.
@@ -54,6 +68,14 @@ pub fn parse_month(value: &str) -> Option<NaiveDate> {
         && bytes[..4].iter().chain(&bytes[5..]).all(u8::is_ascii_digit);
     shaped
         .then(|| NaiveDate::parse_from_str(&format!("{value}-01"), "%Y-%m-%d").ok())
+        .flatten()
+}
+
+/// `AAAA` strict : le 1er janvier de l'année.
+pub fn parse_year(value: &str) -> Option<NaiveDate> {
+    let shaped = value.len() == 4 && value.bytes().all(|b| b.is_ascii_digit());
+    shaped
+        .then(|| NaiveDate::from_ymd_opt(value.parse().ok()?, 1, 1))
         .flatten()
 }
 
@@ -100,12 +122,32 @@ impl Coverage {
     }
 }
 
-/// Le fuseau en sous-requête et le numéro de génération fixé, comme toutes les lectures : voir
-/// `api::get_day`.
 pub async fn month(pool: &PgPool, start: NaiveDate) -> Result<Month, sqlx::Error> {
     let end = start
         .checked_add_months(Months::new(1))
         .unwrap_or(NaiveDate::MAX);
+    Ok(Month {
+        month: start.format("%Y-%m").to_string(),
+        period: range(pool, start, end).await?,
+    })
+}
+
+/// L'année d'un seul calcul : les couvertures portent sur tout l'historique, douze mois les
+/// referaient douze fois. `None` pour une année future.
+pub async fn year(pool: &PgPool, start: NaiveDate) -> Result<Option<Year>, sqlx::Error> {
+    let end = start
+        .checked_add_months(Months::new(12))
+        .unwrap_or(NaiveDate::MAX);
+    let period = range(pool, start, end).await?;
+    Ok((start.year() <= period.today.year()).then(|| Year {
+        year: start.year(),
+        period,
+    }))
+}
+
+/// Les jours de `start` inclus à `end` exclu. Le fuseau en sous-requête et le numéro de génération
+/// fixé, comme toutes les lectures : voir `api::get_day`.
+pub async fn range(pool: &PgPool, start: NaiveDate, end: NaiveDate) -> Result<Period, sqlx::Error> {
     let clock = sqlx::query!(
         r#"SELECT now() AS "now!",
                   (now() AT TIME ZONE (SELECT timezone FROM core.settings))::date AS "today!""#
@@ -280,8 +322,7 @@ pub async fn month(pool: &PgPool, start: NaiveDate) -> Result<Month, sqlx::Error
         }
     }
 
-    Ok(Month {
-        month: start.format("%Y-%m").to_string(),
+    Ok(Period {
         today,
         metrics: metrics
             .into_iter()
@@ -317,6 +358,15 @@ mod tests {
             "",
         ] {
             assert_eq!(parse_month(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn years_are_strict() {
+        assert_eq!(parse_year("2026"), Some(d("2026-01-01")));
+        assert_eq!(parse_year("0001"), Some(d("0001-01-01")));
+        for bad in ["26", "20266", "2026-01", "+202", "abcd", ""] {
+            assert_eq!(parse_year(bad), None, "{bad}");
         }
     }
 

@@ -66,6 +66,12 @@ describe('les textes', () => {
     )
   })
 
+  it('disent « pas de données » une fois quand aucune métrique choisie n’en a', () => {
+    const empty = day({ values: { coffee: null, 'music.listen': null } })
+    expect(cellLabel(empty, METRICS, '2026-11-02')).toBe('Dimanche 25 octobre : pas de données')
+    expect(cellLabel(empty, METRICS.slice(0, 1), '2026-11-02')).toBe('Dimanche 25 octobre : cafés : pas de données')
+  })
+
   it('gardent le compteur global même à zéro, et des chiffres courts', () => {
     expect(errorCountText(0)).toBe('Aucun enregistrement en erreur')
     expect(errorCountText(1)).toBe('1 enregistrement en erreur')

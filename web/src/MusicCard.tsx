@@ -1,15 +1,23 @@
-import { useState } from 'react'
+import { useRef, useState, type RefObject } from 'react'
 import { discoveryDetail, markFailureText } from './discoveries'
-import { formatMinutes, musicEmptyText, plural } from './music'
+import {
+  discoveriesOf,
+  formatMinutes,
+  LIST_LIMIT,
+  musicEmptyText,
+  noDiscoveryText,
+  plural,
+  visibleRows,
+  type MusicTab,
+} from './music'
+import { Segments } from './Segments'
 import type { useMusic } from './useMusic'
 
-type Tab = 'tracks' | 'artists' | 'albums'
-
-const TABS: [Tab, string][] = [
+const TABS = [
   ['tracks', 'Titres'],
   ['artists', 'Artistes'],
   ['albums', 'Albums'],
-]
+] as const
 
 interface Props {
   date: string
@@ -23,15 +31,48 @@ interface Row {
   listens: number
 }
 
+/** « Tout afficher (N) », puis « Réduire ». Replier ramène le haut de la section à l'écran s'il en est sorti. */
+function MoreButton({ total, expanded, onToggle, section }: { total: number; expanded: boolean; onToggle: () => void; section: RefObject<HTMLElement | null> }) {
+  if (total <= LIST_LIMIT) return null
+  return (
+    <button
+      type="button"
+      className="more"
+      aria-expanded={expanded}
+      onClick={() => {
+        onToggle()
+        if (!expanded) return
+        requestAnimationFrame(() => {
+          const el = section.current
+          if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView({ block: 'start' })
+        })
+      }}
+    >
+      {expanded ? 'Réduire' : `Tout afficher (${total})`}
+    </button>
+  )
+}
+
 export function MusicCard({ date, today, state }: Props) {
-  const [tab, setTab] = useState<Tab>('tracks')
+  const [tab, setTab] = useState<MusicTab>('tracks')
+  // Déplié pour un jour et un onglet : changer de jour ou d'onglet replie, même en revenant.
+  const [unfolded, setUnfolded] = useState({ key: '', finds: false, rows: false })
+  const findsSection = useRef<HTMLElement>(null)
+  const rowsSection = useRef<HTMLElement>(null)
   const { music, health, loadFailed, firstListens } = state
+  const key = `${date}/${tab}`
+  const open = unfolded.key === key ? unfolded : { key, finds: false, rows: false }
+  const toggle = (part: 'finds' | 'rows') => setUnfolded({ ...open, [part]: !open[part] })
 
   const rows: Row[] = !music
     ? []
     : tab === 'artists'
       ? music.artists.map((a) => ({ name: a.name, detail: plural(a.tracks, 'titre'), listens: a.listens }))
       : (tab === 'tracks' ? music.tracks : music.albums).map((r) => ({ name: r.name, detail: r.artist ?? 'Artiste inconnu', listens: r.listens }))
+  const finds = discoveriesOf(firstListens, tab)
+  const discovered = finds.filter((row) => !row.known).length
+  const shownFinds = visibleRows(finds, open.finds).shown
+  const shownRows = visibleRows(rows, open.rows).shown
 
   return (
     <section className="card card-music" aria-labelledby="titre-musique" data-testid="music">
@@ -70,13 +111,13 @@ export function MusicCard({ date, today, state }: Props) {
               <dd className="stat-value" data-testid="minutes">
                 {formatMinutes(music.minutes)}
               </dd>
-            {music.listens_without_duration > 0 && (
-              <dd className="stat-note">
-                {music.minutes === null ? 'Durée inconnue pour ' : 'Sans compter '}
-                {plural(music.listens_without_duration, 'écoute')}
-                {music.minutes === null ? '.' : ' de durée inconnue.'}
-              </dd>
-            )}
+              {music.listens_without_duration > 0 && (
+                <dd className="stat-note">
+                  {music.minutes === null ? 'Durée inconnue pour ' : 'Sans compter '}
+                  {plural(music.listens_without_duration, 'écoute')}
+                  {music.minutes === null ? '.' : ' de durée inconnue.'}
+                </dd>
+              )}
             </div>
             {music.artist_of_day && (
               <div className="stat-wide">
@@ -88,9 +129,21 @@ export function MusicCard({ date, today, state }: Props) {
             )}
           </dl>
 
-          <section aria-labelledby="titre-decouvertes" data-testid="discoveries">
+          <Segments
+            label="Trier par"
+            options={TABS}
+            value={tab}
+            onChange={(next) => {
+              setTab(next)
+              setUnfolded({ key: '', finds: false, rows: false })
+            }}
+            className="music-tabs"
+          />
+
+          <section ref={findsSection} className="music-section" aria-labelledby="titre-decouvertes" data-testid="discoveries">
             <h3 id="titre-decouvertes" className="subsection-title">
               Découvertes
+              {discovered > 0 && <span className="subsection-count" data-testid="discoveries-count">{discovered}</span>}
             </h3>
             {state.failedMarks.map((op) => (
               <div className="inline-failure" role="alert" key={op.id}>
@@ -112,60 +165,62 @@ export function MusicCard({ date, today, state }: Props) {
                 C'est bien enregistré. La liste sera confirmée dès que le serveur l'aura traité.
               </p>
             )}
-            {firstListens.length === 0 ? (
-              <p className="empty">Aucune découverte ce jour-là.</p>
+            {finds.length === 0 ? (
+              <p className="empty">{noDiscoveryText(tab)}</p>
             ) : (
               <ul className="rows finds">
-                {firstListens.map((row) => (
-                  <li key={`${row.level}/${row.item_key}`} className="find">
+                {shownFinds.map((row) => {
+                  const detail = discoveryDetail(row)
+                  return (
+                    <li key={`${row.level}/${row.item_key}`} className="find">
+                      <div className="row-text">
+                        <p className="row-name">{row.name}</p>
+                        {detail && <p className="row-detail">{detail}</p>}
+                      </div>
+                      {/* Pas `disabled` pendant l'envoi : le bouton garderait mal le focus. */}
+                      <button
+                        type="button"
+                        className="known"
+                        aria-pressed={row.known}
+                        aria-busy={row.pending}
+                        aria-label={`${row.name} : déjà connu`}
+                        onClick={() => state.toggleKnown(row)}
+                      >
+                        <span className="known-pill">{row.known ? 'Marqué connu' : 'Déjà connu'}</span>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+            <MoreButton total={finds.length} expanded={open.finds} onToggle={() => toggle('finds')} section={findsSection} />
+          </section>
+
+          <section ref={rowsSection} className="music-section" aria-labelledby="titre-ecoutes" data-testid="listens-list">
+            <h3 id="titre-ecoutes" className="subsection-title">
+              Écoutes
+            </h3>
+            {rows.length === 0 ? (
+              <p className="empty">
+                {tab === 'albums' ? 'Aucun album indiqué par la source.' : 'Aucun artiste connu pour ces écoutes.'}
+              </p>
+            ) : (
+              <ul className="rows">
+                {shownRows.map((row) => (
+                  <li key={`${row.name}/${row.detail}`} className="row">
                     <div className="row-text">
                       <p className="row-name">{row.name}</p>
-                      <p className="row-detail">{discoveryDetail(row, row.known)}</p>
+                      <p className="row-detail">{row.detail}</p>
                     </div>
-                    {/* Pas `disabled` pendant l'envoi : le bouton garderait mal le focus. */}
-                    <button
-                      type="button"
-                      className="known"
-                      aria-pressed={row.known}
-                      aria-busy={row.pending}
-                      aria-label={`${row.name} : déjà connu`}
-                      onClick={() => state.toggleKnown(row)}
-                    >
-                      <span className="known-pill">{row.known ? 'Marqué connu' : 'Déjà connu'}</span>
-                    </button>
+                    <span className="row-count" aria-label={plural(row.listens, 'écoute')}>
+                      {row.listens}
+                    </span>
                   </li>
                 ))}
               </ul>
             )}
+            <MoreButton total={rows.length} expanded={open.rows} onToggle={() => toggle('rows')} section={rowsSection} />
           </section>
-
-          <div className="segments" role="group" aria-label="Liste du jour">
-            {TABS.map(([id, label]) => (
-              <button key={id} type="button" className="segment" aria-pressed={tab === id} onClick={() => setTab(id)}>
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {rows.length === 0 ? (
-            <p className="empty">
-              {tab === 'albums' ? 'Aucun album indiqué par la source.' : 'Aucun artiste connu pour ces écoutes.'}
-            </p>
-          ) : (
-            <ul className="rows">
-              {rows.map((row) => (
-                <li key={`${row.name}/${row.detail}`} className="row">
-                  <div className="row-text">
-                    <p className="row-name">{row.name}</p>
-                    <p className="row-detail">{row.detail}</p>
-                  </div>
-                  <span className="row-count" aria-label={plural(row.listens, 'écoute')}>
-                    {row.listens}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
         </>
       )}
     </section>

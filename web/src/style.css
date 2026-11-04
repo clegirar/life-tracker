@@ -18,9 +18,27 @@
   --on-music: #ffffff;
   --segment-on: #ffffff;
   --check: #c98500;
+  /* La barre latérale : un cran sous le fond de page, comme la barre de Réglages sur Mac. */
+  --sidebar-bg: #e9e9ee;
+  --sidebar-hover: #e0e0e6;
+  --sidebar-active: #d6d6dc;
+  --scrim: rgba(0, 0, 0, 0.28);
+  --drawer-shadow: 0 0 32px rgba(0, 0, 0, 0.18);
+  /* La vue de l'année : la part de la couleur de la métrique dans chaque palier, sur le fond de carte. */
+  --heat-zero: 13%;
+  --heat-1: 32%;
+  --heat-2: 54%;
+  --heat-3: 77%;
+  --heat-4: 100%;
+  --heat-empty: #c7c7cc;
+  /* Les filtres : la teinte douce d'une pastille choisie. */
+  --chip-tint: 16%;
   /* Ressort échantillonné : amortissement 0,72, léger dépassement. */
   --spring: linear(0, 0.13, 0.383, 0.632, 0.822, 0.944, 1.009, 1.035, 1.038, 1.031, 1.021, 1.012, 1.005, 1.001, 1);
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  /* Les chiffres du jour (cafés, écoutes, temps) : une seule taille, d'une carte à l'autre. */
+  --figure-size: 34px;
+  --figure-line: 41px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -42,6 +60,19 @@
     --on-music: #2a0509;
     --segment-on: #636366;
     --check: #ffcc4d;
+    --sidebar-bg: #121214;
+    --sidebar-hover: #1f1f22;
+    --sidebar-active: #2c2c2e;
+    --scrim: rgba(0, 0, 0, 0.56);
+    --drawer-shadow: 0 0 0 0.5px #38383a;
+    /* Sur fond sombre, le pâle doit rester distinct de la carte. */
+    --heat-zero: 20%;
+    --heat-1: 38%;
+    --heat-2: 58%;
+    --heat-3: 79%;
+    --heat-4: 100%;
+    --heat-empty: #48484a;
+    --chip-tint: 26%;
   }
 }
 
@@ -92,6 +123,154 @@ button:disabled {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* La coquille : la barre latérale et la page. Sur un écran large, la barre prend sa colonne. */
+.shell {
+  min-height: 100dvh;
+}
+
+.content {
+  min-width: 0;
+}
+
+/* Sur iPhone, un tiroir qui glisse depuis la gauche : il sort par où il est entré. Transitions CSS,
+   donc interruptibles ; la fermeture, une réponse du système, est plus courte que l'ouverture. */
+.sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 20;
+  width: min(300px, 84vw);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 12px calc(16px + env(safe-area-inset-bottom, 0px))
+    calc(12px + env(safe-area-inset-left, 0px));
+  background: var(--sidebar-bg);
+  box-shadow: var(--drawer-shadow);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  transform: translateX(-100%);
+  visibility: hidden;
+  transition: transform 220ms var(--ease-out), visibility 0s linear 220ms;
+}
+
+.sidebar[data-open='true'] {
+  transform: none;
+  visibility: visible;
+  transition: transform 280ms var(--ease-out), visibility 0s;
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+  background: var(--scrim);
+  opacity: 0;
+  pointer-events: none;
+  touch-action: none;
+  transition: opacity 220ms var(--ease-out);
+}
+
+.scrim[data-open='true'] {
+  opacity: 1;
+  pointer-events: auto;
+  transition-duration: 280ms;
+}
+
+.sidebar-title {
+  padding: 4px 12px 12px;
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 700;
+}
+
+.sidebar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 17px;
+  line-height: 22px;
+  color: var(--fg);
+  text-align: left;
+  text-decoration: none;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  transition: transform 300ms var(--spring), background-color 120ms var(--ease-out);
+}
+
+.sidebar-item:active {
+  transform: scale(0.97);
+  transition: transform 100ms var(--ease-out), background-color 120ms var(--ease-out);
+}
+
+.sidebar-item[aria-current='page'] {
+  background: var(--sidebar-active);
+  font-weight: 600;
+}
+
+.sidebar-item svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.sidebar-logout {
+  margin-top: auto;
+  font-size: 15px;
+  color: var(--muted);
+}
+
+@media (min-width: 900px) {
+  /* La colonne de la barre est peinte sur toute la hauteur, même quand la page est plus longue que l'écran. */
+  .shell {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    align-items: start;
+    background: linear-gradient(to right, var(--sidebar-bg) 239.5px, var(--separator) 239.5px 240px, transparent 240px);
+  }
+  .sidebar {
+    position: sticky;
+    top: 0;
+    width: auto;
+    height: 100dvh;
+    transform: none;
+    visibility: visible;
+    transition: none;
+    box-shadow: none;
+    background: none;
+  }
+}
+
+/* Le bouton du tiroir et le retour, sur une même ligne en haut de la page. */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  margin: -6px 0 -10px;
+}
+
+.topbar .back {
+  margin: 0 0 0 -6px;
+}
+
+.topbar .menu-button + .back {
+  margin-left: 4px;
 }
 
 /* La mise en page : marges de la maquette, plus les zones de l'encoche et de la barre d'accueil. */
@@ -206,10 +385,11 @@ button:disabled {
 }
 
 .stat-value {
-  font-size: 28px;
-  line-height: 34px;
+  font-size: var(--figure-size);
+  line-height: var(--figure-line);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 .stat-note {
@@ -231,9 +411,9 @@ button:disabled {
 
 .segments {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 2px;
-  margin-top: 20px;
   padding: 2px;
   border-radius: 10px;
   background: var(--control);
@@ -254,6 +434,11 @@ button:disabled {
 .segment[aria-pressed='true'] {
   background: var(--segment-on);
   font-weight: 600;
+}
+
+/* Le sélecteur trie les deux sections qui le suivent : il se place au-dessus d'elles. */
+.music-tabs {
+  margin-top: 20px;
 }
 
 .rows {
@@ -303,10 +488,36 @@ button:disabled {
 }
 
 .subsection-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   margin-top: 20px;
   font-size: 20px;
   line-height: 25px;
   font-weight: 600;
+}
+
+.subsection-count {
+  font-size: 17px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--music);
+}
+
+/* « Tout afficher » : la suite de la liste, dans sa couleur, séparée par le même filet que les lignes. */
+.more {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  border-top: 0.5px solid var(--separator);
+  font-size: 15px;
+  text-align: left;
+  color: var(--music);
+  transition: opacity 120ms var(--ease-out);
+}
+
+.more:active {
+  opacity: 0.5;
 }
 
 .finds {
@@ -380,8 +591,8 @@ button:disabled {
 }
 
 .count-value {
-  font-size: 56px;
-  line-height: 64px;
+  font-size: var(--figure-size);
+  line-height: var(--figure-line);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
@@ -574,14 +785,6 @@ button:disabled {
   font-weight: 600;
 }
 
-.quiet {
-  align-self: center;
-  min-height: 44px;
-  padding: 0 12px;
-  font-size: 15px;
-  color: var(--muted);
-}
-
 .login {
   justify-content: flex-start;
 }
@@ -697,29 +900,25 @@ button:disabled {
   font-weight: 600;
 }
 
+/* Plusieurs métriques : le numéro grisé d'un jour sans données, comme le contour de l'année. */
+.cell[data-nodata] .cell-number {
+  color: var(--heat-empty);
+}
+
 .cell[aria-current='date'] .cell-number {
   background: var(--accent);
   color: var(--on-accent);
   font-weight: 600;
 }
 
-.cell-values {
-  display: flex;
+.cell-value {
   margin-top: -2px;
-  flex-direction: column;
   font-size: 11px;
   line-height: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: center;
-}
-
-.v-coffee {
-  color: var(--accent);
-}
-
-.v-music {
-  color: var(--music);
+  color: var(--heat);
 }
 
 /* Un vrai zéro se lit, mais en retrait : l'œil va aux jours qui ont quelque chose. */
@@ -737,9 +936,12 @@ button:disabled {
   border-radius: 50%;
 }
 
-/* Trois formes, pas seulement trois couleurs : plein, anneau, losange. */
+/* Trois formes, pas seulement trois couleurs : triangle, anneau, losange. Le triangle ne se confond pas avec les points ronds des métriques. */
 .mark-incomplete {
+  width: 8px;
+  border-radius: 0;
   background: var(--error);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
 }
 
 .mark-pending {
@@ -782,19 +984,335 @@ button:disabled {
   gap: 6px;
 }
 
-/* Une barre, pas un point : les points sont réservés aux marques de complétude. */
+/* Une barre pour les chiffres ; les points de la légende sont ceux des jours, ou les marques. */
 .legend-swatch {
   width: 12px;
   height: 4px;
   border-radius: 2px;
-  background: currentColor;
+  background: var(--heat);
+}
+
+/* Les points d'une journée, façon Calendrier d'Apple : la présence d'une activité, pas son intensité. */
+.day-dots {
+  display: flex;
+  justify-content: center;
+}
+
+.day-dot {
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--heat);
+}
+
+/* Dans le mois : 7 px, quatre par ligne, puis « +N » au-delà de huit. */
+.day-dots-month {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  max-width: 37px;
+}
+
+.day-dots-month .day-dot {
+  width: 7px;
+  height: 7px;
+}
+
+.day-dots-more {
+  font-size: 10px;
+  line-height: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.legend-day-dot {
+  width: 8px;
+  height: 8px;
 }
 
 .legend-note {
   margin-top: 6px;
 }
 
+/* La vue de l'année : douze mini-mois, deux colonnes sur iPhone, trois puis quatre sur un écran large. */
+.year-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  --heat: var(--muted);
+  transform-origin: top center;
+  transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out);
+}
+
+/* L'arrivée depuis le mois : l'année se pose, comme la carte du mois. */
+@starting-style {
+  .year-grid {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+@media (min-width: 600px) {
+  .year-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1100px) {
+  .year-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.year-grid > li {
+  display: flex;
+}
+
+/* La couleur d'une métrique : pastilles, filtres et rampes. */
+.heat-coffee {
+  --heat: var(--accent);
+}
+
+.heat-music {
+  --heat: var(--music);
+}
+
+.heat-neutral {
+  --heat: var(--muted);
+}
+
+/* Les filtres du calendrier : une pastille par métrique, plusieurs à la fois. La rangée défile sans
+   barre si un jour les trackers ne tiennent plus en largeur. */
+.filters {
+  display: flex;
+  gap: 8px;
+  margin: -2px;
+  padding: 2px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.filters::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px 0 14px;
+  border-radius: 22px;
+  background: var(--card);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: transform 160ms var(--ease-out), background-color 160ms var(--ease-out), color 160ms var(--ease-out);
+}
+
+.chip:active {
+  transform: scale(0.97);
+  transition: transform 100ms var(--ease-out), background-color 160ms var(--ease-out), color 160ms var(--ease-out);
+}
+
+/* Le point dit la couleur de la métrique ; plein, elle est choisie : une forme, pas seulement une teinte. */
+.chip-dot {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--heat);
+  transition: background-color 160ms var(--ease-out);
+}
+
+.chip[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--heat) var(--chip-tint), var(--card));
+  color: var(--heat);
+}
+
+.chip[aria-pressed='true'] .chip-dot {
+  background: var(--heat);
+}
+
+.ramp {
+  display: inline-flex;
+  gap: 3px;
+}
+
+/* Tout le mini-mois est la cible : il ouvre son mois. */
+.mini {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 10px 12px;
+  border-radius: 16px;
+  background: var(--card);
+  text-align: left;
+  transition: transform 300ms var(--spring);
+}
+
+.mini:active:not(:disabled) {
+  transform: scale(0.97);
+  transition: transform 100ms var(--ease-out);
+}
+
+.mini:disabled {
+  color: var(--control-disabled);
+}
+
+.mini-name {
+  padding-left: 2px;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.mini[aria-current='date'] .mini-name {
+  color: var(--heat);
+}
+
+.mini-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.dot,
+.dot-slot {
+  aspect-ratio: 1;
+  border-radius: 50%;
+}
+
+.dot {
+  display: block;
+  box-shadow: inset 0 0 0 1px var(--heat-empty);
+}
+
+/* Pas de données : le contour seul. Un zéro est rempli, au plus pâle. */
+.dot[data-heat] {
+  box-shadow: none;
+}
+
+.dot[data-heat='none'] {
+  box-shadow: inset 0 0 0 1px var(--heat-empty);
+}
+
+.dot[data-heat='0'] {
+  background: color-mix(in srgb, var(--heat) var(--heat-zero), var(--card));
+}
+
+.dot[data-heat='1'] {
+  background: color-mix(in srgb, var(--heat) var(--heat-1), var(--card));
+}
+
+.dot[data-heat='2'] {
+  background: color-mix(in srgb, var(--heat) var(--heat-2), var(--card));
+}
+
+.dot[data-heat='3'] {
+  background: color-mix(in srgb, var(--heat) var(--heat-3), var(--card));
+}
+
+.dot[data-heat='4'] {
+  background: var(--heat);
+}
+
+/* Plusieurs métriques : le même zoom que l'intensité, chaque jour dans une case carrée comme une
+   pastille, avec son petit numéro et jusqu'à trois points de 4 px. */
+.year-grid.is-dots {
+  --heat: var(--accent);
+}
+
+.mini-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  aspect-ratio: 1;
+}
+
+.mini-day-number {
+  min-width: 13px;
+  height: 13px;
+  padding: 0 2px;
+  border-radius: 7px;
+  font-size: 10px;
+  line-height: 13px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pas de données : le numéro prend le gris du contour vide. Un jour connu sans activité reste lisible. */
+.mini-day[data-nodata] .mini-day-number {
+  color: var(--heat-empty);
+}
+
+.mini-day[data-today] .mini-day-number {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.day-dots-year {
+  gap: 1.5px;
+  height: 4px;
+}
+
+.day-dots-year .day-dot {
+  width: 4px;
+  height: 4px;
+}
+
+@media (min-width: 600px) {
+  .mini-day-number {
+    min-width: 14px;
+    height: 14px;
+    font-size: 11px;
+    line-height: 14px;
+  }
+  .day-dots-year {
+    gap: 2px;
+    height: 5px;
+  }
+  .day-dots-year .day-dot {
+    width: 5px;
+    height: 5px;
+  }
+}
+
+/* Aujourd'hui est entouré, comme dans le mois. */
+.dot[data-today] {
+  outline: 1.5px solid var(--fg);
+  outline-offset: 1px;
+}
+
+.legend-dot {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.legend .legend-dot {
+  /* Hors de la carte, le pâle se mélange au fond de page. */
+  --card: var(--bg);
+}
+
 @media (hover: hover) and (pointer: fine) {
+  .mini:hover:not(:disabled) {
+    filter: brightness(0.97);
+  }
+  .chip[aria-pressed='false']:hover {
+    background: var(--control);
+  }
   .cell:hover:not(:disabled) {
     background: var(--field);
   }
@@ -813,9 +1331,13 @@ button:disabled {
     opacity: 0.75;
   }
   .link:hover,
+  .more:hover,
   .cup-cancel:hover,
-  .quiet:hover {
+  .sidebar-logout:hover {
     text-decoration: underline;
+  }
+  .sidebar-item:hover:not([aria-current='page']) {
+    background: var(--sidebar-hover);
   }
 }
 
@@ -837,9 +1359,23 @@ button:disabled {
     transform: none;
     transition: none;
   }
-  .month-card {
+  .month-card,
+  .year-grid {
     transform: none;
     transition: opacity 150ms linear;
+  }
+  .mini,
+  .mini:active {
+    transform: none;
+    transition: none;
+  }
+  .chip,
+  .chip:active {
+    transform: none;
+    transition: background-color 120ms linear, color 120ms linear;
+  }
+  .chip-dot {
+    transition: none;
   }
   .known-pill,
   .known:active .known-pill {
@@ -853,5 +1389,33 @@ button:disabled {
     from {
       opacity: 0;
     }
+  }
+}
+
+/* Mouvement réduit : le tiroir apparaît en fondu, sans glisser. */
+@media (prefers-reduced-motion: reduce) and (max-width: 899.98px) {
+  .sidebar,
+  .sidebar[data-open='true'] {
+    transform: none;
+  }
+  .sidebar {
+    opacity: 0;
+    transition: opacity 150ms linear, visibility 0s linear 150ms;
+  }
+  .sidebar[data-open='true'] {
+    opacity: 1;
+    transition: opacity 150ms linear, visibility 0s;
+  }
+  .scrim,
+  .scrim[data-open='true'] {
+    transition: opacity 150ms linear;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-item,
+  .sidebar-item:active {
+    transform: none;
+    transition: background-color 120ms linear;
   }
 }

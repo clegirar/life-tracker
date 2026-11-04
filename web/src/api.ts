@@ -189,6 +189,14 @@ export interface Month {
   days: MonthDay[]
 }
 
+/** L'année, jour par jour, de la même forme que le mois. */
+export interface Year {
+  year: number
+  today: string
+  metrics: MonthMetric[]
+  days: MonthDay[]
+}
+
 async function read<T>(path: string): Promise<T> {
   const response = await call(path)
   if (response.status === 401) throw new Unauthorized()
@@ -198,4 +206,5 @@ async function read<T>(path: string): Promise<T> {
 
 export const fetchDayMusic = (date: string) => read<DayMusic>(`/v1/days/${date}/music`)
 export const fetchMonth = (month: string) => read<Month>(`/v1/months/${month}`)
+export const fetchYear = (year: string) => read<Year>(`/v1/years/${year}`)
 export const fetchSourcesHealth = () => read<SourcesHealth>('/v1/sources/health')
