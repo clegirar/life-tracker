@@ -1,0 +1,64 @@
+[{
+  "header": "YouTube",
+  "title": "Watched https://www.youtube.com/watch?v=vidSupprime",
+  "titleUrl": "https://www.youtube.com/watch?v=vidSupprime",
+  "time": "2026-10-14T20:00:00Z",
+  "products": ["YouTube"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
+  "title": "Subscribed to Chaîne Fictive C",
+  "titleUrl": "https://www.youtube.com/channel/UCchaineFictiveC000000",
+  "time": "2026-10-14T19:30:00.500Z",
+  "products": ["YouTube"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
+  "title": "Viewed SENTINELLE-POST",
+  "titleUrl": "https://www.youtube.com/post/SENTINELLE-POST",
+  "subtitles": [{"name": "Chaîne Fictive B", "url": "https://www.youtube.com/channel/UCchaineFictiveB000000"}],
+  "time": "2026-10-14T19:20:00.250Z",
+  "products": ["YouTube"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
+  "title": "Searched for SENTINELLE-RECHERCHE",
+  "titleUrl": "https://www.youtube.com/results?search_query=SENTINELLE-RECHERCHE",
+  "time": "2026-10-14T19:10:00.100Z",
+  "products": ["YouTube"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
+  "title": "Watched SENTINELLE-PUBLICITE",
+  "titleUrl": "https://www.youtube.com/watch?v=PUBsentinel",
+  "subtitles": [{"name": "Annonceur Sentinelle", "url": "https://www.youtube.com/channel/UCannonceurSentinelle0"}],
+  "time": "2026-10-14T19:05:00.000Z",
+  "products": ["YouTube"],
+  "details": [{"name": "From Google Ads"}],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
+  "title": "Watched Deuxième vidéo fictive",
+  "titleUrl": "https://www.youtube.com/watch?v=vidFictif02",
+  "subtitles": [{"name": "Chaîne Fictive B", "url": "https://www.youtube.com/channel/UCchaineFictiveB000000"}],
+  "time": "2026-10-14T19:00:00.000Z",
+  "products": ["YouTube"],
+  "description": "SENTINELLE-DESCRIPTION",
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
+  "title": "Watched Première vidéo fictive",
+  "titleUrl": "https://www.youtube.com/watch?v=vidFictif01",
+  "subtitles": [{"name": "Chaîne Fictive A", "url": "https://www.youtube.com/channel/UCchaineFictiveA000000"}],
+  "time": "2026-10-14T18:30:00.123Z",
+  "products": ["YouTube"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
+  "title": "Watched Première vidéo fictive",
+  "titleUrl": "https://www.youtube.com/watch?v=vidFictif01",
+  "subtitles": [{"name": "Chaîne Fictive A", "url": "https://www.youtube.com/channel/UCchaineFictiveA000000"}],
+  "time": "2026-10-13T08:00:00.000Z",
+  "products": ["YouTube"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+}]

@@ -145,6 +145,7 @@ async fn a_reported_status_is_stored_normalized_without_touching_the_last_contac
         "reason": "key_rejected",
         "expires_at": "2027-11-05T00:00:00+01:00",
         "next_run_at": "2026-11-05T12:15:00Z",
+        "last_collected_at": "2026-11-05T13:00:00+01:00",
     });
     assert_eq!(bench.report(&token, &full).await, 204);
     let (status, reported, seen, version) = bench.stored("garmin").await;
@@ -155,6 +156,7 @@ async fn a_reported_status_is_stored_normalized_without_touching_the_last_contac
             "reason": "key_rejected",
             "expires_at": "2027-11-04T23:00:00Z",
             "next_run_at": "2026-11-05T12:15:00Z",
+            "last_collected_at": "2026-11-05T12:00:00Z",
         })
     );
     assert!(reported);
@@ -166,7 +168,8 @@ async fn a_reported_status_is_stored_normalized_without_touching_the_last_contac
     assert_eq!(bench.report(&token, &json!({ "state": "ok" })).await, 204);
     assert_eq!(
         bench.stored("garmin").await.0.unwrap(),
-        json!({ "state": "ok", "reason": null, "expires_at": null, "next_run_at": null })
+        json!({ "state": "ok", "reason": null, "expires_at": null, "next_run_at": null,
+                "last_collected_at": null })
     );
     assert_eq!(bench.db.count("SELECT count(*) FROM core.records").await, 0);
 }
@@ -179,11 +182,16 @@ async fn only_the_closed_vocabulary_is_accepted() {
     let schema = validator(Some("source_status_request"));
     let accepted = [
         json!({ "state": "ok" }),
-        json!({ "state": "ok", "reason": null, "expires_at": null, "next_run_at": null }),
+        json!({ "state": "ok", "reason": null, "expires_at": null, "next_run_at": null,
+                "last_collected_at": null }),
+        json!({ "state": "ok", "last_collected_at": "2026-11-05T10:00:00Z" }),
         json!({ "state": "error", "reason": "rate_limited", "next_run_at": "2026-11-05T12:00:00Z" }),
+        json!({ "state": "error", "reason": "service_unavailable",
+                "last_collected_at": "2026-11-03T10:00:00+01:00" }),
         json!({ "state": "error", "reason": "service_unavailable" }),
         json!({ "state": "error", "reason": "ingest_failed" }),
         json!({ "state": "action_required", "reason": "consent_expired" }),
+        json!({ "state": "action_required", "reason": "consent_required" }),
         json!({ "state": "action_required", "reason": "key_rejected",
                 "expires_at": "2027-01-01T00:00:00+02:00" }),
     ];
@@ -205,6 +213,8 @@ async fn only_the_closed_vocabulary_is_accepted() {
         json!({ "state": "ok", "expires_at": "demain" }),
         json!({ "state": "ok", "next_run_at": 1_762_340_000 }),
         json!({ "state": "ok", "expires_at": "2026-11-05" }),
+        json!({ "state": "ok", "last_collected_at": "hier" }),
+        json!({ "state": "ok", "last_collected_at": 1_762_340_000 }),
     ];
     for body in &refused {
         assert!(!schema.is_valid(body), "contrat : {body}");
@@ -333,15 +343,20 @@ async fn the_status_page_shows_the_trackers_and_requires_the_session() {
     assert_eq!(
         garmin_entry["status"],
         json!({ "state": "error", "reason": "rate_limited", "expires_at": null,
-                "next_run_at": "2026-11-05T12:00:00Z" })
+                "next_run_at": "2026-11-05T12:00:00Z", "last_collected_at": null })
     );
     assert!(garmin_entry["status_reported_at"].is_string());
     assert_eq!(garmin_entry["metrics"], json!([]));
+    assert_eq!(
+        garmin_entry["authorization_url"],
+        Value::Null,
+        "aucun accord OAuth en cours"
+    );
     let keys: Vec<&String> = garmin_entry.as_object().unwrap().keys().collect();
     assert_eq!(
         keys.len(),
-        8,
-        "name, label, last_seen_at, silence_threshold_seconds, silent, status, status_reported_at, metrics : {keys:?}"
+        9,
+        "name, label, last_seen_at, silence_threshold_seconds, silent, status, status_reported_at, authorization_url, metrics : {keys:?}"
     );
     assert_eq!(sources[1]["label"], Value::Null);
     assert_eq!(sources[1]["status"], Value::Null);

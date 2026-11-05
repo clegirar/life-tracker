@@ -292,7 +292,7 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
     const metrics = day.metrics as Entry[];
     assert.deepEqual(
       metrics.map((m) => m.metric),
-      ['coffee', 'music.listen', 'steps', 'workout', 'sleep', 'calories.burned'],
+      ['coffee', 'music.listen', 'steps', 'workout', 'sleep', 'calories.burned', 'video.watch'],
       'l’ordre d’affichage du registre',
     );
     const steps = metrics.find((m) => m.metric === 'steps');

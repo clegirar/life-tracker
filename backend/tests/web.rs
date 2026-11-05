@@ -420,6 +420,13 @@ async fn every_route_refuses_a_request_without_session() {
                 .header(CSRF.0, CSRF.1),
         ),
         ("day", c.get(format!("{base}/v1/days/2026-10-25"))),
+        ("video", c.get(format!("{base}/v1/days/2026-10-25/video"))),
+        (
+            "authorization callback",
+            c.post(format!("{base}/v1/authorizations/callback"))
+                .header(CSRF.0, CSRF.1)
+                .json(&json!({ "state": "x", "code": "y" })),
+        ),
         ("month", c.get(format!("{base}/v1/months/2026-10"))),
         ("year", c.get(format!("{base}/v1/years/2026"))),
         ("invalid day", c.get(format!("{base}/v1/days/pas-une-date"))),
@@ -450,7 +457,9 @@ async fn the_routes_without_session_are_exactly_these() {
             "/health",
             "/v1/auth/login",
             "/v1/heartbeat",
-            "/v1/sources/me/status"
+            "/v1/sources/me/status",
+            "/v1/sources/me/authorization",
+            "/v1/sources/me/authorization/code"
         ]
     );
     let web = Web::new().await;

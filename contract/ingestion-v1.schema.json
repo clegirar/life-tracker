@@ -100,7 +100,7 @@
       "properties": {
         "state": { "enum": ["ok", "action_required", "error"] },
         "reason": {
-          "enum": [null, "key_rejected", "consent_expired", "rate_limited", "service_unavailable", "ingest_failed"]
+          "enum": [null, "key_rejected", "consent_required", "consent_expired", "rate_limited", "service_unavailable", "ingest_failed"]
         },
         "expires_at": {
           "description": "L'échéance de la clé ou du jeton, RFC 3339.",
@@ -111,19 +111,62 @@
           "description": "La prochaine passe prévue, RFC 3339.",
           "type": ["string", "null"],
           "format": "date-time"
+        },
+        "last_collected_at": {
+          "description": "La dernière collecte réussie, RFC 3339 : la dernière fois que le connecteur a reçu des données de son service et les a remises à l'API d'ingestion (pour YouTube, le dernier export).",
+          "type": ["string", "null"],
+          "format": "date-time"
         }
       },
       "if": { "properties": { "state": { "const": "ok" } } },
       "then": { "properties": { "reason": { "const": null } } },
       "else": { "required": ["reason"], "properties": { "reason": { "type": "string" } } }
     },
+    "source_authorization_request": {
+      "description": "PUT /v1/sources/me/authorization, réponse 204 sans corps : l'URL de consentement OAuth qu'un connecteur a préparée (il garde l'état et le vérificateur PKCE), montrée par la page d'état tant qu'elle attend, une heure au plus. Token de la source seulement ; ne touche pas au dernier contact ; en mémoire, jamais journalisée. L'URL est en https sur accounts.google.com et porte ce même `state`, une seule fois. Tout autre champ : 400 invalid_json. Le corps fait 4 096 octets au plus.",
+      "type": "object",
+      "required": ["authorization_url", "state"],
+      "additionalProperties": false,
+      "properties": {
+        "authorization_url": { "type": "string", "maxLength": 2048, "pattern": "^https://accounts\\.google\\.com/" },
+        "state": { "type": "string", "pattern": "^[A-Za-z0-9._~-]{43,128}$" }
+      }
+    },
+    "authorization_callback_request": {
+      "description": "POST /v1/authorizations/callback, sous session et avec l'en-tête anti-CSRF, réponse 204 : ce que Google a renvoyé à la page /autorisation de la web app, un code ou un refus. 404 not_found pour un état inconnu ou expiré, 400 invalid_json sinon. Le code attend le connecteur dix minutes.",
+      "type": "object",
+      "required": ["state"],
+      "additionalProperties": false,
+      "properties": {
+        "state": { "type": "string", "pattern": "^[A-Za-z0-9._~-]{43,128}$" },
+        "code": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^[!-~]+$" },
+        "error": { "type": "string", "pattern": "^[a-z_]{1,64}$" }
+      },
+      "oneOf": [
+        { "required": ["code"], "not": { "required": ["error"] } },
+        { "required": ["error"], "not": { "required": ["code"] } }
+      ]
+    },
+    "source_authorization_code_response": {
+      "description": "GET /v1/sources/me/authorization/code, statut 200 : le code reçu pour la source, rendu une seule fois, ou le motif du refus ; `{\"code\": null}` tant que rien n'est arrivé. Token de la source seulement ; ne touche pas au dernier contact.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": ["string", "null"] },
+        "error": { "type": "string" }
+      },
+      "oneOf": [
+        { "required": ["code"], "not": { "required": ["error"] } },
+        { "required": ["error"], "not": { "required": ["code"] } }
+      ]
+    },
     "error_response": {
-      "description": "401 unauthorized, 400 invalid_json, 413 batch_too_large, 500 internal (à renvoyer plus tard).",
+      "description": "401 unauthorized, 400 invalid_json, 404 not_found (accord sans demande en cours), 413 batch_too_large, 500 internal (à renvoyer plus tard).",
       "type": "object",
       "required": ["error"],
       "additionalProperties": false,
       "properties": {
-        "error": { "enum": ["unauthorized", "invalid_json", "batch_too_large", "internal"] }
+        "error": { "enum": ["unauthorized", "invalid_json", "not_found", "batch_too_large", "internal"] }
       }
     }
   }

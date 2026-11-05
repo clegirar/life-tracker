@@ -640,7 +640,7 @@ async fn no_new_listen_for_3_days_is_to_be_checked() {
             .collect();
         assert_eq!(
             names,
-            ["music.listen", "sleep", "steps"],
+            ["music.listen", "sleep", "steps", "video.watch"],
             "les métriques qui ont un seuil de fraîcheur"
         );
         metrics[0].clone()

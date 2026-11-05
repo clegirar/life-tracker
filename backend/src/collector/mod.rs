@@ -10,6 +10,7 @@
 
 pub mod garmin;
 pub mod lastfm;
+pub mod youtube;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -225,16 +226,18 @@ pub fn failure_status(error: &TickError) -> SourceStatus {
 }
 
 /// Rapporte l'état d'un connecteur, au mieux : un échec se note et n'arrête rien. `next_run_at` est
-/// la prochaine passe prévue.
+/// la prochaine passe prévue, sauf si le connecteur en donne une autre (le prochain export de YouTube).
 pub(crate) async fn report_status(
     ingest: &IngestClient,
     mut status: SourceStatus,
     delay: Duration,
     connector: &'static str,
 ) {
-    status.next_run_at = chrono::TimeDelta::from_std(delay)
-        .ok()
-        .and_then(|delay| Utc::now().checked_add_signed(delay));
+    if status.next_run_at.is_none() {
+        status.next_run_at = chrono::TimeDelta::from_std(delay)
+            .ok()
+            .and_then(|delay| Utc::now().checked_add_signed(delay));
+    }
     if let Err(failure) = ingest.report_status(&status).await {
         warn!(
             connector,
@@ -539,9 +542,37 @@ pub(crate) fn load_state<T: Default + serde::de::DeserializeOwned>(
 
 /// Par renommage : un arrêt au milieu laisse l'ancien état, entier.
 pub(crate) fn save_state<T: Serialize>(dir: &Path, name: &str, state: &T) -> std::io::Result<()> {
+    write_state(dir, name, state, None)
+}
+
+/// Comme `save_state`, lisible par le seul propriétaire (0600) : un état qui porte un jeton.
+pub(crate) fn save_private_state<T: Serialize>(
+    dir: &Path,
+    name: &str,
+    state: &T,
+) -> std::io::Result<()> {
+    write_state(dir, name, state, Some(0o600))
+}
+
+fn write_state<T: Serialize>(
+    dir: &Path,
+    name: &str,
+    state: &T,
+    mode: Option<u32>,
+) -> std::io::Result<()> {
     use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let temporary = dir.join(format!("{name}.tmp"));
-    let mut file = std::fs::File::create(&temporary)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    if let Some(mode) = mode {
+        options.mode(mode);
+    }
+    let mut file = options.open(&temporary)?;
+    if let Some(mode) = mode {
+        // Un fichier temporaire laissé par un arrêt garde ses droits : on les reprend.
+        file.set_permissions(std::fs::Permissions::from_mode(mode))?;
+    }
     file.write_all(&serde_json::to_vec(state)?)?;
     file.sync_all()?;
     std::fs::rename(&temporary, dir.join(name))
