@@ -103,7 +103,7 @@ Ouvert le 5 nov. 2026, à ma demande, avant YouTube : une page de la web app qui
 
 ## YouTube
 
-Ouvert le 5 nov. 2026, à ma demande. Ce que je regarde sur YouTube : les vidéos vues, par chaîne et par vidéo (tops et découvertes, comme la musique), et le temps de visionnage.
+Ouvert le 5 nov. 2026, à ma demande. Ce que je regarde sur YouTube : les vidéos classiques vues, sans les Shorts, par chaîne et par vidéo (tops et découvertes, comme la musique), et le temps de visionnage.
 
 **Accès.** L'API YouTube Data v3 ne donne plus l'historique de visionnage. Le scraper (Maxun ou autre) est écarté pour les raisons qui ont écarté l'accès non officiel à Garmin : il faudrait les cookies du compte Google sur le NAS, ce serait fragile et contraire aux conditions de Google. On passe par l'API Google Data Portability (`dataportability.myactivity.youtube`), dans un connecteur du collecteur avec sa source `youtube` : au plus un export toutes les 24 h. Mon client OAuth reste en mode Testing (passer en production demanderait la vérification de Google et un audit de sécurité) : le jeton expire au bout de 7 jours et je redonne mon accord chaque semaine. Un oubli ne perd rien, l'export suivant reprend depuis la dernière donnée.
 
@@ -119,7 +119,7 @@ Ouvert le 5 nov. 2026, à ma demande. Ce que je regarde sur YouTube : les vidéo
 
 **Temps de visionnage.** Google ne donne pas le temps réellement regardé. On compte la durée de chaque vidéo, tirée de l'API Data v3 (clé publique) et entrée au journal comme enrichissement, sur le modèle de la durée des morceaux. L'interface dit que c'est la durée des vidéos. Une vidéo sans durée connue est comptée à part, jamais à zéro.
 
-**Écartés et comptés par motif :** les publicités, les recherches, les posts consultés, les abonnements et les écoutes YouTube Music (déjà couvertes par la musique ; aucune dans mon historique).
+**Écartés et comptés par motif :** les publicités, les recherches, les posts consultés, les abonnements, les réactions (« Liked », « Disliked »…), les écoutes YouTube Music (déjà couvertes par la musique ; aucune dans mon historique), les Shorts et les vidéos supprimées ou privées (leur nature ne se sait plus).
 
 **Essai sur le vrai compte, le 5 nov. 2026** (structure seulement, jamais les valeurs ; jeton et archives restés hors du dépôt) :
 
@@ -135,7 +135,7 @@ Ouvert le 5 nov. 2026, à ma demande. Ce que je regarde sur YouTube : les vidéo
 
 **Terminé quand**
 
-- Une journée réelle correspond à mon historique YouTube, dans le calendrier comme par le MCP.
+- Une journée réelle correspond à mon historique YouTube, sans ses Shorts, dans le calendrier comme par le MCP.
 - Tout l'historique est collecté, sans doublon à la relecture, et `admin rebuild` donne 0 différence.
 - Après l'expiration du jeton, je renouvelle l'accord depuis la web app (iPhone comme Mac), et l'export suivant reprend sans trou.
 - Ni clé, ni jeton, ni donnée personnelle dans le dépôt ou les logs ; le connecteur n'a pas accès à la base.
@@ -145,6 +145,10 @@ Ouvert le 5 nov. 2026, à ma demande. Ce que je regarde sur YouTube : les vidéo
 **Construit le 5 nov. 2026, backend** : migrations `20261105130000_youtube.sql` (types `youtube.watch` et `youtube.video_info`, métriques `video.watch` et `video.duration`) et `20261105130100_item_display_search.sql` (recherche par le nom affiché), lecture en flux de l'export (`backend/src/youtube.rs`), connecteur `collector::youtube` (export de Data Portability toutes les 24 h au plus, fiches par Data v3, renouvellement anticipé par `authorization:reset`, date du dernier export reçu rapportée en `last_collected_at` et `error`/`service_unavailable` sans export depuis 48 h), `GET /v1/days/{date}/video`, le relais de l'accord en mémoire (`PUT /v1/sources/me/authorization`, `GET /v1/sources/me/authorization/code`, `POST /v1/authorizations/callback`, `authorization_url` dans `GET /v1/sources/status`) et le motif `consent_required` (voir le journal des décisions de [l'architecture](architecture.md), 5 nov. 2026). Écarts : la recherche lit aussi les noms affichés, car les clés de YouTube sont des identifiants ; le collecteur passe à 128 Mo. Reste la mise en service (`docs/deploiement.md`, « Mise à jour : YouTube »).
 
 **Construit le 5 nov. 2026, web app** : carte YouTube du jour (vidéos, durée des vidéos dite « pas le temps regardé », vidéos sans durée à part, « Vidéo indisponible » sans lien ni chaîne, chaîne du jour, nouvelles chaînes, liens simples vers YouTube sans intégration, chacun précédé de la miniature de la vidéo, que le navigateur demande à `i.ytimg.com` sans Referer (seul ajout à la CSP) ; une journée après la dernière vue reçue dit « pas encore de données », l'export étant quotidien), carte de la page d'état (« Accès Google » à l'heure près, en couleur deux jours avant sans rendre la carte « À faire », « Prochain export », « Dernier export » (et la marche à suivre quand aucun export n'aboutit depuis 2 jours), bouton « Donner l'accord » ou « Renouveler l'accord » tiré de `authorization_url` quelle que soit la source, ouvert dans l'onglet même), page `/autorisation` (transmet `{state, code}` ou `{state, error}` une seule fois, retire le code de l'adresse, garde l'issue dans l'historique ; sans session, la connexion y ramène avec la requête), couleur `video.watch` du calendrier, Playwright `web/e2e/youtube.spec.ts`. Écart : le libellé d'une métrique garde sa majuscule de nom propre dans les phrases du calendrier (« 3 vidéos YouTube »).
+
+**Corrigé le 5 nov. 2026** : l'export de production contient aussi les réactions (« Disliked https://… », environ 90 entrées), en `/watch?v=` comme une vue ; elles étaient entrées comme vidéos vues. Une vue exige désormais un préfixe de vue connu, une réaction est écartée et la fausse vue d'avant annulée par `record.cancel` ; un export sans aucune vue reconnue n'est pas lu (voir le journal des décisions de [l'architecture](architecture.md), 5 nov. 2026, et `docs/deploiement.md`, « Correctif : les réactions YouTube »).
+
+**Corrigé le 5 nov. 2026** : seules les vidéos classiques entrent. Le premier export a fait entrer 24 555 vues, dont ≈85 % de Shorts d'après un échantillon. Data v3 classe chaque vidéo : un Short dure 3 min au plus et son lecteur est au moins aussi haut que large ; une vidéo absente de la réponse est supprimée ou privée, écartée aussi. Les vues en attente de classement restent dans l'état du connecteur ; celles d'avant sont annulées une fois par `record.cancel` (voir le journal des décisions de [l'architecture](architecture.md), 5 nov. 2026, « vidéos classiques seulement », et `docs/deploiement.md`, même section).
 
 ## Ouvrir la web app sur Internet
 

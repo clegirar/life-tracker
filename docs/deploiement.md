@@ -834,7 +834,7 @@ Relancer ensuite demande un nouveau jeton de service (`mcp-2`) et `sudo docker c
    cd /volume1/docker/life-tracker
    TOKEN=$(sudo docker compose run --rm -T admin create-source youtube --silence-threshold "3 days" --label "YouTube" </dev/null)
    [ "${#TOKEN}" = 64 ] && echo "token ok" || echo "ÉCHEC : ne pas continuer"
-   for kind in youtube.watch youtube.video_info; do
+   for kind in youtube.watch youtube.video_info record.cancel; do
      sudo docker compose run --rm -T admin grant-kind youtube "$kind" </dev/null
    done
    read -r CLIENT_ID; read -rs CLIENT_SECRET; read -rs API_KEY   # sans écho pour les deux secrets
@@ -869,6 +869,34 @@ Relancer ensuite demande un nouveau jeton de service (`mcp-2`) et `sudo docker c
    ```
 
    Les logs ne montrent que des nombres et des motifs : jamais un jeton, un code, une URL, un titre ni un id. « client OAuth ou clé YouTube refusés » : le secret client ou la clé est faux, la carte le dit (`key_rejected`).
+
+**Correctif : les réactions YouTube** (5 nov. 2026). La version d'avant a fait des vidéos vues des réactions de l'export (« Disliked https://… », ≈90). Le correctif les écarte et annule les fausses vues par `record.cancel` : la source doit avoir ce droit.
+
+1. **Avant la fusion** (avant le déploiement du correctif), sur le NAS :
+
+   ```sh
+   sudo docker compose run --rm -T admin grant-kind youtube record.cancel </dev/null
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select s.name, k.kind from core.source_kinds k join core.sources s on s.id = k.source_id where s.name = 'youtube'" </dev/null   # youtube|record.cancel présent
+   ```
+
+   Sans ce droit, rien ne casse : les vues entrent, les annulations sont mises de côté (`kind_not_declared` dans les logs, carte en `error`/`ingest_failed` pour le passage) et repartent à l'export suivant.
+
+2. **Après le déploiement**, l'export suivant (au plus un par 24 h, à l'heure de « Prochain export » sur la carte) reprend tout l'historique une fois :
+
+   ```sh
+   sudo docker compose logs collector | grep "youtube pass completed" | grep '"exported":true' | tail -1   # skipped_reactions ≈ 90, cancelled ≈ 90, rejected 0
+   ```
+
+   Puis, par le MCP, `day_summary` du 2023-05-05 : plus aucune vidéo « Disliked https://… ». « youtube export without any recognized watch » dans les logs : la langue du compte a changé, voir le journal des décisions.
+
+**Vidéos classiques seulement** (5 nov. 2026, même déploiement). Les Shorts et les vidéos supprimées ou privées n'entrent plus, et ceux que le premier export a fait entrer (≈85 % des 24 555 vues) sont annulés par le même `record.cancel` : aucune autre action sur le NAS. Le premier export complet après le déploiement classe ≈22 000 vidéos par Data v3 (≈440 unités de quota, 100 appels au plus par passage) : cinq passages, une vingtaine de minutes ; « Dernier export » n'avance qu'à la fin.
+
+```sh
+sudo docker compose logs collector | grep "youtube pass completed" | grep -v '"classified":0' | tail -6   # skipped_shorts et cancelled en milliers, awaiting_classification jusqu'à 0, rejected 0
+sudo docker compose logs collector | grep "youtube journal corrections done"   # une ligne, à la fin
+```
+
+Puis, par le MCP, `inventory` : le nombre de « Vidéos YouTube » tombe à ≈15 % d'avant ; `day_summary` d'un jour récent ne montre plus de Short ni de « Vidéo indisponible ».
 
 **Retour arrière.** Couper YouTube seul : retirer les cinq lignes `YOUTUBE_*` de `secrets/collector.env`, puis `sudo docker compose up -d collector`. Le journal garde ce qui est entré ; `admin revoke-source youtube` coupe le token, et retirer l'accès dans le compte Google coupe le jeton. Revenir à une image d'avant : les migrations ajoutent des registres et un index que l'ancienne version ignore.
 
