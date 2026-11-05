@@ -768,6 +768,51 @@ Relancer ensuite demande un nouveau jeton de service (`mcp-2`) et `sudo docker c
 
 **Retour arrière.** Couper Garmin seul : retirer les deux lignes `GARMIN_*` de `secrets/collector.env`, puis `sudo docker compose up -d collector`. Le journal garde ce qui est entré ; `admin revoke-source garmin` coupe le token. Revenir à une image d'avant : la migration ajoute des registres sans rien changer d'autre, l'ancienne version les ignore.
 
+## Mise à jour : page d'état des trackers
+
+À faire une fois, sur le NAS déjà en service. La PR part en production à la fusion, migration comprise (`20261105120000_source_status.sql`, par le service `migrate` : trois colonnes de `core.sources`, pas de `rebuild`). `compose.yaml` ne change pas. Dès le déploiement, Last.fm et Garmin rapportent leur état après chaque passage ; la page d'état arrive avec la web app. Je ne lance rien de tout cela depuis le dépôt. Dans chaque `docker compose run -T` ou `exec -T`, `</dev/null` évite d'avaler la ligne collée suivante.
+
+1. Vérifier la migration :
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   sudo docker compose logs migrate | tail -3   # « migrations à jour »
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select count(*) from _sqlx_migrations" </dev/null   # 8
+   ```
+
+2. **Les libellés**, le nom que montre la page (sans libellé, elle montre le nom) :
+
+   ```sh
+   sudo docker compose run --rm -T admin set-label garmin "Garmin Connect" </dev/null
+   sudo docker compose run --rm -T admin set-label lastfm "Musique" </dev/null
+   sudo docker compose run --rm -T admin set-label ios "Raccourci café" </dev/null
+   ```
+
+   Le libellé fait aussi paraître une source sans seuil de silence, comme `ios` : une journée sans café n'est pas un silence, il n'en aura pas. `apple`, l'import ponctuel, n'en reçoit pas et n'apparaît pas. Une source recréée (`lastfm-2`) reçoit le libellé de l'ancienne ; l'ancienne, révoquée, disparaît de la page.
+
+3. **L'échéance de la clé Garmin**, la date que Garmin affiche à côté de la clé (Garmin Connect, Paramètres, Personal API Key), en `AAAA-MM-JJ` :
+
+   ```sh
+   read -r EXPIRES   # par exemple 2027-11-04
+   (umask 077; printf 'GARMIN_KEY_EXPIRES_ON=%s\n' "$EXPIRES" >> secrets/collector.env)
+   unset EXPIRES
+   sudo docker compose up -d collector
+   sudo docker compose logs collector | tail -3   # « garmin pass completed » ; rien sur GARMIN_KEY_EXPIRES_ON
+   ```
+
+   Une date illisible empêche le collecteur de démarrer, Last.fm compris (« GARMIN_KEY_EXPIRES_ON illisible ») : corriger la ligne et relancer. À chaque nouvelle clé (étape 6 de « Mise à jour : Garmin Connect »), remplacer aussi cette ligne.
+
+4. Vérifier les états rapportés, sans rien de personnel :
+
+   ```sh
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select name, label, status, status_reported_at from core.sources where status is not null or label is not null order by name" </dev/null
+   ```
+
+   `garmin` et `lastfm` : `{"state": "ok", …}` avec `next_run_at`, et `expires_at` pour Garmin (la fin du jour affiché, heure de Paris, en UTC). « status not reported » dans les logs du collecteur : le rapport a échoué, la collecte continue.
+
+**Retour arrière.** Revenir à une image d'avant : la migration ajoute des colonnes que l'ancienne version ignore, et l'ancienne image ignore `GARMIN_KEY_EXPIRES_ON`, une variable qu'elle ne lit pas. Les états restent dans `core.sources`, sans effet.
+
 ## Vérifier les critères « Terminé quand »
 
 **Un café saisi depuis l'iPhone, par la web app comme par le raccourci, apparaît.**
