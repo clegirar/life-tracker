@@ -6,13 +6,16 @@ import { DayPage } from './DayPage'
 import { Login } from './Login'
 import { useMetricSelection } from './metrics'
 import { MonthPage } from './MonthPage'
-import { TODAY, routePath, useRoute, type Route } from './route'
+import { STATUS, TODAY, routePath, useRoute, type Route } from './route'
 import { MenuButton, Sidebar, useWide } from './Sidebar'
+import { needsAction, sourceCard } from './status'
+import { StatusPage } from './StatusPage'
 import { parisDate } from './time'
 import { useCoffee } from './useCoffee'
 import { useMonth } from './useMonth'
 import { useActivity } from './useActivity'
 import { useMusic } from './useMusic'
+import { useSourcesStatus } from './useSourcesStatus'
 import { useYear } from './useYear'
 import { YearPage } from './YearPage'
 
@@ -55,6 +58,9 @@ export function App() {
   // L'année n'est lue que vue ouverte : la rouvrir la relit.
   const shownYear = route.page === 'year' ? route.year : today.slice(0, 4)
   const year = useYear(shownYear, onSessionLost, auth === 'in' && route.page === 'year')
+  // Lu dès la connexion : le point du menu en dépend. Relu à chaque ouverture de la page.
+  const sources = useSourcesStatus(onSessionLost, auth === 'in', route.page === 'status')
+  const attention = (sources.status?.sources ?? []).some((source) => needsAction(sourceCard(source, now).state))
 
   // Une panne n'est pas une déconnexion : la page du jour saura la signaler.
   useEffect(() => {
@@ -83,10 +89,20 @@ export function App() {
   }
   const openDay = (next: string) => go({ page: 'day', date: next === today ? null : next })
   const drawerOpen = !wide && menuOpen
-  const menu = wide ? null : <MenuButton open={drawerOpen} onOpen={() => setMenuOpen(true)} buttonRef={menuButton} />
+  const menu = wide ? null : <MenuButton open={drawerOpen} onOpen={() => setMenuOpen(true)} buttonRef={menuButton} attention={attention} />
 
   let page
-  if (route.page === 'year') {
+  if (route.page === 'status') {
+    page = (
+      <StatusPage
+        menu={menu}
+        now={now}
+        data={sources.status}
+        loadFailed={sources.loadFailed}
+        onReload={() => void sources.reload()}
+      />
+    )
+  } else if (route.page === 'year') {
     page = (
       <YearPage
         menu={menu}
@@ -141,8 +157,12 @@ export function App() {
         wide={wide}
         open={drawerOpen}
         onClose={closeMenu}
+        current={route.page === 'status' ? 'status' : 'calendar'}
         calendarHref={routePath(TODAY)}
         onCalendar={() => go(TODAY)}
+        statusHref={routePath(STATUS)}
+        onStatus={() => go(STATUS)}
+        attention={attention}
         onLogout={async () => {
           await logout().catch(() => undefined)
           coffee.reset()
@@ -150,6 +170,7 @@ export function App() {
           activity.reset()
           calendar.reset()
           year.reset()
+          sources.reset()
           setLastDay(null)
           setMenuOpen(false)
           navigate(TODAY, true)

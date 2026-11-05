@@ -275,3 +275,34 @@ export interface Track {
 
 export const fetchDayActivity = (date: string) => read<DayActivity>(`/v1/days/${date}/activity`)
 export const fetchTrack = (activityId: number) => read<Track>(`/v1/activities/${activityId}/track`)
+
+/** L'état rapporté par un connecteur, en vocabulaire fermé : la web app le traduit en phrases. */
+export interface ReportedStatus {
+  state: 'ok' | 'action_required' | 'error'
+  reason: 'key_rejected' | 'consent_expired' | 'rate_limited' | 'service_unavailable' | 'ingest_failed' | null
+  /** L'échéance de la clé ou du jeton. */
+  expires_at: string | null
+  next_run_at: string | null
+}
+
+/** Une source de la page d'état. */
+export interface SourceStatus {
+  name: string
+  /** Le nom affiché ; `null`, la page montre `name`. */
+  label: string | null
+  /** Le dernier contact réussi. */
+  last_seen_at: string | null
+  /** `null` : jamais muette (le raccourci café). */
+  silence_threshold_seconds: number | null
+  silent: boolean
+  status: ReportedStatus | null
+  status_reported_at: string | null
+  /** Pour chaque métrique que la source alimente, sa dernière donnée. */
+  metrics: { metric: string; label: string; last_at: string }[]
+}
+
+export interface SourcesStatus {
+  sources: SourceStatus[]
+}
+
+export const fetchSourcesStatus = () => read<SourcesStatus>('/v1/sources/status')
