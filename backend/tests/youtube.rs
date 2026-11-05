@@ -67,33 +67,77 @@ fn archives() -> Vec<Vec<u8>> {
     ]
 }
 
-fn video(id: &str, duration: &str, title: &str, channel: &str, name: &str) -> (String, Value) {
+/// Une fiche de Data v3, avec la taille du lecteur que `maxWidth=1000` fait rendre : en texte, comme
+/// Google rend ses entiers de 64 bits.
+fn video(
+    id: &str,
+    duration: &str,
+    size: (u32, u32),
+    title: &str,
+    channel: &str,
+) -> (String, Value) {
+    let name = format!("Chaîne Fictive {}", channel.chars().last().unwrap());
+    let channel = format!("UCchaineFictive{channel}000000");
     (
         id.to_owned(),
         json!({"id": id, "contentDetails": {"duration": duration},
-               "snippet": {"title": title, "channelId": channel, "channelTitle": name}}),
+               "snippet": {"title": title, "channelId": channel, "channelTitle": name},
+               "player": {"embedWidth": size.0.to_string(), "embedHeight": size.1.to_string()}}),
     )
 }
 
-/// Data v3 connaît les deux vidéos en ligne, pas la vidéo supprimée.
+const HORIZONTAL: (u32, u32) = (1000, 563);
+const VERTICAL: (u32, u32) = (563, 1000);
+
+/// Data v3 connaît les vidéos en ligne, pas la vidéo supprimée : deux classiques horizontales, une
+/// verticale de 10 min (classique), un Short de 45 s, un de 2 min et un carré de 90 s.
 fn known_videos() -> HashMap<String, Value> {
     HashMap::from([
         video(
             "vidFictif01",
             "PT9M9S",
+            HORIZONTAL,
             "Première vidéo fictive",
-            "UCchaineFictiveA000000",
-            "Chaîne Fictive A",
+            "A",
         ),
         video(
             "vidFictif02",
             "PT1H2M3S",
+            HORIZONTAL,
             "Deuxième vidéo fictive",
-            "UCchaineFictiveB000000",
-            "Chaîne Fictive B",
+            "B",
+        ),
+        video(
+            "vertFict010",
+            "PT10M",
+            VERTICAL,
+            "Une vidéo verticale fictive",
+            "C",
+        ),
+        video("shortFict01", "PT45S", VERTICAL, "Un Short fictif", "A"),
+        video(
+            "shortFict02",
+            "PT2M",
+            VERTICAL,
+            "Un Short de deux minutes",
+            "B",
+        ),
+        video(
+            "carreFict01",
+            "PT1M30S",
+            (1000, 1000),
+            "Un Short carré fictif",
+            "A",
         ),
     ])
 }
+
+/// Les vues classiques du fixture, entrées par le connecteur ; les autres sont des Shorts (4) ou une
+/// vidéo supprimée (1).
+const CLASSIC_WATCHES: i64 = 4;
+/// Les annulations d'une correction sur le fixture : 2 réactions, 5 vues de Shorts ou de la vidéo
+/// supprimée, 3 fiches de Shorts.
+const CORRECTION_CANCELS: i64 = 10;
 
 // ─── Le Google simulé ────────────────────────────────────────────────────────
 
@@ -118,6 +162,9 @@ struct Data {
     resets: u32,
     videos: HashMap<String, Value>,
     video_calls: Vec<Vec<String>>,
+    /// Data v3 répond par ce statut, ou par ce corps illisible.
+    videos_status: Option<StatusCode>,
+    videos_body: Option<Value>,
 }
 
 impl Default for Data {
@@ -140,6 +187,8 @@ impl Default for Data {
             resets: 0,
             videos: known_videos(),
             video_calls: Vec::new(),
+            videos_status: None,
+            videos_body: None,
         }
     }
 }
@@ -290,7 +339,18 @@ async fn videos(
             json!({"error": {"code": 400, "errors": [{"reason": "keyInvalid"}]}}),
         );
     }
-    assert_eq!(query["part"], "contentDetails,snippet");
+    assert_eq!(query["part"], "contentDetails,snippet,player");
+    assert_eq!(query["maxWidth"], "1000");
+    assert!(query["fields"].contains("player(embedWidth,embedHeight)"));
+    if let Some(status) = data.videos_status {
+        return error(
+            status,
+            json!({"error": {"code": status.as_u16(), "errors": [{"reason": "backendError"}]}}),
+        );
+    }
+    if let Some(body) = &data.videos_body {
+        return Json(body.clone()).into_response();
+    }
     let ids: Vec<String> = query["id"].split(',').map(str::to_owned).collect();
     assert!(ids.len() <= youtube::VIDEOS_PER_CALL);
     let items: Vec<Value> = ids
@@ -298,7 +358,12 @@ async fn videos(
         .filter_map(|id| data.videos.get(id).cloned())
         .collect();
     data.video_calls.push(ids);
-    Json(json!({"items": items})).into_response()
+    // Comme Google avec `fields` : sans vidéo trouvée, pas de liste `items`.
+    let page = json!({"totalResults": items.len(), "resultsPerPage": items.len()});
+    if items.is_empty() {
+        return Json(json!({"pageInfo": page})).into_response();
+    }
+    Json(json!({"items": items, "pageInfo": page})).into_response()
 }
 
 impl Fake {
@@ -357,7 +422,7 @@ impl Bench {
         let token = admin::create_source(&db.admin, "youtube", Some("3 days"), Some("YouTube"))
             .await
             .unwrap();
-        for kind in ["youtube.watch", "youtube.video_info"] {
+        for kind in ["youtube.watch", "youtube.video_info", "record.cancel"] {
             admin::grant_kind(&db.admin, "youtube", kind).await.unwrap();
         }
         let (stop, stopped) = watch::channel(false);
@@ -406,6 +471,7 @@ impl Bench {
             api_key: API_KEY.to_owned(),
             ingest_url: self.base.clone(),
             token: self.token.clone(),
+            source: "youtube".to_owned(),
             state_dir: self.state_dir.clone(),
             interval: Duration::from_secs(300),
             consent_poll: Duration::from_secs(60),
@@ -414,6 +480,8 @@ impl Bench {
             portability_url: fake.url.clone(),
             data_url: format!("{}/youtube/v3", fake.url),
             storage_url: format!("{}/storage", fake.url),
+            videos_per_call: youtube::VIDEOS_PER_CALL,
+            classify_calls_per_pass: youtube::CLASSIFY_CALLS_PER_PASS,
         }
     }
 
@@ -622,7 +690,13 @@ async fn the_first_consent_goes_through_the_web_app_then_the_history_is_exported
     assert!(report.exported);
     assert_eq!(
         (report.watches, report.accepted, report.duplicate),
-        (4, 4, 0)
+        (9, 4, 0),
+        "seules les vues de vidéos classiques entrent"
+    );
+    assert_eq!(
+        (report.shorts, report.unavailable),
+        (4, 1),
+        "trois Shorts (dont un carré) et la vidéo supprimée"
     );
     let skipped = report.skipped;
     assert_eq!(
@@ -635,8 +709,20 @@ async fn the_first_consent_goes_through_the_web_app_then_the_history_is_exported
         ),
         (1, 1, 1, 1, 0)
     );
-    assert_eq!((report.enriched, report.unknown_videos), (2, 1));
-    assert_eq!(collector.to_enrich(), 0);
+    assert_eq!(skipped.reaction, 2, "« Liked » et « Disliked »");
+    assert_eq!(
+        (report.cancelled, report.cancels_refused, report.rejected),
+        (CORRECTION_CANCELS as u32, 0, 0),
+        "ce que la version d'avant a pu entrer, annulé une fois"
+    );
+    assert_eq!(bench.journal("record.cancel").await, CORRECTION_CANCELS);
+    assert_eq!(
+        (report.classified, report.enriched),
+        (7, 3),
+        "une fiche par vidéo classique"
+    );
+    assert_eq!(collector.awaiting_classification(), 0);
+    assert_eq!(fake.with(|d| d.video_calls.len()), 1, "7 vidéos, un appel");
     assert_eq!(fake.with(|d| d.downloads), 2);
     assert!(
         !fake.with(|d| d.download_with_authorization),
@@ -644,10 +730,12 @@ async fn the_first_consent_goes_through_the_web_app_then_the_history_is_exported
     );
     assert_eq!(
         collector.last_watched_at(),
-        Some("2026-10-14T20:00:00Z".parse().unwrap())
+        Some("2026-10-15T08:20:00Z".parse().unwrap()),
+        "la dernière vue traitée, même écartée"
     );
-    assert_eq!(bench.journal("youtube.watch").await, 4);
-    assert_eq!(bench.journal("youtube.video_info").await, 2);
+    assert!(collector.last_exported_at().is_some());
+    assert_eq!(bench.journal("youtube.watch").await, CLASSIC_WATCHES);
+    assert_eq!(bench.journal("youtube.video_info").await, 3);
     assert!(
         !bench.state_dir.join("youtube-archive.zip.tmp").exists(),
         "l'archive ne reste pas sur le disque"
@@ -672,9 +760,9 @@ async fn the_first_consent_goes_through_the_web_app_then_the_history_is_exported
         day,
         json!({
             "date": "2026-10-14",
-            "count": 3,
+            "count": 2,
             "seconds": 549 + 3723,
-            "without_duration": 1,
+            "without_duration": 0,
             "watches": [
                 {"time": "20:30", "occurred_at": "2026-10-14T18:30:00.123Z",
                  "video_id": "vidFictif01", "title": "Première vidéo fictive",
@@ -684,18 +772,21 @@ async fn the_first_consent_goes_through_the_web_app_then_the_history_is_exported
                  "video_id": "vidFictif02", "title": "Deuxième vidéo fictive",
                  "channel_id": "UCchaineFictiveB000000", "channel_name": "Chaîne Fictive B",
                  "duration_s": 3723},
-                {"time": "22:00", "occurred_at": "2026-10-14T20:00:00Z",
-                 "video_id": "vidSupprime", "title": null, "channel_id": null,
-                 "channel_name": null, "duration_s": null},
             ],
             "discoveries": [
                 {"level": "channel", "key": "UCchaineFictiveB000000", "name": "Chaîne Fictive B"},
                 {"level": "video", "key": "vidFictif02", "name": "Deuxième vidéo fictive"},
-                {"level": "video", "key": "vidSupprime", "name": "vidSupprime"},
             ],
         })
     );
-    let empty = bench.get("/v1/days/2026-10-15/video").await;
+    let shorts_day = bench.get("/v1/days/2026-10-15/video").await;
+    assert_eq!(
+        (&shorts_day["count"], &shorts_day["seconds"]),
+        (&json!(1), &json!(600)),
+        "la vidéo verticale de 10 min, pas les Shorts : {shorts_day}"
+    );
+    assert_eq!(shorts_day["watches"][0]["video_id"], "vertFict010");
+    let empty = bench.get("/v1/days/2026-10-16/video").await;
     assert_eq!(
         (
             &empty["count"],
@@ -717,8 +808,12 @@ async fn the_first_consent_goes_through_the_web_app_then_the_history_is_exported
             .clone()
     };
     assert_eq!(
-        (value("2026-10-13"), value("2026-10-14")),
-        (json!(1.0), json!(3.0))
+        (
+            value("2026-10-13"),
+            value("2026-10-14"),
+            value("2026-10-15")
+        ),
+        (json!(1.0), json!(2.0), json!(1.0))
     );
     assert!(
         month["metrics"]
@@ -739,7 +834,7 @@ async fn the_first_consent_goes_through_the_web_app_then_the_history_is_exported
         .as_mcp("/v1/durations?metric=video.watch&from=2026-10-14&to=2026-10-14")
         .await;
     assert_eq!(durations["total_minutes"], 71);
-    assert_eq!(durations["events_without_duration"], 1);
+    assert_eq!(durations["events_without_duration"], 0);
     let found = bench
         .as_mcp("/v1/search?q=fictive%20b&metric=video.watch")
         .await;
@@ -906,18 +1001,454 @@ async fn an_export_read_again_gives_duplicates_only_and_no_new_enrichment() {
     collector.tick().await.unwrap();
     assert_eq!(
         fake.with(|d| d.initiates[1].clone()),
-        json!({"resources": ["myactivity.youtube"], "startTime": "2026-10-12T20:00:00Z"}),
-        "depuis la dernière vue, moins 48 h"
+        json!({"resources": ["myactivity.youtube"], "startTime": "2026-10-13T08:20:00Z"}),
+        "depuis la dernière vue, moins 48 h : les corrections sont faites"
     );
     let report = collector.tick().await.unwrap();
     assert!(report.exported);
     assert_eq!((report.accepted, report.duplicate), (0, 4));
+    assert_eq!((report.shorts, report.unavailable), (4, 1), "écartés");
+    assert_eq!(
+        report.cancelled, 0,
+        "les annulations ne partent qu'une fois"
+    );
+    assert_eq!(bench.journal("record.cancel").await, CORRECTION_CANCELS);
     assert_eq!(
         fake.with(|d| d.video_calls.len()),
         calls,
-        "aucune fiche redemandée"
+        "aucune vidéo reclassée"
     );
-    assert_eq!(bench.journal("youtube.watch").await, 4);
+    assert_eq!(bench.journal("youtube.watch").await, CLASSIC_WATCHES);
+}
+
+/// Le bug du 5 nov. 2026 : la version d'avant faisait une vue de chaque réaction (« Disliked https://… »).
+/// Le correctif ne l'importe plus, et annule la fausse vue déjà entrée, sous la clé d'alors.
+#[tokio::test]
+async fn a_reaction_is_no_watch_and_the_false_watch_of_the_version_before_is_cancelled() {
+    let bench = Bench::new().await;
+    let fake = Fake::start().await;
+    let false_watch = parser::Watch {
+        video_id: "vidReactif1".to_owned(),
+        title: Some("Disliked https://www.youtube.com/watch?v=vidReactif1".to_owned()),
+        channel_id: None,
+        channel_name: None,
+        watched_at: "2026-10-13T09:00:00.789Z".parse().unwrap(),
+    };
+    let response = bench
+        .http
+        .post(format!("{}/v1/records", bench.base))
+        .bearer_auth(&bench.token)
+        .json(&json!({"records": [false_watch.record()]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    bench.settled().await;
+    let day = bench.get("/v1/days/2026-10-13/video").await;
+    assert_eq!(day["count"], 1);
+    assert_eq!(day["watches"][0]["video_id"], "vidReactif1");
+    let occurrences = "/v1/occurrences?metric=video.watch&from=2026-10-13&to=2026-10-13&form=list";
+    assert_eq!(
+        bench.as_mcp(occurrences).await["occurrences"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // L'export : la vue du 13 entre, la réaction non, et la fausse vue est annulée.
+    let mut collector = bench.collector(&fake);
+    collector.pass().await;
+    bench.consent(&fake).await;
+    collector.tick().await.unwrap();
+    fake.with(|d| d.job_state = "COMPLETE");
+    let report = collector.tick().await.unwrap();
+    assert!(report.exported);
+    assert_eq!((report.watches, report.accepted), (9, 4));
+    assert_eq!(
+        (report.skipped.reaction, report.cancelled),
+        (2, CORRECTION_CANCELS as u32)
+    );
+    let cancelled: Vec<(String, Value)> = sqlx::query_as(
+        "SELECT key, payload FROM core.records WHERE kind = 'record.cancel' ORDER BY key",
+    )
+    .fetch_all(&bench.db.app)
+    .await
+    .unwrap();
+    for key in ["vidFictif02:1792007100000".to_owned(), false_watch.key()] {
+        assert!(
+            cancelled.contains(&(
+                format!("cancel:{key}"),
+                json!({"source": "youtube", "key": key})
+            )),
+            "{cancelled:?}"
+        );
+    }
+
+    bench.settled().await;
+    let day = bench.get("/v1/days/2026-10-13/video").await;
+    assert_eq!(day["count"], 1);
+    assert_eq!(day["watches"][0]["video_id"], "vidFictif01");
+    assert!(!day.to_string().contains("Disliked"), "{day}");
+    let occurrences = bench.as_mcp(occurrences).await;
+    assert_eq!(
+        occurrences["occurrences"].as_array().unwrap().len(),
+        1,
+        "{occurrences}"
+    );
+    assert!(
+        !occurrences.to_string().contains("Disliked"),
+        "{occurrences}"
+    );
+    let month = bench.get("/v1/months/2026-10").await;
+    let day13 = month["days"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["date"] == "2026-10-13")
+        .unwrap()
+        .clone();
+    assert_eq!(day13["values"]["video.watch"], json!(1.0));
+    let top = bench
+        .as_mcp("/v1/top?metric=video.watch&level=video&from=2026-10-13&to=2026-10-13")
+        .await;
+    assert!(!top.to_string().contains("vidReactif1"), "{top}");
+
+    let rebuilt = replay::rebuild(&bench.db.admin, INTERPRETERS, false)
+        .await
+        .unwrap();
+    assert!(rebuilt.switched);
+    assert!(rebuilt.comparison.differences.is_empty());
+}
+
+/// Ce que la version d'avant entrait : toutes les vues de l'export, Shorts et vidéos supprimées compris,
+/// et la fiche de chaque vidéo que Data v3 connaissait.
+async fn ingest_the_version_before(bench: &Bench) {
+    let activity = parser::parse_activity(&fixture("MyActivity.json")[..]).unwrap();
+    let mut records: Vec<Value> = activity.watches.iter().map(parser::Watch::record).collect();
+    for (id, video) in known_videos() {
+        records.push(parser::video_info_record(
+            &id,
+            parser::iso8601_seconds(video["contentDetails"]["duration"].as_str().unwrap()),
+            video["snippet"]["title"].as_str(),
+            video["snippet"]["channelId"].as_str(),
+            video["snippet"]["channelTitle"].as_str(),
+            Utc::now(),
+        ));
+    }
+    let response = bench
+        .http
+        .post(format!("{}/v1/records", bench.base))
+        .bearer_auth(&bench.token)
+        .json(&json!({ "records": records }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    bench.settled().await;
+}
+
+/// La règle du 5 nov. 2026 : rien que des vidéos classiques. Les Shorts et la vidéo supprimée que la
+/// version d'avant avait entrés sont annulés une fois, sous leurs clés d'alors, et disparaissent de la
+/// carte du jour, du calendrier et des lectures du MCP.
+#[tokio::test]
+async fn shorts_and_unavailable_videos_entered_before_are_cancelled_once() {
+    let bench = Bench::new().await;
+    let fake = Fake::start().await;
+    ingest_the_version_before(&bench).await;
+    let day = bench.get("/v1/days/2026-10-15/video").await;
+    assert_eq!(day["count"], 5, "{day}");
+    let occurrences = "/v1/occurrences?metric=video.watch&from=2026-10-15&to=2026-10-15&form=list";
+    assert_eq!(
+        bench.as_mcp(occurrences).await["occurrences"]
+            .as_array()
+            .unwrap()
+            .len(),
+        5
+    );
+
+    let collector = exported(&bench, &fake).await;
+    assert_eq!(collector.awaiting_classification(), 0);
+    assert_eq!(bench.journal("record.cancel").await, CORRECTION_CANCELS);
+    bench.settled().await;
+
+    let day = bench.get("/v1/days/2026-10-15/video").await;
+    assert_eq!(day["count"], 1, "{day}");
+    assert_eq!(day["watches"][0]["video_id"], "vertFict010");
+    assert_eq!(day["seconds"], 600);
+    let day14 = bench.get("/v1/days/2026-10-14/video").await;
+    assert_eq!(day14["count"], 2, "{day14}");
+    assert!(!day14.to_string().contains("vidSupprime"), "{day14}");
+    let occurrences = bench.as_mcp(occurrences).await;
+    assert_eq!(
+        occurrences["occurrences"].as_array().unwrap().len(),
+        1,
+        "{occurrences}"
+    );
+    let top = bench
+        .as_mcp("/v1/top?metric=video.watch&level=video&from=2026-10-01&to=2026-10-31")
+        .await;
+    let text = top.to_string();
+    for id in ["shortFict01", "shortFict02", "carreFict01", "vidSupprime"] {
+        assert!(!text.contains(id), "{id} : {top}");
+    }
+    let month = bench.get("/v1/months/2026-10").await;
+    let value = |date: &str| {
+        month["days"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["date"] == date)
+            .unwrap()["values"]["video.watch"]
+            .clone()
+    };
+    assert_eq!(
+        (value("2026-10-14"), value("2026-10-15")),
+        (json!(2.0), json!(1.0))
+    );
+    let rebuilt = replay::rebuild(&bench.db.admin, INTERPRETERS, false)
+        .await
+        .unwrap();
+    assert!(rebuilt.switched);
+    assert!(rebuilt.comparison.differences.is_empty());
+
+    // L'export suivant, depuis la dernière vue : rien de plus n'est annulé.
+    rewrite_state(&bench, |state| {
+        assert_eq!(state["corrections_version"], 2);
+        state["next_export_at"] = json!("2026-01-01T00:00:00Z");
+    });
+    let mut collector = bench.collector(&fake);
+    collector.tick().await.unwrap();
+    assert!(fake.with(|d| d.initiates[1]["startTime"].is_string()));
+    let report = collector.tick().await.unwrap();
+    assert!(report.exported);
+    assert_eq!(
+        (report.shorts, report.unavailable, report.cancelled),
+        (4, 1, 0)
+    );
+    assert_eq!(bench.journal("record.cancel").await, CORRECTION_CANCELS);
+}
+
+/// Une panne de Data v3 (HTTP, ou une réponse sans `items` ni `pageInfo`) ne classe rien : aucune vue
+/// n'entre, aucune n'est annulée (seules les réactions, qui n'en dépendent pas), et l'export ne compte
+/// pas comme reçu. Le passage suivant reprend.
+#[tokio::test]
+async fn a_data_api_failure_classifies_nothing_and_cancels_no_watch() {
+    let bench = Bench::new().await;
+    let fake = Fake::start().await;
+    fake.with(|d| d.videos_status = Some(StatusCode::INTERNAL_SERVER_ERROR));
+    let mut collector = bench.collector(&fake);
+    collector.pass().await;
+    bench.consent(&fake).await;
+    collector.tick().await.unwrap();
+    fake.with(|d| d.job_state = "COMPLETE");
+    assert_eq!(
+        collector.tick().await,
+        Err(youtube::TickError::Service(youtube::ServiceError::Failed {
+            status: 500,
+            call: "videos"
+        }))
+    );
+    let nothing = |collector: &Collector| {
+        assert_eq!(collector.awaiting_classification(), 9);
+        assert_eq!(collector.last_exported_at(), None);
+    };
+    nothing(&collector);
+    assert_eq!(bench.journal("youtube.watch").await, 0);
+    assert_eq!(bench.journal("youtube.video_info").await, 0);
+    assert_eq!(
+        bench.journal("record.cancel").await,
+        2,
+        "les réactions seules"
+    );
+
+    fake.with(|d| {
+        d.videos_status = None;
+        d.videos_body = Some(json!({}));
+    });
+    assert_eq!(
+        collector.tick().await,
+        Err(youtube::TickError::Service(
+            youtube::ServiceError::Unavailable { reason: "shape" }
+        ))
+    );
+    nothing(&collector);
+    collector.pass().await;
+    let card = bench.card().await;
+    assert_eq!(card["status"]["state"], "error");
+    assert_eq!(card["status"]["reason"], "service_unavailable");
+    assert_eq!(bench.journal("youtube.watch").await, 0);
+    assert_eq!(bench.journal("record.cancel").await, 2);
+
+    fake.with(|d| d.videos_body = None);
+    let report = collector.tick().await.unwrap();
+    assert_eq!((report.accepted, report.classified), (4, 7));
+    assert_eq!(collector.awaiting_classification(), 0);
+    assert!(collector.last_exported_at().is_some());
+    assert_eq!(bench.journal("record.cancel").await, CORRECTION_CANCELS);
+}
+
+/// Un classement plafonné se fait en plusieurs passages, et reprend après un redémarrage : les vues
+/// attendent dans l'état, chaque vidéo n'est demandée qu'une fois, et l'export ne compte comme reçu
+/// qu'à la fin.
+#[tokio::test]
+async fn a_capped_classification_spreads_over_passes_and_survives_a_restart() {
+    let bench = Bench::new().await;
+    let fake = Fake::start().await;
+    let capped = |bench: &Bench| {
+        let mut config = bench.config(&fake);
+        config.videos_per_call = 2;
+        config.classify_calls_per_pass = 1;
+        Collector::new(config).unwrap()
+    };
+    let mut collector = capped(&bench);
+    collector.pass().await;
+    bench.consent(&fake).await;
+    collector.tick().await.unwrap();
+    fake.with(|d| d.job_state = "COMPLETE");
+    let report = collector.tick().await.unwrap();
+    assert!(report.exported);
+    // Les deux premiers ids : le Short carré et le Short de 45 s, vu deux fois.
+    assert_eq!((report.classified, report.shorts), (2, 3));
+    assert_eq!(collector.awaiting_classification(), 6);
+    assert_eq!(collector.last_exported_at(), None, "pas encore reçu");
+    collector.pass().await;
+    assert_eq!(
+        bench.card().await["status"]["state"],
+        "ok",
+        "un classement en cours n'est pas une panne"
+    );
+    assert_eq!(collector.awaiting_classification(), 4);
+
+    // Redémarrage : l'état garde les vues en attente et le classement fait.
+    drop(collector);
+    let state: Value = read_json(&bench.state_file());
+    assert_eq!(state["pending"].as_array().unwrap().len(), 4);
+    assert!(
+        !state.to_string().contains("ACCES-SENTINELLE"),
+        "le jeton d'accès reste en mémoire"
+    );
+    let mut collector = capped(&bench);
+    let mut passes = 0;
+    while collector.awaiting_classification() > 0 {
+        collector.tick().await.unwrap();
+        passes += 1;
+        assert!(passes <= 2, "deux appels restent");
+    }
+    assert!(collector.last_exported_at().is_some());
+    let calls = fake.with(|d| d.video_calls.clone());
+    assert_eq!(calls.len(), 4);
+    assert!(calls.iter().all(|ids| ids.len() <= 2));
+    let mut ids: Vec<String> = calls.concat();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 7, "chaque vidéo une fois : {calls:?}");
+    assert_eq!(bench.journal("youtube.watch").await, CLASSIC_WATCHES);
+    assert_eq!(bench.journal("youtube.video_info").await, 3);
+    assert_eq!(bench.journal("record.cancel").await, CORRECTION_CANCELS);
+    let state: Value = read_json(&bench.state_file());
+    assert_eq!(state["corrections_version"], 2);
+    assert_eq!(state["pending"], json!([]));
+}
+
+/// Sans le droit `record.cancel`, les vues entrent quand même ; les annulations attendent l'export
+/// suivant, qui reprend tout l'historique, et la carte le signale.
+#[tokio::test]
+async fn without_the_cancel_right_watches_enter_and_cancellations_wait_for_the_next_export() {
+    let bench = Bench::new().await;
+    admin::revoke_kind(&bench.db.admin, "youtube", "record.cancel")
+        .await
+        .unwrap();
+    let fake = Fake::start().await;
+    let mut collector = bench.collector(&fake);
+    collector.pass().await;
+    bench.consent(&fake).await;
+    collector.pass().await;
+    fake.with(|d| d.job_state = "COMPLETE");
+    collector.pass().await;
+    assert_eq!(bench.journal("youtube.watch").await, CLASSIC_WATCHES);
+    assert_eq!(bench.journal("record.cancel").await, 0);
+    let card = bench.card().await;
+    assert_eq!(card["status"]["state"], "error");
+    assert_eq!(card["status"]["reason"], "ingest_failed");
+    assert!(
+        card["status"]["last_collected_at"].is_string(),
+        "l'export est reçu"
+    );
+
+    admin::grant_kind(&bench.db.admin, "youtube", "record.cancel")
+        .await
+        .unwrap();
+    rewrite_state(&bench, |state| {
+        state["next_export_at"] = json!("2026-01-01T00:00:00Z");
+    });
+    let mut collector = bench.collector(&fake);
+    collector.tick().await.unwrap();
+    assert_eq!(
+        fake.with(|d| d.initiates[1].clone()),
+        json!({"resources": ["myactivity.youtube"]}),
+        "tout l'historique, tant que les annulations ne sont pas passées"
+    );
+    let report = collector.tick().await.unwrap();
+    assert_eq!(
+        (report.duplicate, report.cancelled),
+        (4, CORRECTION_CANCELS as u32)
+    );
+    assert_eq!(report.classified, 0, "le classement est gardé");
+    assert_eq!(bench.journal("record.cancel").await, CORRECTION_CANCELS);
+    collector.pass().await;
+    assert_eq!(bench.card().await["status"]["state"], "ok");
+}
+
+/// Un export dont aucune entrée `/watch` n'a de préfixe connu (une langue de plus) : rien n'entre ni
+/// n'est annulé, la carte est en erreur, et la dernière vue ni le dernier export n'avancent.
+#[tokio::test]
+async fn an_export_without_any_recognized_watch_is_an_error_and_changes_nothing() {
+    let bench = Bench::new().await;
+    let fake = Fake::start().await;
+    let german = json!([
+        {"header": "YouTube", "title": "Angesehen: Erstes fiktives Video",
+         "titleUrl": "https://www.youtube.com/watch?v=vidFictif01", "time": "2026-10-14T18:30:00Z",
+         "products": ["YouTube"]},
+        {"header": "YouTube", "title": "Gesucht nach x",
+         "titleUrl": "https://www.youtube.com/results?search_query=x", "time": "2026-10-14T18:00:00Z",
+         "products": ["YouTube"]},
+    ]);
+    fake.with(|d| {
+        d.archives = vec![zipped(
+            "Portability/My Activity/YouTube/MyActivity.json",
+            german.to_string().as_bytes(),
+        )];
+    });
+    let mut collector = bench.collector(&fake);
+    collector.pass().await;
+    bench.consent(&fake).await;
+    collector.pass().await;
+    fake.with(|d| d.job_state = "COMPLETE");
+    let report = collector.tick().await.unwrap();
+    assert!(report.unrecognized);
+    assert!(!report.exported);
+    assert_eq!((report.watches, report.skipped.reaction), (0, 1));
+    assert_eq!(bench.journal("youtube.watch").await, 0);
+    assert_eq!(bench.journal("record.cancel").await, 0);
+    assert_eq!(collector.last_watched_at(), None);
+    assert_eq!(collector.last_exported_at(), None);
+    assert!(
+        collector.next_export_at().unwrap() > Utc::now(),
+        "pas d'autre export avant 24 h"
+    );
+
+    // Le même, par un passage : la carte est en erreur.
+    rewrite_state(&bench, |state| {
+        state["next_export_at"] = json!("2026-01-01T00:00:00Z");
+    });
+    let mut collector = bench.collector(&fake);
+    collector.pass().await;
+    collector.pass().await;
+    let card = bench.card().await;
+    assert_eq!(card["status"]["state"], "error");
+    assert_eq!(card["status"]["reason"], "service_unavailable");
+    assert_eq!(card["status"]["last_collected_at"], Value::Null);
 }
 
 #[tokio::test]
@@ -1016,10 +1547,11 @@ async fn a_rejected_api_key_asks_for_an_action() {
     assert_eq!(card["status"]["reason"], "key_rejected");
     assert_eq!(
         bench.journal("youtube.watch").await,
-        4,
-        "l'export est déjà reçu"
+        0,
+        "les vues attendent leur classement"
     );
-    assert!(collector.to_enrich() > 0, "les fiches attendent la clé");
+    assert_eq!(collector.awaiting_classification(), 9);
+    assert_eq!(collector.last_exported_at(), None);
 }
 
 // ─── Le relais de l'accord ───────────────────────────────────────────────────
@@ -1235,9 +1767,10 @@ fn only_watched_videos_reach_a_payload_and_never_a_dropped_field() {
             s.post,
             s.subscription,
             s.music,
+            s.reaction,
             s.other
         ),
-        (4, 1, 1, 1, 1, 0, 0)
+        (9, 1, 1, 1, 1, 0, 2, 0)
     );
     let s = french.skipped;
     assert_eq!(
@@ -1248,9 +1781,18 @@ fn only_watched_videos_reach_a_payload_and_never_a_dropped_field() {
             s.post,
             s.subscription,
             s.music,
+            s.reaction,
             s.other
         ),
-        (1, 1, 1, 0, 0, 1, 1)
+        (1, 1, 1, 0, 0, 1, 1, 1)
+    );
+    assert_eq!(
+        english
+            .reactions
+            .iter()
+            .map(parser::Reaction::watch_key)
+            .collect::<Vec<_>>(),
+        ["vidFictif02:1792007100000", "vidReactif1:1791882000789"]
     );
     assert_eq!(
         french.watches[0].title.as_deref(),
@@ -1273,6 +1815,9 @@ fn only_watched_videos_reach_a_payload_and_never_a_dropped_field() {
         "http",
         "Watched",
         "regardé",
+        "Liked",
+        "aimé",
+        "vidReactif1",
         "PUBsentinel",
     ]) {
         assert!(!text.contains(sentinel), "{sentinel} dans {text}");
@@ -1298,6 +1843,12 @@ fn what_the_connector_sends_respects_the_contract() {
         None,
         None,
         None,
+        Utc::now(),
+    ));
+    let reaction = &activity.reactions[0];
+    records.push(life_tracker::collector::cancel_record(
+        "youtube",
+        &reaction.watch_key(),
         Utc::now(),
     ));
     let batch = json!({ "records": records });
@@ -1366,7 +1917,7 @@ async fn logs_never_cite_a_secret_a_title_nor_an_id() {
     let deadline = Instant::now() + Duration::from_secs(120);
     let logs = loop {
         let logs = std::fs::read_to_string(&log).unwrap_or_default();
-        if logs.contains("\"exported\":true") && logs.contains("\"enriched\":2") {
+        if logs.contains("\"exported\":true") && logs.contains("\"enriched\":3") {
             break logs;
         }
         assert!(Instant::now() < deadline, "export absent : {logs}");
@@ -1378,6 +1929,11 @@ async fn logs_never_cite_a_secret_a_title_nor_an_id() {
         .unwrap();
     assert!(child.wait().unwrap().success());
     assert!(logs.contains("\"skipped_ads\":1"), "{logs}");
+    assert!(logs.contains("\"skipped_reactions\":2"), "{logs}");
+    assert!(logs.contains("\"skipped_shorts\":4"), "{logs}");
+    assert!(logs.contains("\"skipped_unavailable\":1"), "{logs}");
+    assert!(logs.contains("\"cancelled\":10"), "{logs}");
+    assert!(logs.contains("\"awaiting_classification\":0"), "{logs}");
     let access = fake.with(|d| d.access_tokens.clone());
     let mut secrets: Vec<&str> = vec![
         CLIENT_SECRET,
@@ -1386,6 +1942,12 @@ async fn logs_never_cite_a_secret_a_title_nor_an_id() {
         SIGNATURE,
         "RAFRAICHISSEMENT-SENTINELLE",
         "vidFictif",
+        "vidReactif",
+        "vidSupprime",
+        "shortFict",
+        "vertFict",
+        "carreFict",
+        "Short",
         "UCchaine",
         "Chaîne Fictive",
         "vidéo fictive",

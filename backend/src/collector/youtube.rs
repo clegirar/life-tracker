@@ -1,7 +1,8 @@
 //! Le connecteur YouTube, par l'API Google Data Portability (voir le journal des décisions de
 //! l'architecture, 5 nov. 2026) : un export de `myactivity.youtube` au plus toutes les 24 h, lu en flux
-//! (`crate::youtube`), puis la fiche de chaque vidéo par l'API YouTube Data v3 (durée, titre, chaîne),
-//! entrée au journal comme enrichissement.
+//! (`crate::youtube`), puis le classement de chaque vidéo par l'API YouTube Data v3 : seules les vidéos
+//! classiques entrent au journal, avec leur fiche (durée, titre, chaîne) comme enrichissement ; ni les
+//! Shorts, ni les vidéos supprimées ou privées.
 //!
 //! L'accord OAuth (client « Application Web » en mode Testing : un jeton de 7 jours) se donne depuis la
 //! web app : le connecteur prépare la demande (état aléatoire et vérificateur PKCE, qu'il garde dans
@@ -28,10 +29,12 @@ use tokio::sync::watch;
 use tracing::{error, info, warn};
 
 use super::lastfm::network_reason;
-use super::{backoff, load_state, rate_limit_wait, report_status, save_private_state};
+use super::{
+    backoff, cancel_record, load_state, rate_limit_wait, report_status, save_private_state,
+};
 use crate::ingest_client::{Handover, IngestClient, IngestFailure, RecordOutcome, http_client};
 use crate::source_status::{Reason, SourceStatus, State as Health};
-use crate::youtube::{self, Activity, Skipped, Watch};
+use crate::youtube::{self, Activity, Reaction, Skipped, Watch};
 
 pub const DEFAULT_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 pub const DEFAULT_OAUTH_URL: &str = "https://oauth2.googleapis.com";
@@ -65,10 +68,16 @@ const ACCESS_MARGIN: TimeDelta = TimeDelta::minutes(5);
 const DEFAULT_RATE_LIMIT_DELAY: Duration = Duration::from_secs(300);
 /// L'API Data v3 prend 50 ids par appel, pour une unité de quota sur 10 000 par jour.
 pub const VIDEOS_PER_CALL: usize = 50;
-/// Au plus 1 000 vidéos par passage : l'historique entier s'enrichit en quelques heures, sous le quota.
-pub const MAX_VIDEO_CALLS_PER_PASS: usize = 20;
-/// Une vidéo absente de Data v3 (supprimée, privée) est redemandée un mois plus tard.
-const MISSING_RETRY_DAYS: u64 = 30;
+/// Au plus 5 000 vidéos classées par passage (100 unités de quota) : un historique de 22 000 vidéos en
+/// 5 passages, une vingtaine de minutes ; ensuite, quelques vidéos par jour.
+pub const CLASSIFY_CALLS_PER_PASS: usize = 100;
+/// Une vidéo absente de Data v3 (supprimée, privée) n'est redemandée qu'un mois plus tard, et seulement
+/// si une nouvelle vue la cite.
+const UNAVAILABLE_RETRY_DAYS: u64 = 30;
+/// La version des corrections du journal : 1, les fausses vues tirées des réactions ; 2, les Shorts et
+/// les vidéos indisponibles entrés avant la règle des vidéos classiques. Une version de plus refait le
+/// tour sur un export complet.
+const CORRECTIONS_VERSION: u32 = 2;
 /// Un lot reste sous les 500 enregistrements et le Mo du contrat.
 const RECORDS_PER_BATCH: usize = 500;
 const MAX_BATCH_BYTES: usize = 900_000;
@@ -82,6 +91,8 @@ pub struct Config {
     pub api_key: String,
     pub ingest_url: String,
     pub token: String,
+    /// Le nom de la source dans le registre, que désignent ses annulations.
+    pub source: String,
     pub state_dir: PathBuf,
     /// Le rythme des passages ; les exports eux-mêmes n'ont lieu qu'une fois par 24 h.
     pub interval: Duration,
@@ -93,6 +104,10 @@ pub struct Config {
     pub data_url: String,
     /// Le seul préfixe accepté pour télécharger une archive.
     pub storage_url: String,
+    /// Les ids par appel à Data v3 (`VIDEOS_PER_CALL`), et les appels par passage
+    /// (`CLASSIFY_CALLS_PER_PASS`) ; plus petits en test.
+    pub videos_per_call: usize,
+    pub classify_calls_per_pass: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -151,10 +166,20 @@ pub struct TickReport {
     /// Vidéos vues lues dans l'export, et entrées écartées par motif.
     pub watches: u32,
     pub skipped: Skipped,
+    /// Vues écartées après classement : Shorts, et vidéos supprimées ou privées.
+    pub shorts: u32,
+    pub unavailable: u32,
+    /// Annulations reçues (`accepted` ou `duplicate`) : fausses vues tirées des réactions, vues et fiches
+    /// de Shorts, vues de vidéos indisponibles.
+    pub cancelled: u32,
+    /// Annulations refusées faute du droit `record.cancel` (`kind_not_declared`).
+    pub cancels_refused: u32,
+    /// L'export avait des entrées `/watch` mais aucune vue reconnue : rien n'en est tiré.
+    pub unrecognized: bool,
     pub exported: bool,
-    /// Fiches de vidéos envoyées, et vidéos que Data v3 ne connaît pas (supprimées ou privées).
+    /// Vidéos classées par Data v3, et fiches de vidéos classiques envoyées.
+    pub classified: u32,
     pub enriched: u32,
-    pub unknown_videos: u32,
     /// Un accord est attendu : premier (`consent_required`) ou à renouveler (`consent_expired`).
     pub awaiting: Option<Reason>,
 }
@@ -170,6 +195,18 @@ struct Authorization {
 struct Job {
     id: String,
     started_at: DateTime<Utc>,
+    /// Demandé sans `startTime` : tout l'historique, de quoi faire les corrections.
+    #[serde(default)]
+    full: bool,
+}
+
+/// Ce que Data v3 dit d'une vidéo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Class {
+    Classic,
+    Short,
+    /// Absente d'une réponse réussie : supprimée ou privée, sa nature ne se sait plus.
+    Unavailable,
 }
 
 /// Ce qui survit à un redémarrage, dans un fichier lisible par le seul collecteur (0600). Le perdre
@@ -182,8 +219,20 @@ struct State {
     #[serde(default)]
     consented: bool,
     authorization: Option<Authorization>,
-    /// La dernière vue reçue par l'API d'ingestion.
+    /// La dernière vue traitée : envoyée, ou écartée après classement.
     last_watched_at: Option<DateTime<Utc>>,
+    /// Les corrections du journal faites (`CORRECTIONS_VERSION`). En dessous, l'export suivant reprend
+    /// tout l'historique pour les faire ; l'état d'une version d'avant (`reactions_cancelled`) vaut 0.
+    #[serde(default)]
+    corrections_version: u32,
+    /// Les vues en attente viennent d'un export complet à corriger : celles qui ne sont pas classiques
+    /// sont annulées, sous la clé que la version d'avant leur donnait.
+    #[serde(default)]
+    correcting: bool,
+    /// Un export lu dont des vues attendent encore leur classement : il ne compte comme reçu
+    /// (`last_exported_at`) qu'une fois toutes ses vues classiques envoyées.
+    #[serde(default)]
+    collecting: bool,
     job: Option<Job>,
     /// Le prochain export que Google accepte.
     next_export_at: Option<DateTime<Utc>>,
@@ -191,15 +240,50 @@ struct State {
     exports_since: Option<DateTime<Utc>>,
     /// Le dernier export téléchargé et remis à l'API d'ingestion : `last_collected_at` de l'état.
     last_exported_at: Option<DateTime<Utc>>,
-    /// Les vidéos dont la fiche a été reçue.
+    /// Le classement des vidéos : classiques (fiche envoyée), Shorts, et indisponibles avec le jour où
+    /// les redemander. Quelques centaines de Ko pour 22 000 vidéos.
     #[serde(default)]
-    enriched: BTreeSet<String>,
-    /// Les vidéos que Data v3 ne connaît pas, et le jour où les redemander.
+    classic: BTreeSet<String>,
     #[serde(default)]
-    missing: BTreeMap<String, NaiveDate>,
-    /// Les vidéos dont la fiche reste à demander.
+    shorts: BTreeSet<String>,
     #[serde(default)]
-    to_enrich: BTreeSet<String>,
+    unavailable: BTreeMap<String, NaiveDate>,
+    /// Les vues dont la vidéo attend son classement, sans doublon : au plus celles d'un export.
+    #[serde(default)]
+    pending: Vec<Watch>,
+}
+
+impl State {
+    /// Le classement d'une vidéo ; `None` s'il reste à faire, ou à refaire pour une vidéo indisponible
+    /// depuis un mois.
+    fn class_of(&self, id: &str, today: NaiveDate) -> Option<Class> {
+        if self.classic.contains(id) {
+            Some(Class::Classic)
+        } else if self.shorts.contains(id) {
+            Some(Class::Short)
+        } else {
+            self.unavailable
+                .get(id)
+                .filter(|retry| today < **retry)
+                .map(|_| Class::Unavailable)
+        }
+    }
+
+    fn classify(&mut self, id: String, class: Class, today: NaiveDate) {
+        self.unavailable.remove(&id);
+        match class {
+            Class::Classic => {
+                self.classic.insert(id);
+            }
+            Class::Short => {
+                self.shorts.insert(id);
+            }
+            Class::Unavailable => {
+                self.unavailable
+                    .insert(id, today + Days::new(UNAVAILABLE_RETRY_DAYS));
+            }
+        }
+    }
 }
 
 struct Access {
@@ -613,18 +697,22 @@ impl Google {
         Ok(())
     }
 
-    /// Les fiches de vidéos de l'API Data v3, 50 au plus. Les vidéos absentes n'existent plus.
+    /// Les fiches de vidéos de l'API Data v3, 50 au plus, avec la taille du lecteur (`maxWidth` la fait
+    /// rendre, au rapport de la vidéo ; même quota). Les vidéos absentes d'une réponse réussie n'existent
+    /// plus ; une réponse sans `items` ni `pageInfo` n'est pas une réponse réussie.
     async fn videos(&self, ids: &[String]) -> Result<Vec<Value>, ServiceError> {
         let response = self
             .http
             .get(format!("{}/videos", self.data_url))
             .query(&[
-                ("part", "contentDetails,snippet"),
+                ("part", "contentDetails,snippet,player"),
                 ("id", &ids.join(",")),
                 ("maxResults", "50"),
+                ("maxWidth", "1000"),
                 (
                     "fields",
-                    "items(id,contentDetails(duration),snippet(title,channelId,channelTitle))",
+                    "items(id,contentDetails(duration),snippet(title,channelId,channelTitle),\
+                     player(embedWidth,embedHeight)),pageInfo(totalResults)",
                 ),
                 ("key", &self.api_key),
             ])
@@ -668,11 +756,11 @@ impl Google {
             .json()
             .await
             .map_err(|_| ServiceError::Unavailable { reason: "body" })?;
-        Ok(body
-            .get("items")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default())
+        match (body.get("items"), body.get("pageInfo")) {
+            (Some(Value::Array(items)), _) => Ok(items.clone()),
+            (None, Some(Value::Object(_))) => Ok(Vec::new()),
+            _ => Err(ServiceError::Unavailable { reason: "shape" }),
+        }
     }
 }
 
@@ -698,10 +786,32 @@ pub fn activity_from_zip(path: &std::path::Path) -> Result<Activity, ServiceErro
             continue;
         }
         let found = youtube::parse_activity(entry.take(MAX_ACTIVITY_BYTES)).map_err(unreadable)?;
-        activity.watches.extend(found.watches);
-        activity.skipped.add(&found.skipped);
+        activity.extend(found);
     }
     Ok(activity)
+}
+
+/// Une taille du lecteur : un entier, que les API de Google rendent souvent en texte.
+fn embed_size(item: &Value, name: &str) -> Option<u64> {
+    let value = item.pointer(&format!("/player/{name}"))?;
+    value
+        .as_u64()
+        .or_else(|| value.as_str()?.trim().parse().ok())
+}
+
+/// Le classement d'une vidéo rendue par Data v3, et sa durée.
+fn item_class(item: &Value) -> (Class, Option<u64>) {
+    let duration = item
+        .pointer("/contentDetails/duration")
+        .and_then(Value::as_str)
+        .and_then(|d| youtube::iso8601_seconds(d.trim()));
+    let embed = embed_size(item, "embedWidth").zip(embed_size(item, "embedHeight"));
+    let class = if youtube::is_short(duration, embed) {
+        Class::Short
+    } else {
+        Class::Classic
+    };
+    (class, duration)
 }
 
 /// L'état rapporté après un passage en échec. Un client OAuth ou une clé Data v3 refusés demandent une
@@ -826,9 +936,9 @@ impl Collector {
         self.state.refresh_expires_at
     }
 
-    /// Les vidéos dont la fiche reste à demander.
-    pub fn to_enrich(&self) -> usize {
-        self.state.to_enrich.len()
+    /// Les vues dont la vidéo attend son classement.
+    pub fn awaiting_classification(&self) -> usize {
+        self.state.pending.len()
     }
 
     fn save(&self) -> Result<(), TickError> {
@@ -927,13 +1037,35 @@ impl Collector {
             report.calls += 1;
             match archive.state.as_str() {
                 "COMPLETE" => {
-                    let activity = self.download(&archive.urls, report).await?;
-                    self.store(activity, report).await?;
+                    let mut activity = self.download(&archive.urls, report).await?;
                     let base = archive.export_time.unwrap_or(job.started_at);
+                    if activity.unrecognized() {
+                        // Une langue inconnue : chaque vue passerait pour une réaction. Rien n'entre,
+                        // rien n'est annulé, et ni la dernière vue ni le dernier export n'avancent.
+                        report.unrecognized = true;
+                        report.skipped.add(&activity.skipped);
+                        warn!(
+                            reactions = activity.reactions.len(),
+                            skipped_ads = activity.skipped.ad,
+                            skipped_other = activity.skipped.total() - activity.skipped.reaction,
+                            "youtube export without any recognized watch: unknown language?"
+                        );
+                    } else {
+                        // Les vues attendent leur classement ; l'export compte comme reçu quand toutes
+                        // ses vues classiques sont envoyées (`resolve`).
+                        let reactions = std::mem::take(&mut activity.reactions);
+                        report.watches += activity.watches.len() as u32;
+                        report.skipped.add(&activity.skipped);
+                        self.queue(activity.watches);
+                        if job.full && self.state.corrections_version < CORRECTIONS_VERSION {
+                            let keys = reactions.iter().map(Reaction::watch_key).collect();
+                            self.state.correcting = self.cancel(&keys, report).await?;
+                        }
+                        self.state.collecting = true;
+                        report.exported = true;
+                    }
                     self.state.next_export_at = Some(base + EXPORT_EVERY);
                     self.state.job = None;
-                    self.state.last_exported_at = Some(Utc::now());
-                    report.exported = true;
                     self.save()?;
                 }
                 "FAILED" | "CANCELLED" => {
@@ -953,7 +1085,13 @@ impl Collector {
         if self.state.next_export_at.is_some_and(|next| now < next) {
             return Ok(());
         }
-        let start = self.state.last_watched_at.map(|at| at - EXPORT_OVERLAP);
+        // Tant que les corrections ne sont pas faites, tout l'historique : les vues à annuler sont
+        // anciennes.
+        let start = self
+            .state
+            .last_watched_at
+            .filter(|_| self.state.corrections_version >= CORRECTIONS_VERSION)
+            .map(|at| at - EXPORT_OVERLAP);
         let initiated = self.google.initiate(token, start).await?;
         self.state.exports_since.get_or_insert(now);
         match initiated {
@@ -963,6 +1101,7 @@ impl Collector {
                 self.state.job = Some(Job {
                     id,
                     started_at: now,
+                    full: start.is_none(),
                 });
                 self.state.next_export_at = Some(now + EXPORT_EVERY);
             }
@@ -989,22 +1128,28 @@ impl Collector {
             let _ = std::fs::remove_file(&path);
             let found = found?;
             report.calls += 1;
-            activity.watches.extend(found.watches);
-            activity.skipped.add(&found.skipped);
+            activity.extend(found);
         }
         Ok(activity)
     }
 
-    /// Les vues, de la plus ancienne à la plus récente, par lots. Chaque vidéo reçue attend sa fiche.
+    /// Ajoute les vues d'un export à celles qui attendent leur classement, sans doublon.
+    fn queue(&mut self, watches: Vec<Watch>) {
+        let mut keys: BTreeSet<String> = self.state.pending.iter().map(Watch::key).collect();
+        for watch in watches {
+            if keys.insert(watch.key()) {
+                self.state.pending.push(watch);
+            }
+        }
+    }
+
+    /// Les vues de vidéos classiques, de la plus ancienne à la plus récente, par lots.
     async fn store(
         &mut self,
-        activity: Activity,
+        mut watches: Vec<Watch>,
         report: &mut TickReport,
     ) -> Result<(), TickError> {
-        let mut watches: Vec<Watch> = activity.watches;
         watches.sort_by_key(|w| w.watched_at);
-        report.watches += watches.len() as u32;
-        report.skipped.add(&activity.skipped);
         let mut start = 0;
         while start < watches.len() {
             let mut records = Vec::new();
@@ -1021,51 +1166,79 @@ impl Collector {
                 end += 1;
             }
             let results = self.ingest.send(&records).await?;
-            for (watch, result) in watches[start..end].iter().zip(&results) {
+            for result in &results {
                 match RecordOutcome::of(result) {
                     RecordOutcome::Accepted => report.accepted += 1,
                     RecordOutcome::Duplicate => report.duplicate += 1,
                     RecordOutcome::Rejected => {
                         report.rejected += 1;
                         warn!("youtube watch rejected, set aside");
-                        continue;
                     }
                 }
-                if !self.state.enriched.contains(&watch.video_id)
-                    && !self.state.missing.contains_key(&watch.video_id)
-                {
-                    self.state.to_enrich.insert(watch.video_id.clone());
-                }
-                self.state.last_watched_at = self.state.last_watched_at.max(Some(watch.watched_at));
             }
-            self.save()?;
             start = end;
         }
         Ok(())
     }
 
-    /// Les fiches des vidéos en attente, 50 par appel, quelques appels par passage. Une vidéo absente
-    /// de la réponse n'existe plus pour Data v3 : redemandée un mois plus tard.
-    async fn enrich(&mut self, report: &mut TickReport) -> Result<(), TickError> {
-        let today = Utc::now().date_naive();
-        let due: Vec<String> = self
-            .state
-            .missing
+    /// Annule des enregistrements de la source, sous la clé que la version d'avant leur donnait (une vue
+    /// `<id>:<instant en ms>`, une fiche `<id>`). Annuler une clé qui n'a jamais existé ne fait rien ;
+    /// renvoyer une annulation ne fait qu'un `duplicate`. Sans le droit `record.cancel`, `false` : les
+    /// annulations sont mises de côté, la correction reste à faire, et l'export complet suivant les
+    /// renvoie.
+    async fn cancel(
+        &mut self,
+        keys: &BTreeSet<String>,
+        report: &mut TickReport,
+    ) -> Result<bool, TickError> {
+        let now = Utc::now();
+        let records: Vec<Value> = keys
             .iter()
-            .filter(|(_, retry)| **retry <= today)
-            .map(|(id, _)| id.clone())
+            .map(|key| cancel_record(&self.config.source, key, now))
             .collect();
-        for id in due {
-            self.state.missing.remove(&id);
-            self.state.to_enrich.insert(id);
+        for (index, batch) in records.chunks(RECORDS_PER_BATCH).enumerate() {
+            let results = match self.ingest.send(batch).await {
+                Ok(results) => results,
+                Err(failure) if failure.reason == "kind_not_declared" => {
+                    let refused = records.len() - index * RECORDS_PER_BATCH;
+                    report.cancels_refused += refused as u32;
+                    report.rejected += refused as u32;
+                    warn!(
+                        reason = "kind_not_declared",
+                        refused, "youtube cancellations refused: grant record.cancel to the source"
+                    );
+                    return Ok(false);
+                }
+                Err(failure) => return Err(failure.into()),
+            };
+            for result in &results {
+                match RecordOutcome::of(result) {
+                    RecordOutcome::Rejected => {
+                        report.rejected += 1;
+                        warn!("youtube cancellation rejected, set aside");
+                    }
+                    _ => report.cancelled += 1,
+                }
+            }
         }
-        for _ in 0..MAX_VIDEO_CALLS_PER_PASS {
-            let ids: Vec<String> = self
-                .state
-                .to_enrich
-                .iter()
-                .take(VIDEOS_PER_CALL)
-                .cloned()
+        Ok(true)
+    }
+
+    /// Classe les vidéos des vues en attente par Data v3, quelques appels par passage. Une vidéo
+    /// classique a sa fiche envoyée ; une vidéo absente d'une réponse réussie est indisponible. Un appel
+    /// en échec (HTTP, quota, réponse illisible) ne classe rien : le passage suivant reprend.
+    async fn classify(&mut self, report: &mut TickReport) -> Result<(), TickError> {
+        let today = Utc::now().date_naive();
+        let mut wanted: BTreeSet<String> = self
+            .state
+            .pending
+            .iter()
+            .filter(|w| self.state.class_of(&w.video_id, today).is_none())
+            .map(|w| w.video_id.clone())
+            .collect();
+        for _ in 0..self.config.classify_calls_per_pass {
+            let ids: Vec<String> = std::iter::from_fn(|| wanted.pop_first())
+                .take(self.config.videos_per_call.max(1))
                 .collect();
             if ids.is_empty() {
                 break;
@@ -1074,7 +1247,7 @@ impl Collector {
             report.calls += 1;
             let now = Utc::now();
             let mut records = Vec::new();
-            let mut found = BTreeSet::new();
+            let mut found = BTreeMap::new();
             for item in &items {
                 let Some(id) = item
                     .get("id")
@@ -1083,22 +1256,24 @@ impl Collector {
                 else {
                     continue;
                 };
-                let text = |pointer: &str| {
-                    item.pointer(pointer)
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|t| !t.is_empty())
-                };
-                let duration = text("/contentDetails/duration").and_then(youtube::iso8601_seconds);
-                records.push(youtube::video_info_record(
-                    id,
-                    duration,
-                    text("/snippet/title"),
-                    text("/snippet/channelId"),
-                    text("/snippet/channelTitle"),
-                    now,
-                ));
-                found.insert(id.to_owned());
+                let (class, duration) = item_class(item);
+                if class == Class::Classic {
+                    let text = |pointer: &str| {
+                        item.pointer(pointer)
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|t| !t.is_empty())
+                    };
+                    records.push(youtube::video_info_record(
+                        id,
+                        duration,
+                        text("/snippet/title"),
+                        text("/snippet/channelId"),
+                        text("/snippet/channelTitle"),
+                        now,
+                    ));
+                }
+                found.insert(id.to_owned(), class);
             }
             if !records.is_empty() {
                 let results = self.ingest.send(&records).await?;
@@ -1112,17 +1287,60 @@ impl Collector {
                     }
                 }
             }
-            let retry = today + Days::new(MISSING_RETRY_DAYS);
             for id in ids {
-                self.state.to_enrich.remove(&id);
-                if found.contains(&id) {
-                    self.state.enriched.insert(id);
-                } else {
-                    report.unknown_videos += 1;
-                    self.state.missing.insert(id, retry);
+                let class = found.get(&id).copied().unwrap_or(Class::Unavailable);
+                report.classified += 1;
+                self.state.classify(id, class, today);
+            }
+        }
+        Ok(())
+    }
+
+    /// Les vues en attente dont la vidéo est classée : les classiques sont envoyées, les autres
+    /// écartées, et annulées pendant une correction (la vue, et la fiche d'un Short). Quand il n'en reste
+    /// plus, l'export compte comme reçu, et la correction comme faite.
+    async fn resolve(&mut self, report: &mut TickReport) -> Result<(), TickError> {
+        let today = Utc::now().date_naive();
+        let (ready, waiting): (Vec<Watch>, Vec<Watch>) = self
+            .state
+            .pending
+            .iter()
+            .cloned()
+            .partition(|w| self.state.class_of(&w.video_id, today).is_some());
+        let mut classic = Vec::new();
+        let mut cancels = BTreeSet::new();
+        let (mut shorts, mut unavailable) = (0, 0);
+        let latest = ready.iter().map(|w| w.watched_at).max();
+        for watch in ready {
+            match self.state.class_of(&watch.video_id, today) {
+                Some(Class::Classic) => classic.push(watch),
+                Some(Class::Short) => {
+                    shorts += 1;
+                    cancels.insert(watch.key());
+                    cancels.insert(watch.video_id);
+                }
+                _ => {
+                    unavailable += 1;
+                    cancels.insert(watch.key());
                 }
             }
-            self.save()?;
+        }
+        self.store(classic, report).await?;
+        if self.state.correcting && !self.cancel(&cancels, report).await? {
+            self.state.correcting = false;
+        }
+        report.shorts += shorts;
+        report.unavailable += unavailable;
+        self.state.pending = waiting;
+        self.state.last_watched_at = self.state.last_watched_at.max(latest);
+        if self.state.collecting && self.state.pending.is_empty() {
+            self.state.collecting = false;
+            self.state.last_exported_at = Some(Utc::now());
+            if self.state.correcting {
+                self.state.correcting = false;
+                self.state.corrections_version = CORRECTIONS_VERSION;
+                info!("youtube journal corrections done");
+            }
         }
         Ok(())
     }
@@ -1189,9 +1407,12 @@ impl Collector {
         if report.calls > 0 {
             self.ingest.heartbeat().await?;
         }
-        self.enrich(&mut report).await?;
+        // Ce qui est classé avant une panne de Data v3 part quand même ; la panne est rapportée ensuite.
+        let classified = self.classify(&mut report).await;
+        self.resolve(&mut report).await?;
         // Toujours réécrit : la date du fichier sert au contrôle de santé du conteneur.
         self.save()?;
+        classified?;
         Ok(report)
     }
 
@@ -1214,10 +1435,14 @@ impl Collector {
                     skipped_posts = s.post,
                     skipped_subscriptions = s.subscription,
                     skipped_music = s.music,
+                    skipped_reactions = s.reaction,
                     skipped_other = s.other,
+                    skipped_shorts = report.shorts,
+                    skipped_unavailable = report.unavailable,
+                    cancelled = report.cancelled,
+                    classified = report.classified,
                     enriched = report.enriched,
-                    unknown_videos = report.unknown_videos,
-                    to_enrich = self.state.to_enrich.len(),
+                    awaiting_classification = self.state.pending.len(),
                     awaiting_consent = report.awaiting.is_some(),
                     "youtube pass completed"
                 );
@@ -1225,6 +1450,14 @@ impl Collector {
                     Some(reason) => (
                         self.config.consent_poll,
                         SourceStatus::failed(Health::ActionRequired, reason),
+                    ),
+                    None if report.unrecognized => (
+                        self.config.interval,
+                        SourceStatus::failed(Health::Error, Reason::ServiceUnavailable),
+                    ),
+                    None if report.cancels_refused > 0 => (
+                        self.config.interval,
+                        SourceStatus::failed(Health::Error, Reason::IngestFailed),
                     ),
                     None if exports_stale(
                         self.state.last_exported_at,

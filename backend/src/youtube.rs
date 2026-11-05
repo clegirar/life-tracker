@@ -1,12 +1,22 @@
 //! L'historique YouTube, tel que le rendent Google Data Portability (`MyActivity.json`) et Takeout
 //! (`watch-history.json`) : une liste d'entrées au même format (voir le journal des décisions de
-//! l'architecture, 5 nov. 2026). Le fichier mêle vidéos vues, publicités, recherches, posts et
-//! abonnements, avec des libellés traduits selon la langue du compte : rien ne se reconnaît au texte.
+//! l'architecture, 5 nov. 2026). Le fichier mêle vidéos vues, réactions (« Liked », « Disliked »…),
+//! publicités, recherches, posts et abonnements, avec des libellés traduits selon la langue du compte.
 //!
-//! - Une vidéo vue : `titleUrl` en `/watch` avec `v=` (11 caractères, seul paramètre), sans `details`.
+//! - Une vidéo vue : `titleUrl` en `/watch` avec `v=` (11 caractères, seul paramètre), sans `details`,
+//!   **et** un titre qui commence par un préfixe de vue connu (`WATCHED_PREFIXES`).
+//! - Une réaction : la même entrée `/watch`, sans ce préfixe. Aucun champ neutre ne la distingue d'une
+//!   vue (`activityControls` est traduit lui aussi) : c'est la seule règle qui lit le texte. Elle est
+//!   écartée, et sa clé gardée pour annuler la fausse vue que la version d'avant en avait tirée.
 //! - Une publicité : `details` présent (« From Google Ads »).
 //! - Le reste (recherches `/results`, posts `/post`, chaînes, liens google.com, entrées sans lien) est
 //!   écarté et compté par motif, comme YouTube Music, déjà couvert par la musique.
+//!
+//! Seules les vidéos classiques entrent au journal : ni Short, ni vidéo supprimée ou privée. Le fichier
+//! ne le dit pas ; le connecteur le demande à l'API Data v3 (`is_short`).
+//!
+//! Un export d'une langue inconnue n'aurait que des réactions : `Activity::unrecognized` le signale, et
+//! le connecteur n'en tire rien plutôt que de tout écarter en silence.
 //!
 //! La charge utile est construite champ par champ, en liste blanche : jamais `activityControls`,
 //! `description`, `details` ni les liens eux-mêmes. Lecture en flux : seules les vidéos vues restent en
@@ -17,20 +27,21 @@ use std::io::Read;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::de::{IgnoredAny, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
 
 pub const WATCH_KIND: &str = "youtube.watch";
 pub const VIDEO_INFO_KIND: &str = "youtube.video_info";
 
-/// Les préfixes connus d'un titre de vidéo vue, par langue. Inconnu, le titre reste entier : il ne
-/// sert qu'à l'affichage, jamais à reconnaître une entrée.
+/// Les préfixes d'un titre de vidéo vue, par langue : ce qui distingue une vue d'une réaction. Une
+/// langue de plus s'ajoute ici.
 const WATCHED_PREFIXES: [&str; 2] = ["Watched ", "Vous avez regardé "];
 /// YouTube borne un titre à 100 caractères, un nom de chaîne bien en dessous : au-delà, ce n'en est pas un.
 const MAX_NAME_CHARS: usize = 500;
 
-/// Une vidéo vue, réduite à sa liste blanche.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Une vidéo vue, réduite à sa liste blanche. Sérialisable : le connecteur garde dans son état les vues
+/// dont la vidéo attend son classement.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Watch {
     pub video_id: String,
     /// `None` pour une vidéo supprimée ou privée, dont le titre n'est plus que son lien.
@@ -40,10 +51,14 @@ pub struct Watch {
     pub watched_at: DateTime<Utc>,
 }
 
+/// `<id de la vidéo>:<instant en ms>` : aucune paire (vidéo, instant) ne se répète dans l'historique.
+fn watch_key(video_id: &str, at: DateTime<Utc>) -> String {
+    format!("{video_id}:{}", at.timestamp_millis())
+}
+
 impl Watch {
-    /// `<id de la vidéo>:<instant en ms>` : aucune paire (vidéo, instant) ne se répète dans l'historique.
     pub fn key(&self) -> String {
-        format!("{}:{}", self.video_id, self.watched_at.timestamp_millis())
+        watch_key(&self.video_id, self.watched_at)
     }
 
     pub fn record(&self) -> Value {
@@ -59,6 +74,20 @@ impl Watch {
                 "channel_name": self.channel_name,
             },
         })
+    }
+}
+
+/// Une réaction (« Liked », « Disliked »…) à une vidéo : rien n'en entre au journal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reaction {
+    pub video_id: String,
+    pub at: DateTime<Utc>,
+}
+
+impl Reaction {
+    /// La clé de la vue que la version d'avant le correctif du 5 nov. 2026 en a tirée, à annuler.
+    pub fn watch_key(&self) -> String {
+        watch_key(&self.video_id, self.at)
     }
 }
 
@@ -94,6 +123,7 @@ pub enum SkipReason {
     Post,
     Subscription,
     Music,
+    Reaction,
     Other,
 }
 
@@ -105,6 +135,7 @@ pub struct Skipped {
     pub post: u32,
     pub subscription: u32,
     pub music: u32,
+    pub reaction: u32,
     pub other: u32,
 }
 
@@ -116,6 +147,7 @@ impl Skipped {
             SkipReason::Post => &mut self.post,
             SkipReason::Subscription => &mut self.subscription,
             SkipReason::Music => &mut self.music,
+            SkipReason::Reaction => &mut self.reaction,
             SkipReason::Other => &mut self.other,
         };
         *counter += 1;
@@ -127,11 +159,18 @@ impl Skipped {
         self.post += other.post;
         self.subscription += other.subscription;
         self.music += other.music;
+        self.reaction += other.reaction;
         self.other += other.other;
     }
 
     pub fn total(&self) -> u32 {
-        self.ad + self.search + self.post + self.subscription + self.music + self.other
+        self.ad
+            + self.search
+            + self.post
+            + self.subscription
+            + self.music
+            + self.reaction
+            + self.other
     }
 }
 
@@ -163,11 +202,32 @@ struct RawEntry {
     details: Option<Vec<IgnoredAny>>,
 }
 
-/// L'historique d'un fichier : les vidéos vues, dans l'ordre du fichier, et les entrées écartées.
+/// L'historique d'un fichier : les vidéos vues, dans l'ordre du fichier, les réactions et les entrées
+/// écartées (réactions comprises).
 #[derive(Debug, Default)]
 pub struct Activity {
     pub watches: Vec<Watch>,
+    pub reactions: Vec<Reaction>,
     pub skipped: Skipped,
+}
+
+impl Activity {
+    pub fn extend(&mut self, other: Self) {
+        self.watches.extend(other.watches);
+        self.reactions.extend(other.reactions);
+        self.skipped.add(&other.skipped);
+    }
+
+    /// Des entrées `/watch` mais aucune vue reconnue : la langue de l'export n'est sans doute pas dans
+    /// `WATCHED_PREFIXES`, et chaque vue passerait pour une réaction.
+    pub fn unrecognized(&self) -> bool {
+        self.watches.is_empty() && !self.reactions.is_empty()
+    }
+}
+
+enum Entry {
+    Watch(Watch),
+    Reaction(Reaction),
 }
 
 impl<'de> Deserialize<'de> for Activity {
@@ -184,7 +244,11 @@ impl<'de> Deserialize<'de> for Activity {
                 let mut activity = Activity::default();
                 while let Some(entry) = seq.next_element::<RawEntry>()? {
                     match classify(&entry) {
-                        Ok(watch) => activity.watches.push(watch),
+                        Ok(Entry::Watch(watch)) => activity.watches.push(watch),
+                        Ok(Entry::Reaction(reaction)) => {
+                            activity.skipped.count(SkipReason::Reaction);
+                            activity.reactions.push(reaction);
+                        }
                         Err(reason) => activity.skipped.count(reason),
                     }
                 }
@@ -231,13 +295,18 @@ fn name(text: Option<&str>) -> Option<String> {
     (!text.is_empty() && text.chars().count() <= MAX_NAME_CHARS).then(|| text.to_owned())
 }
 
-/// Le titre sans son préfixe connu ; `None` si ce qui reste est un lien (vidéo supprimée ou privée).
-fn video_title(title: Option<&str>) -> Option<String> {
-    let title = title?.trim();
-    let title = WATCHED_PREFIXES
+/// Ce qui suit un préfixe de vue connu, s'il y en a un.
+fn without_watched_prefix(title: Option<&str>) -> Option<&str> {
+    let title = title?.trim_start();
+    WATCHED_PREFIXES
         .iter()
         .find_map(|prefix| title.strip_prefix(prefix))
-        .unwrap_or(title);
+}
+
+/// Le titre sans son préfixe de vue ; `None` sans préfixe connu (jamais « Disliked https://… ») ou si
+/// ce qui reste est un lien (vidéo supprimée ou privée).
+fn video_title(title: Option<&str>) -> Option<String> {
+    let title = without_watched_prefix(title)?.trim();
     let lower = title.trim_start().to_ascii_lowercase();
     if lower.starts_with("https://") || lower.starts_with("http://") {
         return None;
@@ -266,7 +335,7 @@ fn channel(subtitles: Option<&[RawSubtitle]>) -> (Option<String>, Option<String>
     }
 }
 
-fn classify(entry: &RawEntry) -> Result<Watch, SkipReason> {
+fn classify(entry: &RawEntry) -> Result<Entry, SkipReason> {
     let music = |text: &str| text.trim() == "YouTube Music";
     if entry.header.as_deref().is_some_and(music)
         || entry
@@ -303,14 +372,33 @@ fn classify(entry: &RawEntry) -> Result<Watch, SkipReason> {
         .and_then(|time| DateTime::parse_from_rfc3339(time).ok())
         .map(|at| at.with_timezone(&Utc))
         .ok_or(SkipReason::Other)?;
+    // La seule règle qui lit le texte : aucun champ neutre ne sépare une vue d'une réaction.
+    if without_watched_prefix(entry.title.as_deref()).is_none() {
+        return Ok(Entry::Reaction(Reaction {
+            video_id,
+            at: watched_at,
+        }));
+    }
     let (channel_id, channel_name) = channel(entry.subtitles.as_deref());
-    Ok(Watch {
+    Ok(Entry::Watch(Watch {
         video_id,
         title: video_title(entry.title.as_deref()),
         channel_id,
         channel_name,
         watched_at,
-    })
+    }))
+}
+
+/// Un Short dure 3 min au plus (60 s avant oct. 2024).
+pub const SHORT_MAX_SECONDS: u64 = 180;
+
+/// Un Short, d'après l'API Data v3 : une durée de 1 à 180 s **et** un lecteur au moins aussi haut que
+/// large (`player.embedWidth`/`embedHeight`, rendus avec `maxWidth`, au rapport de la vidéo ; carré
+/// compris). Sans taille de lecteur ou sans durée, rien ne le dit : une vidéo classique. Un direct
+/// (`P0D`) n'est jamais un Short.
+pub fn is_short(duration_s: Option<u64>, embed: Option<(u64, u64)>) -> bool {
+    duration_s.is_some_and(|d| (1..=SHORT_MAX_SECONDS).contains(&d))
+        && embed.is_some_and(|(width, height)| width > 0 && height >= width)
 }
 
 /// Une durée ISO 8601 de l'API Data v3 en secondes : `PT9M9S`, `PT9S`, `PT1H2M3S`, `P1DT2H`, `P0D`
@@ -354,26 +442,30 @@ pub fn iso8601_seconds(text: &str) -> Option<u64> {
 mod tests {
     use super::*;
 
-    fn entry(value: Value) -> Result<Watch, SkipReason> {
+    fn classified(value: Value) -> Result<Entry, SkipReason> {
         let raw: RawEntry = serde_json::from_value(value).unwrap();
         classify(&raw)
+    }
+
+    fn entry(value: Value) -> Result<Watch, SkipReason> {
+        match classified(value)? {
+            Entry::Watch(watch) => Ok(watch),
+            Entry::Reaction(_) => Err(SkipReason::Reaction),
+        }
     }
 
     const WATCH: &str = "https://www.youtube.com/watch?v=abcdefghijk";
 
     #[test]
-    fn a_watched_video_is_recognized_by_its_link_never_by_its_text() {
+    fn a_watched_video_needs_its_link_and_a_watched_prefix() {
         let watch = entry(json!({
-            "header": "YouTube", "title": "Ceci n'est pas un libellé connu",
+            "header": "YouTube", "title": "Watched Un titre",
             "titleUrl": WATCH, "time": "2026-11-04T19:12:03.456Z", "products": ["YouTube"],
             "subtitles": [{"name": "Chaîne", "url": "https://www.youtube.com/channel/UCabc_DEF-123"}],
         }))
         .unwrap();
         assert_eq!(watch.video_id, "abcdefghijk");
-        assert_eq!(
-            watch.title.as_deref(),
-            Some("Ceci n'est pas un libellé connu")
-        );
+        assert_eq!(watch.title.as_deref(), Some("Un titre"));
         assert_eq!(watch.channel_id.as_deref(), Some("UCabc_DEF-123"));
         assert_eq!(watch.channel_name.as_deref(), Some("Chaîne"));
         assert_eq!(watch.key(), "abcdefghijk:1793819523456");
@@ -382,6 +474,79 @@ mod tests {
             "2026-11-04T19:12:03.456Z",
             "la milliseconde est gardée"
         );
+    }
+
+    /// Le bug du 5 nov. 2026 : « Disliked https://… » était devenu une vue, titre compris.
+    #[test]
+    fn a_reaction_is_no_watch_and_keeps_the_key_of_the_false_watch() {
+        for title in [
+            "Liked https://www.youtube.com/watch?v=abcdefghijk",
+            "Disliked https://www.youtube.com/watch?v=abcdefghijk",
+            "Liked Un titre",
+            "Vous avez aimé https://www.youtube.com/watch?v=abcdefghijk",
+            "Vous avez aimé Un titre",
+            "Commented on Un titre",
+            "Ceci n'est pas un libellé connu",
+        ] {
+            let found = classified(json!({
+                "header": "YouTube", "title": title, "titleUrl": WATCH,
+                "time": "2023-05-05T19:12:03.456Z", "products": ["YouTube"],
+            }));
+            let Ok(Entry::Reaction(reaction)) = found else {
+                panic!("{title} : une réaction attendue");
+            };
+            assert_eq!(reaction.video_id, "abcdefghijk");
+            assert_eq!(reaction.watch_key(), "abcdefghijk:1683313923456", "{title}");
+        }
+        // Sans titre non plus, ce n'est pas une vue.
+        assert_eq!(
+            entry(json!({"titleUrl": WATCH, "time": "2026-11-04T19:12:03Z"})),
+            Err(SkipReason::Reaction)
+        );
+        // Une réaction sans instant lisible n'a jamais fait de vue : rien à annuler.
+        assert_eq!(
+            entry(json!({"title": "Liked x", "titleUrl": WATCH, "time": "hier"})),
+            Err(SkipReason::Other)
+        );
+    }
+
+    fn parsed(entries: Value) -> Activity {
+        parse_activity(entries.to_string().as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn an_export_in_an_unknown_language_is_unrecognized() {
+        let time = "2026-11-04T19:12:03Z";
+        let watched = json!({"title": "Watched x", "titleUrl": WATCH, "time": time});
+        let liked = json!({"title": "Liked x", "titleUrl": WATCH, "time": time});
+        let german = json!({"title": "Angesehen: x", "titleUrl": WATCH, "time": time});
+        let search =
+            json!({"titleUrl": "https://www.youtube.com/results?search_query=x", "time": time});
+        let ad = json!({"title": "Angesehen: x", "titleUrl": WATCH, "time": time,
+            "details": [{"name": "Von Google Ads"}]});
+
+        let unknown = parsed(json!([german, german, search, ad]));
+        assert!(unknown.unrecognized());
+        assert_eq!(
+            (
+                unknown.reactions.len(),
+                unknown.skipped.reaction,
+                unknown.skipped.ad
+            ),
+            (2, 2, 1)
+        );
+        assert!(!parsed(json!([watched, liked])).unrecognized());
+        assert!(
+            !parsed(json!([search, ad])).unrecognized(),
+            "rien en /watch"
+        );
+        assert!(!parsed(json!([])).unrecognized());
+
+        let mut both = parsed(json!([liked]));
+        assert!(both.unrecognized());
+        both.extend(parsed(json!([watched])));
+        assert!(!both.unrecognized(), "sur l'export entier");
+        assert_eq!((both.watches.len(), both.reactions.len()), (1, 1));
     }
 
     #[test]
@@ -398,7 +563,13 @@ mod tests {
         );
         assert_eq!(title("Vous avez regardé http://youtube.com/x"), None);
         assert_eq!(title("   "), None);
-        assert_eq!(title(&"x".repeat(501)), None);
+        assert_eq!(title("Watched    "), None);
+        assert_eq!(title(&format!("Watched {}", "x".repeat(501))), None);
+        assert_eq!(title("Un titre sans préfixe"), None);
+        assert_eq!(
+            title("Disliked https://www.youtube.com/watch?v=abcdefghijk"),
+            None
+        );
     }
 
     #[test]
@@ -464,8 +635,11 @@ mod tests {
         }
         // Des `details` vides ne font pas une publicité.
         assert!(
-            entry(json!({"titleUrl": WATCH, "time": "2026-11-04T19:12:03Z", "details": []}))
-                .is_ok()
+            entry(
+                json!({"title": "Watched x", "titleUrl": WATCH, "time": "2026-11-04T19:12:03Z",
+                "details": []})
+            )
+            .is_ok()
         );
     }
 
@@ -505,6 +679,34 @@ mod tests {
             (Some("UC1".to_owned()), None)
         );
         assert_eq!(channel_of(json!([])), (None, None));
+    }
+
+    #[test]
+    fn a_short_is_short_and_at_least_as_tall_as_wide() {
+        let horizontal = Some((1000, 562));
+        let vertical = Some((562, 1000));
+        let square = Some((1000, 1000));
+        assert!(is_short(Some(45), vertical), "un Short d'avant oct. 2024");
+        assert!(is_short(Some(120), vertical), "un Short de 2 min");
+        assert!(is_short(Some(180), vertical));
+        assert!(is_short(Some(90), square), "carré : un Short");
+        assert!(
+            !is_short(Some(181), vertical),
+            "une vidéo verticale de plus de 3 min"
+        );
+        assert!(!is_short(Some(600), vertical));
+        assert!(
+            !is_short(Some(120), horizontal),
+            "une courte vidéo horizontale"
+        );
+        assert!(!is_short(Some(549), horizontal));
+        assert!(
+            !is_short(Some(45), None),
+            "sans taille de lecteur : classique"
+        );
+        assert!(!is_short(None, vertical), "sans durée : classique");
+        assert!(!is_short(Some(0), vertical), "un direct");
+        assert!(!is_short(Some(45), Some((0, 0))));
     }
 
     #[test]

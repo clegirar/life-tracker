@@ -91,6 +91,9 @@ enum Command {
         /// Le token de la source YouTube
         #[arg(long, env = "YOUTUBE_TOKEN", hide_env_values = true)]
         youtube_token: Option<String>,
+        /// Le nom de la source YouTube dans le registre, que désignent ses annulations
+        #[arg(long, env = "YOUTUBE_SOURCE", default_value = "youtube")]
+        youtube_source: String,
         #[arg(long, env = "YOUTUBE_INTERVAL_SECONDS", default_value_t = 300)]
         youtube_interval_seconds: u64,
         #[arg(long, env = "YOUTUBE_OAUTH_URL", default_value = collector::youtube::DEFAULT_OAUTH_URL)]
@@ -217,6 +220,7 @@ async fn main() -> Result<()> {
             youtube_redirect_uri,
             youtube_api_key,
             youtube_token,
+            youtube_source,
             youtube_interval_seconds,
             youtube_oauth_url,
             youtube_portability_url,
@@ -286,6 +290,7 @@ async fn main() -> Result<()> {
                     api_key,
                     ingest_url,
                     token,
+                    source: youtube_source,
                     state_dir,
                     interval: Duration::from_secs(youtube_interval_seconds),
                     consent_poll: YOUTUBE_CONSENT_POLL,
@@ -294,6 +299,8 @@ async fn main() -> Result<()> {
                     portability_url: youtube_portability_url,
                     data_url: youtube_data_url,
                     storage_url: youtube_storage_url,
+                    videos_per_call: collector::youtube::VIDEOS_PER_CALL,
+                    classify_calls_per_pass: collector::youtube::CLASSIFY_CALLS_PER_PASS,
                 }),
                 _ => bail!(
                     "YouTube demande YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, YOUTUBE_REDIRECT_URI, \

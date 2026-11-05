@@ -45,6 +45,18 @@ const KEY_REJECTED_CODES: [i64; 2] = [10, 26];
 
 pub const DEFAULT_LASTFM_URL: &str = "https://ws.audioscrobbler.com/2.0/";
 
+/// L'annulation d'un enregistrement d'une source par elle-même (Garmin, YouTube), sous une clé qui ne
+/// dépend que de sa cible : la renvoyer ne fait qu'un `duplicate`.
+pub fn cancel_record(source: &str, key: &str, now: DateTime<Utc>) -> Value {
+    json!({
+        "key": format!("cancel:{key}"),
+        "kind": "record.cancel",
+        "schema_version": 1,
+        "occurred_at": now.to_rfc3339_opts(SecondsFormat::Secs, true),
+        "payload": { "source": source, "key": key },
+    })
+}
+
 pub struct Config {
     pub lastfm_url: String,
     pub api_key: String,

@@ -1,8 +1,55 @@
 [{
   "header": "YouTube",
+  "title": "Watched Un Short fictif",
+  "titleUrl": "https://www.youtube.com/watch?v=shortFict01",
+  "subtitles": [{"name": "Chaîne Fictive A", "url": "https://www.youtube.com/channel/UCchaineFictiveA000000"}],
+  "time": "2026-10-15T08:20:00Z",
+  "products": ["YouTube"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
+  "title": "Watched Un Short carré fictif",
+  "titleUrl": "https://www.youtube.com/watch?v=carreFict01",
+  "subtitles": [{"name": "Chaîne Fictive A", "url": "https://www.youtube.com/channel/UCchaineFictiveA000000"}],
+  "time": "2026-10-15T08:15:00Z",
+  "products": ["YouTube"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
+  "title": "Watched Une vidéo verticale fictive",
+  "titleUrl": "https://www.youtube.com/watch?v=vertFict010",
+  "subtitles": [{"name": "Chaîne Fictive C", "url": "https://www.youtube.com/channel/UCchaineFictiveC000000"}],
+  "time": "2026-10-15T08:10:00Z",
+  "products": ["YouTube"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
+  "title": "Watched Un Short de deux minutes",
+  "titleUrl": "https://www.youtube.com/watch?v=shortFict02",
+  "subtitles": [{"name": "Chaîne Fictive B", "url": "https://www.youtube.com/channel/UCchaineFictiveB000000"}],
+  "time": "2026-10-15T08:05:00Z",
+  "products": ["YouTube"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
+  "title": "Watched Un Short fictif",
+  "titleUrl": "https://www.youtube.com/watch?v=shortFict01",
+  "subtitles": [{"name": "Chaîne Fictive A", "url": "https://www.youtube.com/channel/UCchaineFictiveA000000"}],
+  "time": "2026-10-15T08:00:00Z",
+  "products": ["YouTube"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
   "title": "Watched https://www.youtube.com/watch?v=vidSupprime",
   "titleUrl": "https://www.youtube.com/watch?v=vidSupprime",
   "time": "2026-10-14T20:00:00Z",
+  "products": ["YouTube"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
+  "title": "Liked https://www.youtube.com/watch?v=vidFictif02",
+  "titleUrl": "https://www.youtube.com/watch?v=vidFictif02",
+  "time": "2026-10-14T19:45:00Z",
   "products": ["YouTube"],
   "activityControls": ["SENTINELLE-CONTROLES"]
 },{
@@ -51,6 +98,13 @@
   "titleUrl": "https://www.youtube.com/watch?v=vidFictif01",
   "subtitles": [{"name": "Chaîne Fictive A", "url": "https://www.youtube.com/channel/UCchaineFictiveA000000"}],
   "time": "2026-10-14T18:30:00.123Z",
+  "products": ["YouTube"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
+  "title": "Disliked https://www.youtube.com/watch?v=vidReactif1",
+  "titleUrl": "https://www.youtube.com/watch?v=vidReactif1",
+  "time": "2026-10-13T09:00:00.789Z",
   "products": ["YouTube"],
   "activityControls": ["SENTINELLE-CONTROLES"]
 },{

@@ -23,6 +23,13 @@
   "activityControls": ["SENTINELLE-CONTROLES"]
 },{
   "header": "YouTube",
+  "title": "Vous avez aimé https://www.youtube.com/watch?v=vidFictif03",
+  "titleUrl": "https://www.youtube.com/watch?v=vidFictif03",
+  "time": "2026-10-12T20:40:00Z",
+  "products": ["YouTube"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
   "title": "Vous avez regardé Troisième vidéo fictive",
   "titleUrl": "https://www.youtube.com/watch?v=vidFictif03",
   "subtitles": [{"name": "Chaîne Fictive A", "url": "https://www.youtube.com/channel/UCchaineFictiveA000000"}],
