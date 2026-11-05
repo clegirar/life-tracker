@@ -19,6 +19,7 @@ interface Status {
   reason?: string | null
   expires_at?: string | null
   next_run_at?: string | null
+  last_collected_at?: string | null
 }
 
 async function report(request: APIRequestContext, token: string, status: Status) {
@@ -39,7 +40,7 @@ const inMinutes = (minutes: number) => new Date(Date.now() + minutes * 60_000).t
 
 /** Les autres fichiers retrouvent des sources sans état ni silence. */
 async function restore(request: APIRequestContext) {
-  sql("UPDATE core.sources SET status = NULL, status_reported_at = NULL WHERE name IN ('garmin', 'lastfm')")
+  sql("UPDATE core.sources SET status = NULL, status_reported_at = NULL WHERE name IN ('garmin', 'lastfm', 'youtube')")
   await heartbeat(request, LASTFM_TOKEN)
   await heartbeat(request, GARMIN_TOKEN)
 }
@@ -71,7 +72,7 @@ test('la page exige la session, et sa lecture aussi', async ({ page, request }) 
 })
 
 test('une carte par tracker : fonctionne, à faire, en panne, silencieux, et le point du menu', async ({ page, request }) => {
-  await report(request, GARMIN_TOKEN, { state: 'ok', expires_at: inDays(300), next_run_at: inMinutes(12) })
+  await report(request, GARMIN_TOKEN, { state: 'ok', expires_at: inDays(300), next_run_at: inMinutes(12), last_collected_at: inMinutes(-20) })
   await heartbeat(request, GARMIN_TOKEN)
   await heartbeat(request, LASTFM_TOKEN)
   await login(page)
@@ -84,14 +85,16 @@ test('une carte par tracker : fonctionne, à faire, en panne, silencieux, et le 
   await expect(garmin.getByTestId('status-word')).toHaveText('Fonctionne')
   await expect(garmin).toContainText("Dernière passeà l'instant")
   await expect(garmin).toContainText(/Prochaine passeà \d+\sh\s\d\d/)
+  await expect(garmin).toContainText('Dernière collecteil y a 20\u00a0min')
   await expect(garmin).toContainText(/Clévalable jusqu'au \d+\s\S+\s\d{4}/)
   await expect(garmin.getByRole('heading', { name: 'Que faire' })).toHaveCount(0)
   await expect(card(page, 'Musique').getByTestId('status-word')).toHaveText('Fonctionne')
   const coffee = card(page, 'Raccourci café')
   await expect(coffee.getByTestId('status-word')).toHaveText('Fonctionne')
   await expect(coffee).toContainText('Dernier contact')
+  await expect(card(page, 'YouTube').getByTestId('status-word')).toHaveText('Fonctionne')
   // Ni l'import Apple ni la web app n'ont de carte.
-  await expect(page.getByRole('article')).toHaveCount(3)
+  await expect(page.getByRole('article')).toHaveCount(4)
   await checkLayout(page)
 
   // Clé refusée : à faire, avec la marche à suivre, et le point du menu.

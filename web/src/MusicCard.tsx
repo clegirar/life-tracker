@@ -32,7 +32,7 @@ interface Row {
 }
 
 /** « Tout afficher (N) », puis « Réduire ». Replier ramène le haut de la section à l'écran s'il en est sorti. */
-function MoreButton({ total, expanded, onToggle, section }: { total: number; expanded: boolean; onToggle: () => void; section: RefObject<HTMLElement | null> }) {
+export function MoreButton({ total, expanded, onToggle, section }: { total: number; expanded: boolean; onToggle: () => void; section: RefObject<HTMLElement | null> }) {
   if (total <= LIST_LIMIT) return null
   return (
     <button

@@ -1,5 +1,5 @@
 // La page d'état des trackers : une carte par source, son état en un mot, ses dernières données et,
-// quand il le faut, la marche à suivre. Elle affiche et rappelle ; elle ne reçoit aucune clé.
+// quand il le faut, la marche à suivre et son bouton. Elle affiche et rappelle ; elle ne reçoit aucune clé.
 
 import type { ReactNode } from 'react'
 import type { SourcesStatus } from './api'
@@ -41,6 +41,12 @@ function Help({ guidance, id }: { guidance: Guidance; id: string }) {
         <p className="status-help-note">
           <Rich text={guidance.note} />
         </p>
+      )}
+      {/* Dans l'onglet même : Google revient sur `/autorisation`, qui transmet sa réponse. */}
+      {guidance.action && (
+        <a className="primary status-action" href={guidance.action.href} rel="noreferrer">
+          {guidance.action.label}
+        </a>
       )}
     </section>
   )

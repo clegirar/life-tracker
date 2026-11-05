@@ -15,6 +15,8 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const LASTFM_PAUSE: Duration = Duration::from_millis(250);
 /// Garmin n'annonce aucune limite : une seconde entre deux appels, le rattrapage reste de quelques minutes.
 const GARMIN_PAUSE: Duration = Duration::from_secs(1);
+/// Tant qu'un accord YouTube est attendu : le code reçu par la web app s'échange dans la minute.
+const YOUTUBE_CONSENT_POLL: Duration = Duration::from_secs(60);
 
 #[derive(Parser)]
 #[command(
@@ -27,6 +29,8 @@ struct Cli {
 }
 
 // Chaque commande lit sa propre URL : `serve` ne voit jamais celle du propriétaire.
+// Lue une fois au démarrage : la taille de `Collect` ne coûte rien.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 enum Command {
     /// Lance l'API et les interprètes, avec le rôle tracker_app
@@ -42,8 +46,9 @@ enum Command {
         #[arg(long, env = "PRIVACY_ZONES", hide_env_values = true)]
         privacy_zones: Option<String>,
     },
-    /// Interroge Last.fm et Garmin, chacun si sa clé est fournie, et envoie à l'API d'ingestion, sans
-    /// jamais connaître la base. Chaque connecteur a son token, son état et ses nouveaux essais
+    /// Interroge Last.fm, Garmin et YouTube, chacun si sa clé est fournie, et envoie à l'API
+    /// d'ingestion, sans jamais connaître la base. Chaque connecteur a son token, son état et ses
+    /// nouveaux essais
     Collect {
         #[arg(long, env = "LASTFM_API_KEY", hide_env_values = true)]
         lastfm_api_key: Option<String>,
@@ -72,6 +77,31 @@ enum Command {
         /// L'échéance de la clé Garmin, `AAAA-MM-JJ`, telle que Garmin l'affiche à sa création
         #[arg(long, env = "GARMIN_KEY_EXPIRES_ON")]
         garmin_key_expires_on: Option<String>,
+        /// Le client OAuth « Application Web » de Google Cloud, pour Data Portability
+        #[arg(long, env = "YOUTUBE_CLIENT_ID", hide_env_values = true)]
+        youtube_client_id: Option<String>,
+        #[arg(long, env = "YOUTUBE_CLIENT_SECRET", hide_env_values = true)]
+        youtube_client_secret: Option<String>,
+        /// L'adresse de retour enregistrée chez Google : la page `/autorisation` de la web app
+        #[arg(long, env = "YOUTUBE_REDIRECT_URI")]
+        youtube_redirect_uri: Option<String>,
+        /// La clé de l'API YouTube Data v3 (durées des vidéos)
+        #[arg(long, env = "YOUTUBE_API_KEY", hide_env_values = true)]
+        youtube_api_key: Option<String>,
+        /// Le token de la source YouTube
+        #[arg(long, env = "YOUTUBE_TOKEN", hide_env_values = true)]
+        youtube_token: Option<String>,
+        #[arg(long, env = "YOUTUBE_INTERVAL_SECONDS", default_value_t = 300)]
+        youtube_interval_seconds: u64,
+        #[arg(long, env = "YOUTUBE_OAUTH_URL", default_value = collector::youtube::DEFAULT_OAUTH_URL)]
+        youtube_oauth_url: String,
+        #[arg(long, env = "YOUTUBE_PORTABILITY_URL", default_value = collector::youtube::DEFAULT_PORTABILITY_URL)]
+        youtube_portability_url: String,
+        #[arg(long, env = "YOUTUBE_DATA_URL", default_value = collector::youtube::DEFAULT_DATA_URL)]
+        youtube_data_url: String,
+        /// Le seul préfixe accepté pour télécharger une archive d'export
+        #[arg(long, env = "YOUTUBE_STORAGE_URL", default_value = collector::youtube::DEFAULT_STORAGE_URL)]
+        youtube_storage_url: String,
         #[arg(long, env = "INGEST_URL")]
         ingest_url: String,
         /// Où garder l'état de chaque connecteur ; le perdre ne coûte qu'un rattrapage
@@ -182,6 +212,16 @@ async fn main() -> Result<()> {
             garmin_source,
             garmin_interval_seconds,
             garmin_key_expires_on,
+            youtube_client_id,
+            youtube_client_secret,
+            youtube_redirect_uri,
+            youtube_api_key,
+            youtube_token,
+            youtube_interval_seconds,
+            youtube_oauth_url,
+            youtube_portability_url,
+            youtube_data_url,
+            youtube_storage_url,
             ingest_url,
             state_dir,
         } => {
@@ -215,22 +255,58 @@ async fn main() -> Result<()> {
                 (Some(api_key), Some(token)) => Some(collector::garmin::Config {
                     api_url: garmin_url,
                     api_key,
-                    ingest_url,
+                    ingest_url: ingest_url.clone(),
                     token,
                     source: garmin_source,
-                    state_dir,
+                    state_dir: state_dir.clone(),
                     interval: Duration::from_secs(garmin_interval_seconds),
                     pause: GARMIN_PAUSE,
                     key_expires_at,
                 }),
                 _ => bail!("Garmin demande GARMIN_API_KEY et GARMIN_TOKEN ensemble"),
             };
-            if lastfm.is_none() && garmin.is_none() {
+            let youtube = match (
+                set(youtube_client_id),
+                set(youtube_client_secret),
+                set(youtube_redirect_uri),
+                set(youtube_api_key),
+                set(youtube_token),
+            ) {
+                (None, None, None, None, None) => None,
+                (
+                    Some(client_id),
+                    Some(client_secret),
+                    Some(redirect_uri),
+                    Some(api_key),
+                    Some(token),
+                ) => Some(collector::youtube::Config {
+                    client_id,
+                    client_secret,
+                    redirect_uri,
+                    api_key,
+                    ingest_url,
+                    token,
+                    state_dir,
+                    interval: Duration::from_secs(youtube_interval_seconds),
+                    consent_poll: YOUTUBE_CONSENT_POLL,
+                    auth_url: collector::youtube::DEFAULT_AUTH_URL.to_owned(),
+                    oauth_url: youtube_oauth_url,
+                    portability_url: youtube_portability_url,
+                    data_url: youtube_data_url,
+                    storage_url: youtube_storage_url,
+                }),
+                _ => bail!(
+                    "YouTube demande YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, YOUTUBE_REDIRECT_URI, \
+                     YOUTUBE_API_KEY et YOUTUBE_TOKEN ensemble"
+                ),
+            };
+            if lastfm.is_none() && garmin.is_none() && youtube.is_none() {
                 bail!(
-                    "aucun connecteur : LASTFM_API_KEY (Last.fm) ou GARMIN_API_KEY (Garmin) est requis"
+                    "aucun connecteur : LASTFM_API_KEY (Last.fm), GARMIN_API_KEY (Garmin) ou \
+                     YOUTUBE_CLIENT_ID (YouTube) est requis"
                 );
             }
-            collect(lastfm, garmin).await
+            collect(lastfm, garmin, youtube).await
         }
         Command::ImportApple {
             archive,
@@ -254,6 +330,7 @@ async fn main() -> Result<()> {
 async fn collect(
     lastfm: Option<collector::Config>,
     garmin: Option<collector::garmin::Config>,
+    youtube: Option<collector::youtube::Config>,
 ) -> Result<()> {
     let filter = [
         "reqwest=off",
@@ -279,6 +356,10 @@ async fn collect(
     }
     if let Some(config) = garmin {
         let connector = collector::garmin::Collector::new(config)?;
+        workers.push(tokio::spawn(connector.run(stopped.clone())));
+    }
+    if let Some(config) = youtube {
+        let connector = collector::youtube::Collector::new(config)?;
         workers.push(tokio::spawn(connector.run(stopped.clone())));
     }
     shutdown_signal().await;

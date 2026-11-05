@@ -75,6 +75,15 @@ impl RecordOutcome {
     }
 }
 
+/// Le retour d'un accord OAuth, relayé par le backend.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Handover {
+    Code(String),
+    /// Refusé (`access_denied`) ou en erreur : il faut une nouvelle demande.
+    Refused,
+    Nothing,
+}
+
 pub struct IngestClient {
     http: Client,
     url: String,
@@ -163,6 +172,67 @@ impl IngestClient {
                 status: Some(response.status().as_u16()),
             })
         }
+    }
+
+    /// Confie l'URL de consentement d'un accord OAuth (`PUT /v1/sources/me/authorization`), qui ne
+    /// compte pas comme un contact. Le vérificateur PKCE ne quitte jamais le connecteur.
+    pub async fn request_authorization(
+        &self,
+        authorization_url: &str,
+        state: &str,
+    ) -> Result<(), IngestFailure> {
+        let response = self
+            .http
+            .put(format!("{}/v1/sources/me/authorization", self.url))
+            .bearer_auth(&self.token)
+            .header("X-Client-Version", self.client_version)
+            .json(&json!({ "authorization_url": authorization_url, "state": state }))
+            .send()
+            .await
+            .map_err(|err| IngestFailure {
+                reason: network_reason(&err),
+                status: None,
+            })?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(IngestFailure {
+                reason: "status",
+                status: Some(response.status().as_u16()),
+            })
+        }
+    }
+
+    /// Ce que Google a renvoyé à la web app pour cette source, une seule fois
+    /// (`GET /v1/sources/me/authorization/code`), sans compter comme un contact.
+    pub async fn authorization_code(&self) -> Result<Handover, IngestFailure> {
+        let response = self
+            .http
+            .get(format!("{}/v1/sources/me/authorization/code", self.url))
+            .bearer_auth(&self.token)
+            .header("X-Client-Version", self.client_version)
+            .send()
+            .await
+            .map_err(|err| IngestFailure {
+                reason: network_reason(&err),
+                status: None,
+            })?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(IngestFailure {
+                reason: "status",
+                status: Some(status.as_u16()),
+            });
+        }
+        let body: Value = response.json().await.map_err(|_| IngestFailure {
+            reason: "body",
+            status: None,
+        })?;
+        Ok(match (body.get("code"), body.get("error")) {
+            (Some(Value::String(code)), _) => Handover::Code(code.clone()),
+            (_, Some(Value::String(_))) => Handover::Refused,
+            _ => Handover::Nothing,
+        })
     }
 
     pub async fn heartbeat(&self) -> Result<(), IngestFailure> {

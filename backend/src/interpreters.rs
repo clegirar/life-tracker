@@ -163,6 +163,18 @@ pub static INTERPRETERS: &[Interpreter] = &[
         schema_version: 1,
         interpret: garmin_activity_track,
     },
+    Interpreter {
+        kind: "youtube.watch",
+        version: 1,
+        schema_version: 1,
+        interpret: youtube_watch,
+    },
+    Interpreter {
+        kind: "youtube.video_info",
+        version: 1,
+        schema_version: 1,
+        interpret: youtube_video_info,
+    },
 ];
 
 /// Un café : un événement à l'heure de l'enveloppe. La charge utile, attendue vide, est ignorée.
@@ -648,6 +660,104 @@ fn garmin_activity_track(record: &Record) -> Result<Vec<Output>, InterpretError>
     Ok(vec![Output::Event(Event {
         details: json!({ "activity_id": id, "points": points }),
         ..Event::at_envelope(record, "workout.track")
+    })])
+}
+
+// ─── YouTube ─────────────────────────────────────────────────────────────────
+//
+// Les charges utiles sont déjà réduites à leur liste blanche par le connecteur (`crate::youtube`).
+
+/// Un id YouTube : lettres, chiffres, `-` et `_`, dans ses bornes.
+fn youtube_id<'a>(
+    payload: &'a Value,
+    field: &str,
+    lengths: std::ops::RangeInclusive<usize>,
+) -> Option<&'a str> {
+    payload.get(field)?.as_str().filter(|id| {
+        lengths.contains(&id.len())
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    })
+}
+
+/// Un nom facultatif : absent, `null` ou vide, rien ; autre chose qu'un texte, une erreur.
+fn youtube_name<'a>(payload: &'a Value, field: &str) -> Result<Option<&'a str>, InterpretError> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) => {
+            Ok(Some(text.trim()).filter(|t| !t.is_empty() && t.len() <= MAX_MARKED_NAME_BYTES))
+        }
+        Some(_) => Err(InterpretError("youtube: invalid name")),
+    }
+}
+
+/// `{video_id, title, channel_id, channel_name}` : une vidéo vue, à l'heure de l'enveloppe. Éléments :
+/// la vidéo, sous son id, et sa chaîne si elle est connue (une vidéo supprimée n'en a plus). Le nom
+/// affiché d'une vidéo sans titre est son id.
+fn youtube_watch(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    let payload = &record.payload;
+    let video = youtube_id(payload, "video_id", 11..=11)
+        .ok_or(InterpretError("youtube.watch: invalid video_id"))?;
+    let title = youtube_name(payload, "title")?;
+    let channel = match payload.get("channel_id") {
+        None | Some(Value::Null) => None,
+        Some(_) => Some(
+            youtube_id(payload, "channel_id", 1..=64)
+                .ok_or(InterpretError("youtube.watch: invalid channel_id"))?,
+        ),
+    };
+    let channel_name = youtube_name(payload, "channel_name")?.filter(|_| channel.is_some());
+    let mut items = Vec::new();
+    if let Some(channel) = channel {
+        items.push(Item::single(
+            "channel",
+            channel.to_owned(),
+            channel_name.unwrap_or(channel),
+        ));
+    }
+    items.push(Item::single(
+        "video",
+        video.to_owned(),
+        title.unwrap_or(video),
+    ));
+    Ok(vec![Output::Event(Event {
+        details: json!({
+            "video_id": video,
+            "title": title,
+            "channel_id": channel,
+            "channel_name": channel_name,
+        }),
+        items,
+        ..Event::at_envelope(record, "video.watch")
+    })])
+}
+
+/// `{video_id, duration_s, title, channel_id, channel_name}` : la fiche d'une vidéo. Avec une durée
+/// connue et positive, la référence `video.duration` (en secondes) de son élément `video` ; sans, rien.
+fn youtube_video_info(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    let payload = &record.payload;
+    let video = youtube_id(payload, "video_id", 11..=11)
+        .ok_or(InterpretError("youtube.video_info: invalid video_id"))?;
+    let seconds = match payload.get("duration_s") {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(value) => value
+            .as_u64()
+            .ok_or(InterpretError("youtube.video_info: invalid duration_s"))?,
+    };
+    if seconds == 0 {
+        return Ok(Vec::new());
+    }
+    let title = youtube_name(payload, "title")?;
+    Ok(vec![Output::Event(Event {
+        value: Some(seconds.to_string()),
+        details: json!({ "video_id": video, "title": title }),
+        items: vec![Item::single(
+            "video",
+            video.to_owned(),
+            title.unwrap_or(video),
+        )],
+        ..Event::at_envelope(record, "video.duration")
     })])
 }
 
@@ -1277,6 +1387,99 @@ mod tests {
             json!({"points": [[45.1, -1.5, 0], [45.2, -1.4, 600]]}),
         ] {
             assert!(garmin_activity_track(&garmin_record(payload)).is_err());
+        }
+    }
+
+    #[test]
+    fn a_watch_has_its_channel_and_its_video_as_items() {
+        let record = record(json!({"video_id": "abcdefghijk", "title": " Un titre ",
+            "channel_id": "UC1", "channel_name": "Une chaîne", "extra": 1}));
+        let event = single_event(youtube_watch(&record).unwrap());
+        assert_eq!(event.metric, "video.watch");
+        assert_eq!(event.value, None);
+        assert_eq!(event.occurred_at, record.occurred_at);
+        assert_eq!(
+            event.items,
+            vec![
+                Item::single("channel", "UC1".to_owned(), "Une chaîne"),
+                Item::single("video", "abcdefghijk".to_owned(), "Un titre"),
+            ]
+        );
+        assert_eq!(
+            event.details,
+            json!({"video_id": "abcdefghijk", "title": "Un titre", "channel_id": "UC1",
+                   "channel_name": "Une chaîne"})
+        );
+    }
+
+    #[test]
+    fn a_deleted_video_has_no_channel_and_its_id_as_name() {
+        let event = single_event(
+            youtube_watch(&record(json!({"video_id": "abcdefghijk", "title": null,
+                "channel_id": null, "channel_name": null})))
+            .unwrap(),
+        );
+        assert_eq!(
+            event.items,
+            vec![Item::single(
+                "video",
+                "abcdefghijk".to_owned(),
+                "abcdefghijk"
+            )]
+        );
+        // Un nom de chaîne sans id ne se rattache à rien.
+        let event = single_event(
+            youtube_watch(&record(
+                json!({"video_id": "abcdefghijk", "channel_name": "A"}),
+            ))
+            .unwrap(),
+        );
+        assert_eq!(event.details["channel_name"], Value::Null);
+        assert_eq!(event.items.len(), 1);
+    }
+
+    #[test]
+    fn an_unusable_watch_is_an_error_that_cites_nothing() {
+        for payload in [
+            json!({}),
+            json!(null),
+            json!({"video_id": "court"}),
+            json!({"video_id": "abcdefghij!"}),
+            json!({"video_id": 3}),
+            json!({"video_id": "abcdefghijk", "channel_id": "a b"}),
+            json!({"video_id": "abcdefghijk", "channel_id": 3}),
+            json!({"video_id": "abcdefghijk", "title": 3}),
+        ] {
+            let err = youtube_watch(&record(payload.clone())).unwrap_err();
+            assert!(err.0.starts_with("youtube"), "{payload}");
+        }
+    }
+
+    #[test]
+    fn a_video_info_gives_a_duration_in_seconds_when_known() {
+        let event = single_event(
+            youtube_video_info(&record(
+                json!({"video_id": "abcdefghijk", "duration_s": 549,
+                "title": "Un titre", "channel_id": "UC1", "channel_name": "Une chaîne"}),
+            ))
+            .unwrap(),
+        );
+        assert_eq!(event.metric, "video.duration");
+        assert_eq!(event.value.as_deref(), Some("549"));
+        assert_eq!(
+            event.items,
+            vec![Item::single("video", "abcdefghijk".to_owned(), "Un titre")]
+        );
+        for unknown in [json!(null), json!(0)] {
+            let payload = json!({"video_id": "abcdefghijk", "duration_s": unknown});
+            assert_eq!(youtube_video_info(&record(payload)).unwrap(), vec![]);
+        }
+        for payload in [
+            json!({"duration_s": 3}),
+            json!({"video_id": "abcdefghijk", "duration_s": -3}),
+            json!({"video_id": "abcdefghijk", "duration_s": "3"}),
+        ] {
+            assert!(youtube_video_info(&record(payload)).is_err());
         }
     }
 }

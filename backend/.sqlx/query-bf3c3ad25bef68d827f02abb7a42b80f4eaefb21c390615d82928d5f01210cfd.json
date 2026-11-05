@@ -1,0 +1,70 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT to_char(e.occurred_at AT TIME ZONE (SELECT timezone FROM core.settings), 'HH24:MI') AS \"time!\",\n                  e.occurred_at AS \"occurred_at!\",\n                  e.details->>'video_id' AS \"video_id!\",\n                  COALESCE(e.details->>'title', d.title) AS title,\n                  e.details->>'channel_id' AS channel_id,\n                  e.details->>'channel_name' AS channel_name,\n                  d.value::int8 AS duration_s\n           FROM derived.live_events e\n           LEFT JOIN LATERAL (\n             SELECT known.value, known.details->>'title' AS title\n             FROM derived.event_items i\n             JOIN derived.live_events known USING (generation, seq, ordinal)\n             WHERE i.generation = e.generation\n               AND i.metric = 'video.duration' AND i.level = 'video'\n               AND i.item_key = e.details->>'video_id'\n             ORDER BY i.occurred_at DESC, i.seq DESC\n             LIMIT 1\n           ) d ON true\n           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND e.metric = 'video.watch'\n             AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n             AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n           ORDER BY e.occurred_at, e.seq",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "time!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "occurred_at!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "video_id!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "title",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "channel_id",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "channel_name",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "duration_s",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date"
+      ]
+    },
+    "nullable": [
+      null,
+      true,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "bf3c3ad25bef68d827f02abb7a42b80f4eaefb21c390615d82928d5f01210cfd"
+}

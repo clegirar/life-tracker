@@ -1,0 +1,40 @@
+[{
+  "header": "YouTube Music",
+  "title": "Vous avez regardé Titre musical fictif",
+  "titleUrl": "https://music.youtube.com/watch?v=musFictif01",
+  "subtitles": [{"name": "Artiste Fictif - Topic", "url": "https://www.youtube.com/channel/UCartisteFictif0000000"}],
+  "time": "2026-10-12T21:00:00.000Z",
+  "products": ["YouTube Music"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
+  "title": "Vous avez regardé SENTINELLE-PUBLICITE",
+  "titleUrl": "https://www.youtube.com/watch?v=PUBsentinel",
+  "time": "2026-10-12T20:59:00.000Z",
+  "products": ["YouTube"],
+  "details": [{"name": "Provenant des annonces Google"}],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
+  "title": "Vous avez recherché SENTINELLE-RECHERCHE",
+  "titleUrl": "https://www.youtube.com/results?search_query=SENTINELLE-RECHERCHE",
+  "time": "2026-10-12T20:58:00.000Z",
+  "products": ["YouTube"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "YouTube",
+  "title": "Vous avez regardé Troisième vidéo fictive",
+  "titleUrl": "https://www.youtube.com/watch?v=vidFictif03",
+  "subtitles": [{"name": "Chaîne Fictive A", "url": "https://www.youtube.com/channel/UCchaineFictiveA000000"}],
+  "time": "2026-10-12T20:30:00.000Z",
+  "products": ["YouTube"],
+  "description": "SENTINELLE-DESCRIPTION",
+  "activityControls": ["SENTINELLE-CONTROLES"]
+},{
+  "header": "Google",
+  "title": "Vous avez consulté SENTINELLE-AUTRE",
+  "titleUrl": "https://www.google.com/search?q=SENTINELLE-AUTRE",
+  "time": "2026-10-12T20:00:00.000Z",
+  "products": ["YouTube"],
+  "activityControls": ["SENTINELLE-CONTROLES"]
+}]

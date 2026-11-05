@@ -366,8 +366,9 @@ fn like_pattern(text: &str) -> String {
     format!("%{escaped}%")
 }
 
-/// Un nom approximatif : la clé normalisée qui le contient, ou des mots proches (trigrammes, l'index
-/// `gin_trgm_ops` de `event_items`). Les déclarations et références ne sont jamais des résultats.
+/// Un nom approximatif : la clé normalisée ou le nom affiché (en minuscules) qui le contient, ou des
+/// mots proches (trigrammes, les index `gin_trgm_ops` de `event_items`). Le nom affiché sert aux clés
+/// qui sont des identifiants (YouTube). Les déclarations et références ne sont jamais des résultats.
 pub async fn search(
     pool: &PgPool,
     query: &str,
@@ -381,14 +382,17 @@ pub async fn search(
     }
     let rows = sqlx::query!(
         r#"WITH candidates AS (
-             SELECT i.metric, i.level, i.item_key, max(word_similarity($1, i.item_key)) AS score
+             SELECT i.metric, i.level, i.item_key,
+                    max(greatest(word_similarity($1, i.item_key),
+                                 word_similarity($1, lower(i.display)))) AS score
              FROM derived.event_items i
              JOIN core.metrics m ON m.metric = i.metric
              WHERE i.generation = (SELECT id FROM derived.generations WHERE state = 'active')
                AND m.shape NOT IN ('declaration', 'reference')
                AND ($2::text IS NULL OR i.metric = $2)
                AND ($3::text IS NULL OR i.level = $3)
-               AND (i.item_key LIKE $4 OR $1 <% i.item_key)
+               AND (i.item_key LIKE $4 OR $1 <% i.item_key
+                    OR lower(i.display) LIKE $4 OR $1 <% lower(i.display))
              GROUP BY i.metric, i.level, i.item_key
              ORDER BY score DESC, i.item_key
              LIMIT $5::int8 * 4

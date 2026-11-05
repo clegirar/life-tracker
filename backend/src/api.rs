@@ -25,6 +25,7 @@ use uuid::Uuid;
 use crate::activity;
 use crate::admin::{generate_token, token_hash};
 use crate::auth;
+use crate::authorization::{self, Outcome};
 use crate::calendar;
 use crate::ingest::{Envelope, RejectReason, Rejection, parse_envelope};
 use crate::music::fold;
@@ -38,17 +39,30 @@ pub const MAX_BODY_BYTES: usize = 1_000_000;
 const LOGIN: &str = "/v1/auth/login";
 const RECORDS: &str = "/v1/records";
 const SOURCE_STATUS: &str = "/v1/sources/me/status";
+const SOURCE_AUTHORIZATION: &str = "/v1/sources/me/authorization";
+const SOURCE_AUTHORIZATION_CODE: &str = "/v1/sources/me/authorization/code";
 /// Un état tient en quelques champs fermés.
 const MAX_STATUS_BYTES: usize = 1024;
+/// Une URL de consentement et son état.
+const MAX_AUTHORIZATION_BYTES: usize = 4096;
+/// Un état et un code, ou un motif de refus.
+const MAX_CALLBACK_BYTES: usize = 2048;
 /// Le mot de passe et l'identifiant n'ont pas besoin de plus.
 const MAX_LOGIN_BYTES: usize = 4096;
 /// Argon2 prend 19 Mio par calcul : le NAS n'en fait pas plus de deux à la fois.
 const MAX_CONCURRENT_LOGINS: usize = 2;
 
 /// Une route exige la session par défaut (voir `guard`) : seules celles-ci en sont dispensées.
-/// `/v1/records` est à part : le token, ou sinon la session. `/v1/heartbeat` et
-/// `/v1/sources/me/status` n'acceptent que le token d'une source (voir leurs extracteurs).
-pub const NO_SESSION_ROUTES: [&str; 4] = ["/health", LOGIN, "/v1/heartbeat", SOURCE_STATUS];
+/// `/v1/records` est à part : le token, ou sinon la session. `/v1/heartbeat`, `/v1/sources/me/status`
+/// et les deux routes de l'accord OAuth n'acceptent que le token d'une source (voir leurs extracteurs).
+pub const NO_SESSION_ROUTES: [&str; 6] = [
+    "/health",
+    LOGIN,
+    "/v1/heartbeat",
+    SOURCE_STATUS,
+    SOURCE_AUTHORIZATION,
+    SOURCE_AUTHORIZATION_CODE,
+];
 
 /// Toute écriture par cookie doit porter cet en-tête. Un autre site ne peut pas l'ajouter sans
 /// une autorisation CORS préalable, et le serveur n'en donne jamais.
@@ -67,6 +81,8 @@ pub struct AppState {
     pool: PgPool,
     config: Config,
     logins: Arc<Semaphore>,
+    /// Les accords OAuth en cours, en mémoire seulement (voir `authorization`).
+    authorizations: Arc<std::sync::Mutex<authorization::Store>>,
 }
 
 #[derive(Clone, Copy)]
@@ -123,12 +139,28 @@ fn routes() -> Router<AppState> {
             put(put_source_status).layer(DefaultBodyLimit::max(MAX_STATUS_BYTES)),
         )
         .route(
+            SOURCE_AUTHORIZATION,
+            put(put_source_authorization).layer(DefaultBodyLimit::max(MAX_AUTHORIZATION_BYTES)),
+        )
+        .route(
+            SOURCE_AUTHORIZATION_CODE,
+            get(get_source_authorization_code),
+        )
+        // Sous session : la page `/autorisation` de la web app transmet ce que Google lui a renvoyé.
+        .route(
+            "/v1/authorizations/callback",
+            post(post_authorization_callback).layer(DefaultBodyLimit::max(MAX_CALLBACK_BYTES)),
+        )
+        .route(
             LOGIN,
             post(login).layer(DefaultBodyLimit::max(MAX_LOGIN_BYTES)),
         )
         .route("/v1/auth/logout", post(logout))
         .route("/v1/days/{date}", get(get_day))
         .route("/v1/days/{date}/music", get(get_day_music))
+        // Pas dans `READ_ROUTES` : la carte YouTube de la web app ; le MCP lit les mêmes faits par les
+        // lectures génériques.
+        .route("/v1/days/{date}/video", get(get_day_video))
         // Pas dans `READ_ROUTES` : des coordonnées et des traces entières, pour la carte Activité.
         // Le MCP lit les siennes par les occurrences et `/v1/route`, à travers les zones.
         .route("/v1/days/{date}/activity", get(get_day_activity))
@@ -156,6 +188,7 @@ pub fn harden(routes: Router<AppState>, pool: PgPool, config: Config) -> Router 
         pool,
         config,
         logins: Arc::new(Semaphore::new(MAX_CONCURRENT_LOGINS)),
+        authorizations: Arc::default(),
     };
     routes
         .layer(middleware::from_fn_with_state(state.clone(), guard))
@@ -647,6 +680,106 @@ async fn put_source_status(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorizationRequest {
+    authorization_url: String,
+    state: String,
+}
+
+/// Le connecteur confie l'URL de consentement qu'il a préparée ; il garde l'état et le vérificateur
+/// PKCE. Remplace la demande précédente de la source. Token de la source seulement, sans toucher au
+/// dernier contact ; rien n'est écrit ni journalisé que la source.
+async fn put_source_authorization(
+    State(state): State<AppState>,
+    source: TokenSource,
+    body: Result<Bytes, BytesRejection>,
+) -> Result<StatusCode, ApiError> {
+    let body = body.map_err(|_| ApiError::InvalidJson)?;
+    let request: AuthorizationRequest = serde_json::from_slice(&body)
+        .ok()
+        .filter(|r: &AuthorizationRequest| {
+            authorization::valid_state(&r.state)
+                && authorization::valid_url(&r.authorization_url, &r.state)
+        })
+        .ok_or(ApiError::InvalidJson)?;
+    state
+        .authorizations
+        .lock()
+        .map_err(|_| ApiError::Internal)?
+        .request(
+            source.id,
+            request.authorization_url,
+            request.state,
+            Instant::now(),
+        );
+    info!(source_id = source.id, "authorization requested");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Ce que Google a renvoyé pour la source, une seule fois : `{"code": …}`, `{"error": …}` (un refus,
+/// `access_denied`), ou `{"code": null}` tant que rien n'est arrivé.
+async fn get_source_authorization_code(
+    State(state): State<AppState>,
+    source: TokenSource,
+) -> Result<Json<Value>, ApiError> {
+    let outcome = state
+        .authorizations
+        .lock()
+        .map_err(|_| ApiError::Internal)?
+        .take(source.id, Instant::now());
+    Ok(Json(match outcome {
+        Some(Outcome::Code(code)) => {
+            info!(source_id = source.id, "authorization code handed over");
+            json!({ "code": code })
+        }
+        Some(Outcome::Error(error)) => {
+            info!(source_id = source.id, "authorization refusal handed over");
+            json!({ "error": error })
+        }
+        None => json!({ "code": null }),
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorizationCallback {
+    state: String,
+    code: Option<String>,
+    error: Option<String>,
+}
+
+/// Le retour de Google, transmis par la page `/autorisation` de la web app : le cookie `SameSite=Strict`
+/// n'accompagne pas la navigation qui revient de Google, la page le renvoie donc ici avec la session.
+/// Un état inconnu ou expiré : 404. Ni l'état ni le code ne sont journalisés.
+async fn post_authorization_callback(
+    State(state): State<AppState>,
+    body: Result<Bytes, BytesRejection>,
+) -> Result<StatusCode, ApiError> {
+    let body = body.map_err(|_| ApiError::InvalidJson)?;
+    let callback: AuthorizationCallback =
+        serde_json::from_slice(&body).map_err(|_| ApiError::InvalidJson)?;
+    let outcome = match (callback.code, callback.error) {
+        (Some(code), None) if authorization::valid_code(&code) => Outcome::Code(code),
+        (None, Some(error)) if authorization::valid_error(&error) => Outcome::Error(error),
+        _ => return Err(ApiError::InvalidJson),
+    };
+    if !authorization::valid_state(&callback.state) {
+        return Err(ApiError::InvalidJson);
+    }
+    let delivered = state
+        .authorizations
+        .lock()
+        .map_err(|_| ApiError::Internal)?
+        .deliver(&callback.state, outcome, Instant::now());
+    if !delivered {
+        warn!("authorization callback without pending request");
+        return Err(ApiError::NotFound);
+    }
+    info!("authorization callback received");
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn health(State(state): State<AppState>) -> StatusCode {
     match sqlx::query_scalar!("SELECT 1 AS one")
         .fetch_one(&state.pool)
@@ -1087,6 +1220,135 @@ async fn get_day_music(
     }))
 }
 
+#[derive(Serialize)]
+struct VideoWatch {
+    /// Heure de Paris, `HH:MM`.
+    time: String,
+    occurred_at: DateTime<Utc>,
+    /// Pour le lien `https://www.youtube.com/watch?v=…`, construit par la web app.
+    video_id: String,
+    /// `null` : une vidéo supprimée ou privée, dont l'historique ne garde que l'id.
+    title: Option<String>,
+    channel_id: Option<String>,
+    channel_name: Option<String>,
+    /// La durée de la vidéo (API Data v3), pas le temps regardé ; `null` si elle est inconnue.
+    duration_s: Option<i64>,
+}
+
+/// Une chaîne ou une vidéo vue pour la première fois ce jour-là.
+#[derive(Serialize)]
+struct VideoDiscovery {
+    level: String,
+    key: String,
+    name: String,
+}
+
+#[derive(Serialize)]
+struct DayVideo {
+    date: NaiveDate,
+    count: usize,
+    /// La somme des durées connues, en secondes ; `null` si aucune ne l'est.
+    seconds: Option<i64>,
+    /// Vidéos sans durée connue : jamais comptées à zéro, et cela doit se voir.
+    without_duration: usize,
+    watches: Vec<VideoWatch>,
+    discoveries: Vec<VideoDiscovery>,
+}
+
+/// Les vidéos YouTube d'un jour, dans l'ordre. La durée croise deux enregistrements (la vue et la
+/// fiche de la vidéo), donc se calcule ici : la dernière fiche connue. Son titre ne sert que si la vue
+/// n'en a pas. Les découvertes, comme celles de la musique : aucune vue de cet élément avant minuit.
+async fn get_day_video(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Result<Json<DayVideo>, ApiError> {
+    let date = parse_day(&date).ok_or(ApiError::InvalidDate)?;
+    let rows = sqlx::query!(
+        r#"SELECT to_char(e.occurred_at AT TIME ZONE (SELECT timezone FROM core.settings), 'HH24:MI') AS "time!",
+                  e.occurred_at AS "occurred_at!",
+                  e.details->>'video_id' AS "video_id!",
+                  COALESCE(e.details->>'title', d.title) AS title,
+                  e.details->>'channel_id' AS channel_id,
+                  e.details->>'channel_name' AS channel_name,
+                  d.value::int8 AS duration_s
+           FROM derived.live_events e
+           LEFT JOIN LATERAL (
+             SELECT known.value, known.details->>'title' AS title
+             FROM derived.event_items i
+             JOIN derived.live_events known USING (generation, seq, ordinal)
+             WHERE i.generation = e.generation
+               AND i.metric = 'video.duration' AND i.level = 'video'
+               AND i.item_key = e.details->>'video_id'
+             ORDER BY i.occurred_at DESC, i.seq DESC
+             LIMIT 1
+           ) d ON true
+           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+             AND e.metric = 'video.watch'
+             AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+             AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+           ORDER BY e.occurred_at, e.seq"#,
+        date,
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let discoveries = sqlx::query!(
+        r#"WITH watched AS (
+             SELECT DISTINCT ON (i.level, i.item_key)
+                    e.generation, i.level, i.item_key, i.display,
+                    min(e.occurred_at) OVER (PARTITION BY i.level, i.item_key) AS first_at,
+                    ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings)) AS day_start
+             FROM derived.live_events e
+               JOIN derived.event_items i USING (generation, seq, ordinal)
+             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+               AND e.metric = 'video.watch'
+               AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+               AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+             ORDER BY i.level, i.item_key, e.occurred_at DESC, e.seq DESC
+           )
+           SELECT w.level, w.item_key, w.display
+           FROM watched w
+           LEFT JOIN LATERAL (
+             SELECT 1 AS found FROM derived.live_event_items x
+             WHERE x.generation = w.generation AND x.metric = 'video.watch'
+               AND x.level = w.level AND x.item_key = w.item_key
+               AND x.occurred_at < w.day_start
+             LIMIT 1
+           ) earlier ON true
+           WHERE earlier.found IS NULL
+           ORDER BY array_position(ARRAY['channel', 'video'], w.level), w.first_at, w.item_key"#,
+        date,
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let known: Vec<i64> = rows.iter().filter_map(|row| row.duration_s).collect();
+    Ok(Json(DayVideo {
+        date,
+        count: rows.len(),
+        seconds: (!known.is_empty()).then(|| known.iter().sum()),
+        without_duration: rows.len() - known.len(),
+        watches: rows
+            .into_iter()
+            .map(|row| VideoWatch {
+                time: row.time,
+                occurred_at: row.occurred_at,
+                video_id: row.video_id,
+                title: row.title,
+                channel_id: row.channel_id,
+                channel_name: row.channel_name,
+                duration_s: row.duration_s,
+            })
+            .collect(),
+        discoveries: discoveries
+            .into_iter()
+            .map(|row| VideoDiscovery {
+                level: row.level,
+                key: row.item_key,
+                name: row.display,
+            })
+            .collect(),
+    }))
+}
+
 /// Le mois, jour par jour : valeurs, erreurs, journées en attente ou à vérifier (voir `calendar`).
 /// Pas, calories, sommeil et séances d'un jour, avec leurs détails (voir `activity`).
 async fn get_day_activity(
@@ -1263,6 +1525,9 @@ struct SourceStatusEntry {
     /// Le dernier état rapporté, tel que validé à l'écriture (`source_status::SourceStatus`).
     status: Option<Value>,
     status_reported_at: Option<DateTime<Utc>>,
+    /// L'URL de consentement qu'un connecteur attend que j'ouvre (`PUT /v1/sources/me/authorization`),
+    /// tant que la demande est en cours ; sinon `null`.
+    authorization_url: Option<String>,
     metrics: Vec<SourceMetric>,
 }
 
@@ -1311,6 +1576,11 @@ async fn get_sources_status(
     )
     .fetch_all(&state.pool)
     .await?;
+    let mut authorizations = state
+        .authorizations
+        .lock()
+        .map_err(|_| ApiError::Internal)?;
+    let now = Instant::now();
     let sources = sources
         .into_iter()
         .map(|s| {
@@ -1329,6 +1599,7 @@ async fn get_sources_status(
                         last_at: m.last_at,
                     })
                     .collect(),
+                authorization_url: authorizations.url(s.id, now),
                 name: s.name,
                 label: s.label,
                 last_seen_at: s.last_seen_at,

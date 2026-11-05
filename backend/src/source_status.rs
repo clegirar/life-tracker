@@ -20,7 +20,9 @@ pub enum State {
 pub enum Reason {
     /// Le service refuse la clé : expirée ou révoquée.
     KeyRejected,
-    /// L'accord donné au service a expiré.
+    /// Le service attend un premier accord (OAuth) : la page d'état propose de le donner.
+    ConsentRequired,
+    /// L'accord donné au service a expiré, ou va expirer : la page d'état propose de le renouveler.
     ConsentExpired,
     RateLimited,
     ServiceUnavailable,
@@ -38,6 +40,9 @@ pub struct SourceStatus {
     pub expires_at: Option<DateTime<Utc>>,
     /// La prochaine passe prévue.
     pub next_run_at: Option<DateTime<Utc>>,
+    /// La dernière collecte réussie : la dernière fois que le connecteur a reçu des données de son
+    /// service et les a remises à l'API d'ingestion (pour YouTube, le dernier export).
+    pub last_collected_at: Option<DateTime<Utc>>,
 }
 
 impl SourceStatus {
@@ -47,6 +52,7 @@ impl SourceStatus {
             reason: None,
             expires_at: None,
             next_run_at: None,
+            last_collected_at: None,
         }
     }
 
@@ -56,6 +62,7 @@ impl SourceStatus {
             reason: Some(reason),
             expires_at: None,
             next_run_at: None,
+            last_collected_at: None,
         }
     }
 

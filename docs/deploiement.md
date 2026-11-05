@@ -12,7 +12,7 @@ Runbook de l'étape 4, joué sur le NAS (voir « Ce qui reste à vérifier »). 
 | `migrate` | Une fois à chaque `up`, puis s'arrête (état « arrêté » normal) | `secrets/migrate.env` (`tracker_owner`) | `data` |
 | `backend` | API et interprètes | `secrets/backend.env` (`tracker_app`, zones de confidentialité du MCP) | `data`, `front`, `collect` |
 | `web` | nginx : app statique et proxy de `/v1` et `/health` | aucun secret | `front`, `edge` |
-| `collector` | Interroge Last.fm et Garmin, écrit par l'API d'ingestion ; un état par connecteur (`state.json`, `garmin-state.json`) dans le volume `life-tracker-prod-collector-state` | `secrets/collector.env` (clés, utilisateur, un token par source) | `collect`, `egress` |
+| `collector` | Interroge Last.fm, Garmin et YouTube, écrit par l'API d'ingestion ; un état par connecteur (`state.json`, `garmin-state.json`, `youtube-state.json`) dans le volume `life-tracker-prod-collector-state` | `secrets/collector.env` (clés, utilisateur, un token par source) | `collect`, `egress` |
 | `admin` | Profil `admin`, lancé à la main | `secrets/admin.env` (`tracker_admin`) | `data` |
 | `apple-import` | Profil `import`, lancé à la main : l'import de l'export Apple | Le token sur l'entrée standard, l'archive en lecture seule | `collect` |
 | `mcp` | Serveur MCP (étape 9) : OAuth et outils en lecture seule ; jetons OAuth hachés dans le volume `life-tracker-prod-mcp-state` | `secrets/mcp.env` (jeton de service, haché du secret de connexion) | `read`, `mcp-edge` |
@@ -762,7 +762,7 @@ Relancer ensuite demande un nouveau jeton de service (`mcp-2`) et `sudo docker c
 
 **Ce qui part chez Anthropic.** Tout ce que lit le MCP (lieux, détails, parcours hors des zones) passe dans la conversation et reste chez Anthropic jusqu'à 30 jours après sa suppression ; l'entraînement sur mes données est désactivé.
 
-**Carte des séances.** La page du jour charge les tuiles d'OpenStreetMap (`tile.openstreetmap.org`) depuis le navigateur, seule ressource extérieure autorisée par la CSP de `web`. OpenStreetMap voit donc l'adresse IP du téléphone, l'origine de l'app (en-tête Referer, sans le chemin) et la zone affichée. Rien ne passe par le NAS.
+**Carte des séances.** La page du jour charge les tuiles d'OpenStreetMap (`tile.openstreetmap.org`) depuis le navigateur ; avec les miniatures de YouTube (`i.ytimg.com`, carte YouTube, sans Referer : Google voit l'IP du téléphone et les vidéos du jour affiché), ce sont les seules ressources extérieures autorisées par la CSP de `web`. OpenStreetMap voit donc l'adresse IP du téléphone, l'origine de l'app (en-tête Referer, sans le chemin) et la zone affichée. Rien ne passe par le NAS.
 
 **Fréquence cardiaque de la nuit** (4 nov. 2026). Aucune action sur le NAS : la migration (`20261104130000_sleep_heart_rate.sql`) part avec l'image, sans `admin rebuild` (les nuits d'avant donnent le même résultat). Le premier passage après le déploiement relit une seule fois tout le sommeil de l'historique avec sa fréquence cardiaque : environ 13 appels de sommeil et 150 appels de séries (`dailyHeartRate`, un par jour), une seconde entre deux, donc quelques minutes, puis une nouvelle version de chaque nuit avec l'annulation de l'ancienne (`cancelled` de l'ordre du nombre de nuits dans « garmin pass completed »). Ensuite, chaque passage ajoute environ 9 appels. Vérifier : la page d'un jour passé montre « FC la plus basse … · moyenne … », et `admin rebuild` donne toujours 0 différence. Une erreur de série apparaît comme `garmin refused` avec `call: heart_rate` et se réessaie seule. Revenir à une image d'avant ne casse rien : l'ancienne version ignore l'indicateur de l'état, et les nuits des 14 derniers jours y repartiraient sans fréquence cardiaque, en révision.
 
@@ -812,6 +812,65 @@ Relancer ensuite demande un nouveau jeton de service (`mcp-2`) et `sudo docker c
    `garmin` et `lastfm` : `{"state": "ok", …}` avec `next_run_at`, et `expires_at` pour Garmin (la fin du jour affiché, heure de Paris, en UTC). « status not reported » dans les logs du collecteur : le rapport a échoué, la collecte continue.
 
 **Retour arrière.** Revenir à une image d'avant : la migration ajoute des colonnes que l'ancienne version ignore, et l'ancienne image ignore `GARMIN_KEY_EXPIRES_ON`, une variable qu'elle ne lit pas. Les états restent dans `core.sources`, sans effet.
+
+## Mise à jour : YouTube
+
+À faire une fois, sur le NAS déjà en service. La PR part en production à la fusion, migrations comprises (`20261105130000_youtube.sql` et `20261105130100_item_display_search.sql`, par le service `migrate` ; pas de `rebuild`) : le connecteur YouTube ne démarre que lorsque ses secrets sont dans `secrets/collector.env`, donc rien ne change pour Last.fm et Garmin d'ici là. Je ne lance rien de tout cela depuis le dépôt, et je tape moi-même chaque secret.
+
+1. **Avant la fusion**, recopier `compose.yaml` comme à l'étape 4 de « Mise à jour vers l'étape 5 » : le collecteur passe à 128 Mo de mémoire, et son contrôle de santé vérifie aussi `youtube-state.json`.
+
+2. **Google Cloud**, dans le projet de l'essai du 5 nov. 2026 :
+   - API activées : **Data Portability API** et **YouTube Data API v3** ;
+   - écran de consentement en mode **Testing**, mon adresse dans les utilisateurs de test (sans elle : `403 access_denied`) ;
+   - un client OAuth de type **Application Web**, adresse de retour `https://<nas>.<tailnet>.ts.net:8443/autorisation` (l'adresse de la web app, celle de `tailscale serve`) ; le client « Desktop » de l'essai est supprimé, et son accord retiré (myaccount.google.com, Sécurité, Applications tierces) ;
+   - une **clé d'API** restreinte à YouTube Data API v3.
+
+   Le client ID, son secret et la clé vont dans le gestionnaire de mots de passe et dans `secrets/collector.env`, nulle part ailleurs. Le collecteur joint `oauth2.googleapis.com`, `dataportability.googleapis.com`, `storage.googleapis.com` et `www.googleapis.com` par le réseau `egress`.
+
+3. Après le déploiement de la version, sur le NAS, en root dans le dossier en `700` :
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   TOKEN=$(sudo docker compose run --rm -T admin create-source youtube --silence-threshold "3 days" --label "YouTube" </dev/null)
+   [ "${#TOKEN}" = 64 ] && echo "token ok" || echo "ÉCHEC : ne pas continuer"
+   for kind in youtube.watch youtube.video_info; do
+     sudo docker compose run --rm -T admin grant-kind youtube "$kind" </dev/null
+   done
+   read -r CLIENT_ID; read -rs CLIENT_SECRET; read -rs API_KEY   # sans écho pour les deux secrets
+   read -r REDIRECT_URI   # https://<nas>.<tailnet>.ts.net:8443/autorisation, comme chez Google
+   (umask 077; printf 'YOUTUBE_CLIENT_ID=%s\nYOUTUBE_CLIENT_SECRET=%s\nYOUTUBE_REDIRECT_URI=%s\nYOUTUBE_API_KEY=%s\nYOUTUBE_TOKEN=%s\n' \
+     "$CLIENT_ID" "$CLIENT_SECRET" "$REDIRECT_URI" "$API_KEY" "$TOKEN" >> secrets/collector.env)
+   unset TOKEN CLIENT_ID CLIENT_SECRET API_KEY REDIRECT_URI
+   ls -l secrets/collector.env   # -rw-------
+   sudo docker compose up -d collector
+   sudo docker compose logs collector | grep youtube | tail -2   # « youtube pass completed », awaiting_consent true
+   ```
+
+   Il faut les cinq ensemble : un seul manquant empêche le collecteur de démarrer, Last.fm et Garmin compris.
+
+4. **Le premier accord**, depuis la page État de la web app (iPhone ou Mac) : la carte YouTube est « À faire » avec « Donner l'accord ». Google affiche l'avertissement d'app non validée (mode Testing), puis le consentement ; il revient sur `/autorisation`, qui transmet le code. Le collecteur le prend dans la minute, l'échange, et lance l'export de tout l'historique (11 min environ), lu au passage qui suit sa fin :
+
+   ```sh
+   sudo docker compose logs collector | grep "youtube pass completed" | tail -1   # exported true, watches, accepted, skipped_*
+   ```
+
+   Puis les fiches des vidéos, 1 000 par passage de 5 min : l'historique entier en quelques heures (`to_enrich` descend à 0 ; `unknown_videos` compte les vidéos supprimées ou privées). Google refuse un accord tant que le précédent est actif (« Incremental auth is not allowed ») : le connecteur retire lui-même l'accord qu'il connaît, mais si son état est perdu, retirer l'accès à la main (myaccount.google.com, Sécurité, Applications tierces) avant de recommencer.
+
+5. **Chaque semaine** : le jeton dure 7 jours en mode Testing. Un jour avant son échéance, le connecteur retire l'accord en cours et en demande un autre : la carte passe à « Renouveler ». Un oubli ne perd rien : l'export suivant reprend tout depuis la dernière vue ; seul le silence de 3 jours alerte.
+
+6. Vérifier les critères du chantier YouTube dans [les chantiers](chantiers.md) : un jour réel comparé à mon historique YouTube, sur la page du jour et par le MCP (`day_summary`) ; puis la couverture et le rejeu :
+
+   ```sh
+   sudo docker compose run --rm -T admin coverage video.watch </dev/null
+   sudo docker compose run --rm -T admin rebuild </dev/null   # 0 différence
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select status from core.sources where name = 'youtube'" </dev/null   # ok, expires_at, next_run_at, last_collected_at
+   sudo docker compose exec -T collector stat -c '%a' /var/lib/life-tracker/youtube-state.json   # 600
+   ```
+
+   Les logs ne montrent que des nombres et des motifs : jamais un jeton, un code, une URL, un titre ni un id. « client OAuth ou clé YouTube refusés » : le secret client ou la clé est faux, la carte le dit (`key_rejected`).
+
+**Retour arrière.** Couper YouTube seul : retirer les cinq lignes `YOUTUBE_*` de `secrets/collector.env`, puis `sudo docker compose up -d collector`. Le journal garde ce qui est entré ; `admin revoke-source youtube` coupe le token, et retirer l'accès dans le compte Google coupe le jeton. Revenir à une image d'avant : les migrations ajoutent des registres et un index que l'ancienne version ignore.
 
 ## Vérifier les critères « Terminé quand »
 

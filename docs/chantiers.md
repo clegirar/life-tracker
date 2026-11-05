@@ -7,8 +7,8 @@ Le [POC](poc.md) est validé depuis le 4 nov. 2026. Chaque chantier a sa section
 | Chantier | État |
 | --- | --- |
 | Garmin Connect | Fait le 5 nov. 2026 (v0.4.0) |
-| Page d'état des trackers | En cours depuis le 5 nov. 2026, avant YouTube |
-| YouTube | En cours depuis le 5 nov. 2026 : essai fait, construction après la page d'état |
+| Page d'état des trackers | Construite le 5 nov. 2026 (PR #13), mise en service à vérifier |
+| YouTube | En cours depuis le 5 nov. 2026 : backend construit, web app en cours |
 | Ouvrir la web app sur Internet | À faire, quand je le demanderai |
 
 ## Garmin Connect
@@ -68,7 +68,8 @@ Ouvert le 5 nov. 2026, à ma demande, avant YouTube : une page de la web app qui
   - `state` : `ok`, `action_required` ou `error` ;
   - `reason` : un code connu, par exemple `key_rejected`, `consent_expired`, `rate_limited`, `service_unavailable`, `ingest_failed` ;
   - `expires_at` (facultatif) : l'échéance de la clé ou du jeton ;
-  - `next_run_at` (facultatif).
+  - `next_run_at` (facultatif) ;
+  - `last_collected_at` (facultatif, ajouté avec YouTube) : la dernière collecte réussie.
 
   Le backend refuse tout autre champ ou code. Aucun message d'erreur, aucune donnée personnelle ni aucun secret ne peut donc s'y glisser. C'est la web app qui traduit chaque code en phrase et en marche à suivre.
 - **Le stockage.** Deux colonnes sur `core.sources`, par une nouvelle migration : `status jsonb` et `status_reported_at timestamptz`, avec le droit `UPDATE` sur elles seules pour `tracker_app`. Un seul état par source, le dernier, hors du journal comme le dernier contact. Une colonne `label` donne en plus le nom affiché (« Garmin Connect »), fixé par `admin create-source --label` ou `admin set-label <source> <libellé>`. Sans libellé, la page montre le nom.
@@ -110,7 +111,9 @@ Ouvert le 5 nov. 2026, à ma demande. Ce que je regarde sur YouTube : les vidéo
 - Le collecteur prépare la demande (état aléatoire et vérificateur PKCE, qu'il garde) et confie seulement l'URL au backend, avec le token de sa source.
 - Google renvoie un code d'usage unique sur une route de la web app, sous session. Le backend le garde quelques minutes, en mémoire, et le collecteur vient le chercher puis l'échange lui-même.
 - Le jeton et le secret client ne vivent que dans le collecteur ; le code seul ne sert à rien sans le vérificateur PKCE. Rien n'entre au journal, et le collecteur ne touche pas la base.
-- Le client OAuth devient de type « Application Web », avec l'adresse de retour `https://<nas>.<tailnet>.ts.net:8443/…`. Reste à vérifier que Google accepte une adresse en `ts.net` ; sinon, une sous-commande `youtube-authorize` en ligne de commande.
+- Le client OAuth est de type « Application Web », avec l'adresse de retour `https://<nas>.<tailnet>.ts.net:8443/autorisation` : Google l'accepte (essai du 5 nov.).
+- Le cookie de session est `SameSite=Strict` : la navigation qui revient de Google arrive sans lui. Le retour atterrit donc sur une page de la web app, `/autorisation`, qui transmet ensuite le code au backend, cette fois avec la session.
+- Data Portability refuse un nouvel accord tant que le précédent est actif (« Incremental auth is not allowed for the requested scopes »). Avant de redemander, le connecteur annule l'ancien par `authorization:reset` si son jeton fonctionne encore.
 
 **Historique.** Par l'API seule : son premier export rend tout mon historique (voir l'essai ci-dessous). L'import Google Takeout, d'abord prévu, est donc retiré.
 
@@ -126,7 +129,9 @@ Ouvert le 5 nov. 2026, à ma demande. Ce que je regarde sur YouTube : les vidéo
 - **Historique :** 24 558 vidéos vues depuis sept. 2023, autant que Takeout (24 594). Environ 19 % des entrées sont des publicités. 2 039 vidéos vues n'ont plus de chaîne (supprimées ou privées ; leur titre est l'URL) : on garde l'id seul.
 - **Stabilité :** deux exports du même jour (Takeout et Data Portability) ont 24 318 visionnages communs et diffèrent d'environ 1 % de chaque côté, sans décalage d'heure. Aucun doublon sur la paire (vidéo, instant).
 - **Fréquence :** un second export dans les 24 h est refusé en `429 RESOURCE_EXHAUSTED_TIME_BASED`, avec l'heure de la prochaine autorisation (`timestamp_after_24hrs`).
-- **Restent à voir :** le filtre `startTime` sur un export suivant (après le 6 nov. 13 h 53), l'expiration effective du jeton (12 nov.), et `videos.list` de Data v3.
+- **Data v3 :** `videos.list?part=contentDetails,snippet` rend 42 vidéos sur 42 encore en ligne, aucune des 5 supprimées ; durées ISO 8601 (`PT9M9S`, `PT9S` pour les Shorts, `PT1H2M3S`). 1 unité de quota par lot de 50, sur 10 000 par jour.
+- **Client Web :** un premier client Web supprimé donne `deleted_client`. Avec le client Desktop encore autorisé, le client Web reçoit « Incremental auth is not allowed » ; après `authorization:reset`, Google accepte l'adresse de retour en `ts.net` et passe à l'avertissement d'app non validée.
+- **Restent à voir, par le connecteur lui-même :** le filtre `startTime` (le jeton d'essai est annulé ; les clés évitent de toute façon les doublons) et l'expiration effective du jeton au bout de 7 jours.
 
 **Terminé quand**
 
@@ -136,6 +141,10 @@ Ouvert le 5 nov. 2026, à ma demande. Ce que je regarde sur YouTube : les vidéo
 - Ni clé, ni jeton, ni donnée personnelle dans le dépôt ou les logs ; le connecteur n'a pas accès à la base.
 - YouTube a sa carte dans la page d'état : échéance du jeton, dernier export, prochain export permis, bouton « Renouveler ».
 - L'affichage est vérifié à la largeur d'un iPhone et sur Mac, en clair et en sombre, et la durée y est présentée comme celle des vidéos.
+
+**Construit le 5 nov. 2026, backend** : migrations `20261105130000_youtube.sql` (types `youtube.watch` et `youtube.video_info`, métriques `video.watch` et `video.duration`) et `20261105130100_item_display_search.sql` (recherche par le nom affiché), lecture en flux de l'export (`backend/src/youtube.rs`), connecteur `collector::youtube` (export de Data Portability toutes les 24 h au plus, fiches par Data v3, renouvellement anticipé par `authorization:reset`, date du dernier export reçu rapportée en `last_collected_at` et `error`/`service_unavailable` sans export depuis 48 h), `GET /v1/days/{date}/video`, le relais de l'accord en mémoire (`PUT /v1/sources/me/authorization`, `GET /v1/sources/me/authorization/code`, `POST /v1/authorizations/callback`, `authorization_url` dans `GET /v1/sources/status`) et le motif `consent_required` (voir le journal des décisions de [l'architecture](architecture.md), 5 nov. 2026). Écarts : la recherche lit aussi les noms affichés, car les clés de YouTube sont des identifiants ; le collecteur passe à 128 Mo. Reste la mise en service (`docs/deploiement.md`, « Mise à jour : YouTube »).
+
+**Construit le 5 nov. 2026, web app** : carte YouTube du jour (vidéos, durée des vidéos dite « pas le temps regardé », vidéos sans durée à part, « Vidéo indisponible » sans lien ni chaîne, chaîne du jour, nouvelles chaînes, liens simples vers YouTube sans intégration, chacun précédé de la miniature de la vidéo, que le navigateur demande à `i.ytimg.com` sans Referer (seul ajout à la CSP) ; une journée après la dernière vue reçue dit « pas encore de données », l'export étant quotidien), carte de la page d'état (« Accès Google » à l'heure près, en couleur deux jours avant sans rendre la carte « À faire », « Prochain export », « Dernier export » (et la marche à suivre quand aucun export n'aboutit depuis 2 jours), bouton « Donner l'accord » ou « Renouveler l'accord » tiré de `authorization_url` quelle que soit la source, ouvert dans l'onglet même), page `/autorisation` (transmet `{state, code}` ou `{state, error}` une seule fois, retire le code de l'adresse, garde l'issue dans l'historique ; sans session, la connexion y ramène avec la requête), couleur `video.watch` du calendrier, Playwright `web/e2e/youtube.spec.ts`. Écart : le libellé d'une métrique garde sa majuscule de nom propre dans les phrases du calendrier (« 3 vidéos YouTube »).
 
 ## Ouvrir la web app sur Internet
 

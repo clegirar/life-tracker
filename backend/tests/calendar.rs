@@ -344,7 +344,8 @@ async fn days_before_a_metric_starts_have_no_data_and_no_alert() {
             "steps",
             "workout",
             "sleep",
-            "calories.burned"
+            "calories.burned",
+            "video.watch"
         ],
         "ni déclarations ni références, dans l'ordre d'affichage du registre"
     );

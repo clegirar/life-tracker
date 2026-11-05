@@ -15,6 +15,7 @@ const TONES: Record<string, string> = {
   'calories.burned': 'heat-calories',
   sleep: 'heat-sleep',
   workout: 'heat-workout',
+  'video.watch': 'heat-video',
 }
 
 /** La classe qui pose `--heat`, la couleur de la métrique : chiffres, points, pastilles, filtres et rampes. */

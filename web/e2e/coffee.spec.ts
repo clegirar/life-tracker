@@ -338,7 +338,7 @@ test('une session expirée renvoie à la connexion sans perdre l’écriture', a
   await login(page)
   await context.clearCookies()
   await add(page).click()
-  await expect(page.getByText('Session expirée. Reconnectez-vous.')).toBeVisible()
+  await expect(page.getByText('Session expirée. Reconnecte-toi.')).toBeVisible()
 
   await page.getByLabel('Identifiant').fill(USER)
   await page.getByLabel('Mot de passe').fill(PASSWORD)

@@ -93,8 +93,9 @@ services:
     security_opt: ["no-new-privileges:true"]
     logging: *logging
 
-  # Interroge Last.fm et Garmin, chacun si sa clé est dans le fichier de secrets, et écrit par l'API
-  # d'ingestion. Seul à sortir vers Internet : ni la base, ni le web.
+  # Interroge Last.fm, Garmin et YouTube, chacun si sa clé est dans le fichier de secrets, et écrit par
+  # l'API d'ingestion. Seul à sortir vers Internet : ni la base, ni le web. YouTube joint
+  # oauth2.googleapis.com, dataportability.googleapis.com, storage.googleapis.com et www.googleapis.com.
   collector:
     image: ${TRACKER_IMAGE_PREFIX:?}/backend:${TRACKER_TAG:?}
     command: ["collect"]
@@ -108,15 +109,18 @@ services:
     volumes:
       - collector-state:/var/lib/life-tracker
     healthcheck:
-      # L'état de chaque connecteur configuré est réécrit à chaque passage réussi : Last.fm toutes les
-      # 5 min, Garmin tous les quarts d'heure. « unhealthy » sans redémarrage : le collecteur réessaie
-      # déjà seul, et la page du jour signale le silence de la source (une clé Garmin refusée aussi).
-      test: ["CMD-SHELL", "fresh() { test -n \"$$(find /var/lib/life-tracker/$$1 -mmin -360)\"; }; { test -z \"$$LASTFM_API_KEY\" || fresh state.json; } && { test -z \"$$GARMIN_API_KEY\" || fresh garmin-state.json; }"]
+      # L'état de chaque connecteur configuré est réécrit à chaque passage réussi : Last.fm et YouTube
+      # toutes les 5 min, Garmin tous les quarts d'heure. « unhealthy » sans redémarrage : le collecteur
+      # réessaie déjà seul, et la page d'état signale le silence de la source (une clé Garmin refusée,
+      # un accord YouTube à donner aussi).
+      test: ["CMD-SHELL", "fresh() { test -n \"$$(find /var/lib/life-tracker/$$1 -mmin -360)\"; }; { test -z \"$$LASTFM_API_KEY\" || fresh state.json; } && { test -z \"$$GARMIN_API_KEY\" || fresh garmin-state.json; } && { test -z \"$$YOUTUBE_CLIENT_ID\" || fresh youtube-state.json; }"]
       interval: 5m
       timeout: 5s
       retries: 1
       start_period: 15m
-    mem_limit: 64m
+    # L'export YouTube passe par le disque (le volume d'état) et se lit en flux ; la marge couvre un
+    # export lu pendant qu'une trace Garmin (32 Mo au plus) se télécharge.
+    mem_limit: 128m
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
