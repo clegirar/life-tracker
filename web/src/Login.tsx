@@ -18,7 +18,7 @@ export function Login({ expired, onLoggedIn }: { expired: boolean; onLoggedIn: (
       }
       setError('Identifiant ou mot de passe incorrect.')
     } catch {
-      setError('Connexion impossible. Réessayez.')
+      setError('Connexion impossible. Réessaie.')
     }
     setBusy(false)
   }
@@ -28,7 +28,7 @@ export function Login({ expired, onLoggedIn }: { expired: boolean; onLoggedIn: (
       <h1 className="title">Connexion</h1>
       {expired && !error && (
         <p className="notice" role="status">
-          Session expirée. Reconnectez-vous.
+          Session expirée. Reconnecte-toi.
         </p>
       )}
       <form className="card login-form" onSubmit={submit}>

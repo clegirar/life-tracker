@@ -279,10 +279,19 @@ export const fetchTrack = (activityId: number) => read<Track>(`/v1/activities/${
 /** L'état rapporté par un connecteur, en vocabulaire fermé : la web app le traduit en phrases. */
 export interface ReportedStatus {
   state: 'ok' | 'action_required' | 'error'
-  reason: 'key_rejected' | 'consent_expired' | 'rate_limited' | 'service_unavailable' | 'ingest_failed' | null
+  reason:
+    | 'key_rejected'
+    | 'consent_required'
+    | 'consent_expired'
+    | 'rate_limited'
+    | 'service_unavailable'
+    | 'ingest_failed'
+    | null
   /** L'échéance de la clé ou du jeton. */
   expires_at: string | null
   next_run_at: string | null
+  /** La dernière collecte réussie (pour YouTube, le dernier export) ; absente d'un état plus ancien. */
+  last_collected_at?: string | null
 }
 
 /** Une source de la page d'état. */
@@ -299,6 +308,8 @@ export interface SourceStatus {
   status_reported_at: string | null
   /** Pour chaque métrique que la source alimente, sa dernière donnée. */
   metrics: { metric: string; label: string; last_at: string }[]
+  /** La page de consentement qu'un connecteur attend que j'ouvre ; `null` hors d'une demande en cours. */
+  authorization_url: string | null
 }
 
 export interface SourcesStatus {
@@ -306,3 +317,52 @@ export interface SourcesStatus {
 }
 
 export const fetchSourcesStatus = () => read<SourcesStatus>('/v1/sources/status')
+
+/** Une vidéo vue. `title` à `null` : une vidéo supprimée ou privée, dont seul l'id reste. */
+export interface VideoWatch {
+  /** Heure de Paris. */
+  time: string
+  occurred_at: string
+  video_id: string
+  title: string | null
+  channel_id: string | null
+  channel_name: string | null
+  /** La durée de la vidéo, pas le temps regardé ; `null` : inconnue. */
+  duration_s: number | null
+}
+
+/** Une chaîne ou une vidéo vue pour la première fois ce jour-là. */
+export interface VideoDiscovery {
+  level: 'channel' | 'video'
+  key: string
+  name: string
+}
+
+export interface DayVideo {
+  date: string
+  count: number
+  /** La somme des durées connues ; `null` : aucune connue, ce qui n'est pas zéro. */
+  seconds: number | null
+  without_duration: number
+  watches: VideoWatch[]
+  discoveries: VideoDiscovery[]
+}
+
+export const fetchDayVideo = (date: string) => read<DayVideo>(`/v1/days/${date}/video`)
+
+/** Ce que Google a renvoyé sur `/autorisation`, transmis au connecteur par le backend. */
+export type AuthorizationCallback = { state: string; code: string } | { state: string; error: string }
+
+/** `received` : remis au connecteur. `expired` : aucune demande n'attend cet état. `invalid` : refusé tel quel. */
+export type CallbackResult = 'received' | 'expired' | 'invalid'
+
+export async function sendAuthorizationCallback(callback: AuthorizationCallback): Promise<CallbackResult> {
+  const response = await call('/v1/authorizations/callback', {
+    method: 'POST',
+    body: JSON.stringify(callback),
+  })
+  if (response.status === 401) throw new Unauthorized()
+  if (response.status === 204) return 'received'
+  if (response.status === 404) return 'expired'
+  return 'invalid'
+}

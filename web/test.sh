@@ -84,10 +84,16 @@ export E2E_GARMIN_TOKEN
 for kind in garmin.daily_summary garmin.sleep garmin.activity garmin.activity_track record.cancel; do
   ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin grant-kind garmin "$kind" 2>/dev/null
 done
+E2E_YOUTUBE_TOKEN="$(ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin create-source youtube --silence-threshold "3 days" 2>/dev/null)"
+export E2E_YOUTUBE_TOKEN
+for kind in youtube.watch youtube.video_info; do
+  ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin grant-kind youtube "$kind" 2>/dev/null
+done
 # Les noms affichés de la page d'état, comme sur le NAS.
 ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin set-label garmin "Garmin Connect" 2>/dev/null
 ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin set-label lastfm "Musique" 2>/dev/null
 ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin set-label ios "Raccourci café" 2>/dev/null
+ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin set-label youtube "YouTube" 2>/dev/null
 
 API_PORT="$(free_port)"
 # Sans DEV_INSECURE_COOKIE : le cookie est Secure, comme en production.
@@ -112,7 +118,7 @@ npx playwright test "$@"
 
 echo "▶ Les logs du backend ne contiennent ni mot de passe ni token"
 # Sans l'horodatage : « …:48.853Z » ressemble à la latitude des parcours fictifs.
-if sed 's/"timestamp":"[^"]*"//' "$LOG" | grep -qF -e "$E2E_PASSWORD" -e "$E2E_IOS_TOKEN" -e "$E2E_LASTFM_TOKEN" -e "$E2E_APPLE_TOKEN" -e "$E2E_GARMIN_TOKEN" -e "Ville Fictive" -e "48.85" -e "Artiste Fictif" -e "Titre fictif"; then
+if sed 's/"timestamp":"[^"]*"//' "$LOG" | grep -qF -e "$E2E_PASSWORD" -e "$E2E_IOS_TOKEN" -e "$E2E_LASTFM_TOKEN" -e "$E2E_APPLE_TOKEN" -e "$E2E_GARMIN_TOKEN" -e "$E2E_YOUTUBE_TOKEN" -e "Ville Fictive" -e "Chaîne Fictive" -e "vidéo fictive" -e "Fictif-code" -e "etatFictif" -e "48.85" -e "Artiste Fictif" -e "Titre fictif"; then
   echo "ÉCHEC : secret dans les logs" >&2
   exit 1
 fi

@@ -94,6 +94,9 @@ describe('les unités de Garmin', () => {
     expect(valueText(metric('Séances', 'séance'), 2)).toBe('2 séances')
     expect(valueText(metric('Pas', 'pas'), 0)).toBe('0 pas')
     expect(valueText(metric('Pas', 'pas'), null)).toBe('pas : pas de données')
+    expect(valueText(metric('Vidéos YouTube', 'vidéo'), 1)).toBe('1 vidéo YouTube')
+    expect(valueText(metric('Vidéos YouTube', 'vidéo'), 3)).toBe('3 vidéos YouTube')
+    expect(valueText(metric('Vidéos YouTube', 'vidéo'), null)).toBe('vidéos YouTube : pas de données')
   })
 
   it('met le sommeil en heures dans une case', () => {

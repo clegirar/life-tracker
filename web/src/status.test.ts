@@ -20,6 +20,7 @@ function source(overrides: Partial<SourceStatus> = {}): SourceStatus {
     status: { state: 'ok', reason: null, expires_at: iso(300 * DAY), next_run_at: iso(5 * MIN) },
     status_reported_at: iso(-10 * MIN),
     metrics: [],
+    authorization_url: null,
     ...overrides,
   }
 }
@@ -127,10 +128,114 @@ describe("l'état d'une carte", () => {
   })
 
   it('traduit chaque raison', () => {
-    for (const reason of ['consent_expired', 'rate_limited', 'service_unavailable', 'ingest_failed'] as const) {
+    for (const reason of ['consent_required', 'consent_expired', 'rate_limited', 'service_unavailable', 'ingest_failed'] as const) {
       const card = sourceCard(source({ status: { state: 'error', reason, expires_at: null, next_run_at: null } }), NOW)
       expect(card.guidance?.title, reason).toBeTruthy()
     }
+  })
+})
+
+describe("l'accord à donner (YouTube)", () => {
+  const URL = 'https://accounts.google.com/o/oauth2/v2/auth?client_id=x&state=abc'
+  const youtube = (overrides: Partial<SourceStatus> = {}) =>
+    source({
+      name: 'youtube',
+      label: 'YouTube',
+      silence_threshold_seconds: 259_200,
+      status: { state: 'ok', reason: null, expires_at: iso(5 * DAY), next_run_at: iso(20 * HOUR) },
+      ...overrides,
+    })
+
+  it('fonctionne avec un jeton de 7 jours : prévenir 14 jours avant la rendrait toujours à faire', () => {
+    const card = sourceCard(youtube(), NOW)
+    expect(card.state).toBe('ok')
+    expect(card.lines).toContainEqual({ label: 'Accès Google', value: `valable jusqu'au 10${NBSP}nov. à 14${NBSP}h${NBSP}00` })
+    expect(card.lines).toContainEqual({ label: 'Prochain export', value: `demain à 10${NBSP}h${NBSP}00` })
+  })
+
+  it("colore l'échéance deux jours avant, sans changer l'état", () => {
+    const card = sourceCard(youtube({ status: { state: 'ok', reason: null, expires_at: iso(30 * HOUR), next_run_at: null } }), NOW)
+    expect(card.state).toBe('ok')
+    expect(card.lines).toContainEqual({ label: 'Accès Google', value: `expire demain à 20${NBSP}h${NBSP}00`, warn: true })
+    const past = sourceCard(youtube({ status: { state: 'ok', reason: null, expires_at: iso(-2 * HOUR), next_run_at: null } }), NOW)
+    expect(past.lines).toContainEqual({ label: 'Accès Google', value: `expiré aujourd'hui à 12${NBSP}h${NBSP}00`, warn: true })
+  })
+
+  it('propose de renouveler, par l’URL de la demande', () => {
+    const card = sourceCard(
+      youtube({ status: { state: 'action_required', reason: 'consent_expired', expires_at: iso(-HOUR), next_run_at: null }, authorization_url: URL }),
+      NOW,
+    )
+    expect(card.state).toBe('todo')
+    expect(card.guidance?.action).toEqual({ label: "Renouveler l'accord", href: URL })
+    expect(card.guidance?.title).toMatch(/à renouveler/)
+  })
+
+  it('propose de donner un premier accord', () => {
+    const card = sourceCard(
+      youtube({ status: { state: 'action_required', reason: 'consent_required', expires_at: null, next_run_at: null }, authorization_url: URL }),
+      NOW,
+    )
+    expect(card.guidance?.action).toEqual({ label: "Donner l'accord", href: URL })
+    expect(card.guidance?.title).toBe('La collecte attend ton accord pour commencer.')
+  })
+
+  it("sans URL encore, dit qu'elle arrive", () => {
+    const card = sourceCard(youtube({ status: { state: 'action_required', reason: 'consent_expired', expires_at: null, next_run_at: null } }), NOW)
+    expect(card.state).toBe('todo')
+    expect(card.guidance?.action).toBeUndefined()
+    expect(card.guidance?.note).toMatch(/arrive d'ici quelques minutes/)
+  })
+
+  it('dit le dernier export, même avant le premier', () => {
+    const card = sourceCard(
+      youtube({ status: { state: 'ok', reason: null, expires_at: null, next_run_at: null, last_collected_at: iso(-3 * HOUR) } }),
+      NOW,
+    )
+    expect(card.lines[1]).toEqual({ label: 'Dernier export', value: `il y a 3${NBSP}h` })
+    const never = sourceCard(youtube({ status: { state: 'ok', reason: null, expires_at: null, next_run_at: null, last_collected_at: null } }), NOW)
+    expect(never.lines).toContainEqual({ label: 'Dernier export', value: "aucun pour l'instant" })
+    // Un état rapporté avant ce champ : la ligne dit aussi qu'il n'y en a pas.
+    expect(sourceCard(youtube(), NOW).lines).toContainEqual({ label: 'Dernier export', value: "aucun pour l'instant" })
+  })
+
+  it("en panne sans export depuis deux jours, dit que Google répond et qu'il réessaie seul", () => {
+    const card = sourceCard(
+      youtube({
+        status: { state: 'error', reason: 'service_unavailable', expires_at: iso(5 * DAY), next_run_at: iso(5 * MIN), last_collected_at: iso(-50 * HOUR) },
+        status_reported_at: iso(-MIN),
+        last_seen_at: iso(-2 * MIN),
+      }),
+      NOW,
+    )
+    expect(card.state).toBe('broken')
+    expect(card.lines).toContainEqual({ label: 'Dernier export', value: `le 3${NBSP}nov. à 12${NBSP}h${NBSP}00` })
+    expect(card.guidance?.title).toBe("Google répond, mais aucun export n'a abouti depuis 2 jours.")
+    expect(card.guidance?.note).toMatch(/réessaie seul.*logs sur le NAS/)
+    // Une panne de Google avec un export récent reste une panne ordinaire.
+    const outage = sourceCard(
+      youtube({
+        status: { state: 'error', reason: 'service_unavailable', expires_at: null, next_run_at: null, last_collected_at: iso(-3 * HOUR) },
+        last_seen_at: iso(-3 * HOUR),
+      }),
+      NOW,
+    )
+    expect(outage.guidance?.title).toBe('Le service ne répond pas, ou refuse la demande.')
+  })
+
+  it('dit la dernière collecte d’une autre source qui la rapporte', () => {
+    const card = sourceCard(
+      source({ status: { state: 'ok', reason: null, expires_at: null, next_run_at: null, last_collected_at: iso(-20 * MIN) } }),
+      NOW,
+    )
+    expect(card.lines).toContainEqual({ label: 'Dernière collecte', value: `il y a 20${NBSP}min` })
+    expect(sourceCard(source(), NOW).lines.map((line) => line.label)).not.toContain('Dernière collecte')
+  })
+
+  it('le bouton suit la demande, quelle que soit la source', () => {
+    const card = sourceCard(source({ authorization_url: URL }), NOW)
+    expect(card.state).toBe('todo')
+    expect(card.guidance?.action?.href).toBe(URL)
   })
 })
 

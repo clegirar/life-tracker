@@ -22,6 +22,8 @@
   --calories: #dc6a00;
   --sleep: #5856d6;
   --workout: #0071a4;
+  /* YouTube : un violet, loin du rouge des écoutes. */
+  --video: #8944ab;
   --segment-on: #ffffff;
   --check: #c98500;
   /* La barre latérale : un cran sous le fond de page, comme la barre de Réglages sur Mac. */
@@ -74,6 +76,7 @@
     --calories: #ff9f0a;
     --sleep: #7d7aff;
     --workout: #64d2ff;
+    --video: #da8fff;
     --segment-on: #636366;
     --check: #ffcc4d;
     --sidebar-bg: #121214;
@@ -376,6 +379,11 @@ button:disabled {
 }
 
 .card-activity {
+  flex: 2 1 420px;
+  min-width: 0;
+}
+
+.card-video {
   flex: 2 1 420px;
   min-width: 0;
 }
@@ -1134,6 +1142,10 @@ button:disabled {
   --heat: var(--workout);
 }
 
+.heat-video {
+  --heat: var(--video);
+}
+
 .heat-neutral {
   --heat: var(--muted);
 }
@@ -1803,6 +1815,27 @@ button:disabled {
   color: var(--muted);
 }
 
+/* Le bouton de la marche à suivre : un lien qui a l'air d'un bouton, pleine largeur sur iPhone. */
+.status-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin-top: 14px;
+  text-decoration: none;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+@media (min-width: 900px) {
+  .status-action {
+    width: auto;
+    display: inline-flex;
+  }
+}
+
 .status-help code {
   padding: 1px 5px;
   border-radius: 5px;
@@ -1838,3 +1871,170 @@ button:disabled {
   box-shadow: 0 0 0 2px var(--control);
 }
 
+
+/* ─── La carte YouTube ───────────────────────────────────────────────────── */
+
+.card-title-video,
+.subsection-count-video,
+.card-video .more {
+  color: var(--video);
+}
+
+/* Le filet passe sur les lignes de la liste : chaque vue est un lien ou un bloc dans son élément. */
+.video-rows > li {
+  border-bottom: 0.5px solid var(--separator);
+}
+
+.video-rows > li:last-child {
+  border-bottom: 0;
+}
+
+.video-rows .row {
+  border-bottom: 0;
+}
+
+/* Toute la ligne ouvre la vidéo sur YouTube : une cible de doigt pleine largeur. */
+.video-link {
+  color: inherit;
+  text-decoration: none;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  transition: opacity 120ms var(--ease-out);
+}
+
+.video-link:active {
+  opacity: 0.5;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .video-link:hover .row-name {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+}
+
+.video-link:focus-visible {
+  outline: 2px solid var(--video);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.video-end {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.video-out {
+  color: var(--muted);
+}
+
+/* La miniature en tête de ligne, comme une cellule de l'app YouTube : 16/9, cadre posé avant l'image. */
+.video-thumb {
+  flex-shrink: 0;
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--control);
+}
+
+.video-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Un filet qui détache une image claire de la carte blanche, ou sombre de la carte noire. */
+  outline: 0.5px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  outline-offset: -0.5px;
+  border-radius: inherit;
+}
+
+.video-link {
+  padding: 8px 0;
+}
+
+.video-link .row-text {
+  flex: 1;
+}
+
+/* Deux lignes au plus : un titre fleuve ne déforme pas la liste ; le reste est sur YouTube. */
+.video-link .row-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+@media (min-width: 600px) {
+  .video-thumb {
+    width: 128px;
+  }
+}
+
+/* Une vidéo supprimée ou privée : il ne reste que l'heure. */
+.row-name-muted {
+  color: var(--muted);
+}
+
+/* ─── Le retour de Google (/autorisation) ────────────────────────────────── */
+
+/* Une seule carte, centrée et étroite : une réponse, et où aller ensuite. */
+.auth-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 440px;
+  margin: 0 auto;
+  padding: 28px 20px 20px;
+  text-align: center;
+}
+
+.auth-mark {
+  --tone: var(--state-ok);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--tone) var(--state-tint), var(--card));
+  color: var(--tone);
+}
+
+.auth-mark[data-state='todo'] {
+  --tone: var(--state-todo);
+}
+
+.auth-mark[data-state='broken'] {
+  --tone: var(--state-error);
+}
+
+.auth-title {
+  margin-top: 14px;
+  font-size: 20px;
+  line-height: 25px;
+  font-weight: 600;
+}
+
+.auth-text {
+  margin-top: 6px;
+  font-size: 15px;
+  line-height: 21px;
+  color: var(--muted);
+}
+
+.auth-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  margin-top: 20px;
+  text-decoration: none;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}

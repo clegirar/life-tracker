@@ -10,6 +10,8 @@ import { MusicCard } from './MusicCard'
 import type { useMusic } from './useMusic'
 import { addDays, dayTitle, emptyLabel, longDate, parisInstant, parisTime } from './time'
 import type { useCoffee } from './useCoffee'
+import type { useVideo } from './useVideo'
+import { VideoCard } from './VideoCard'
 
 interface Props {
   /** Le bouton du tiroir, sur iPhone. */
@@ -23,6 +25,7 @@ interface Props {
   coffee: ReturnType<typeof useCoffee>
   music: ReturnType<typeof useMusic>
   activity: ReturnType<typeof useActivity>
+  video: ReturnType<typeof useVideo>
 }
 
 function Chevron({ d }: { d: string }) {
@@ -43,7 +46,7 @@ function failureText(op: Op, date: string, today: string): string {
     : `${what} de ${when} n'a pas été enregistré${e}.`
 }
 
-export function DayPage({ menu, date, today, onSelect, onShowMonth, calendarDay, coffee, music, activity }: Props) {
+export function DayPage({ menu, date, today, onSelect, onShowMonth, calendarDay, coffee, music, activity, video }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [picked, setPicked] = useState('12:00')
   const [pickError, setPickError] = useState<string | null>(null)
@@ -68,7 +71,7 @@ export function DayPage({ menu, date, today, onSelect, onShowMonth, calendarDay,
 
   function addPicked() {
     if (!picked) {
-      setPickError('Choisissez une heure.')
+      setPickError('Choisis une heure.')
       return
     }
     const instant = parisInstant(date, picked)
@@ -216,6 +219,7 @@ export function DayPage({ menu, date, today, onSelect, onShowMonth, calendarDay,
 
       <ActivityCard date={date} today={today} state={activity} health={music.health} />
       <MusicCard date={date} today={today} state={music} />
+      <VideoCard date={date} today={today} state={video} health={music.health} />
       </div>
     </main>
   )

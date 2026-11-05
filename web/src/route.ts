@@ -10,6 +10,8 @@ export type Route =
   | { page: 'month'; month: string }
   | { page: 'year'; year: string }
   | { page: 'status' }
+  /** Le retour de Google après un accord ; sa requête (`state`, `code` ou `error`) reste dans l'adresse. */
+  | { page: 'authorization' }
 
 export const TODAY: Route = { page: 'day', date: null }
 export const STATUS: Route = { page: 'status' }
@@ -27,6 +29,7 @@ export function parseRoute(path: string, today: string): Route | null {
   const clean = path.length > 1 ? path.replace(/\/+$/, '') : path
   if (clean === '/') return TODAY
   if (clean === '/etat') return STATUS
+  if (clean === '/autorisation') return { page: 'authorization' }
   let match = /^\/jour\/([^/]+)$/.exec(clean)
   if (match) {
     const date = match[1]
@@ -58,6 +61,8 @@ export function routePath(route: Route): string {
       return `/annee/${route.year}`
     case 'status':
       return '/etat'
+    case 'authorization':
+      return '/autorisation'
   }
 }
 

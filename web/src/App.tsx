@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { fetchDay, logout, Unauthorized } from './api'
+import { AuthorizationPage } from './AuthorizationPage'
 import { monthOf } from './calendar'
 import { DayPage } from './DayPage'
 import { Login } from './Login'
@@ -16,6 +17,7 @@ import { useMonth } from './useMonth'
 import { useActivity } from './useActivity'
 import { useMusic } from './useMusic'
 import { useSourcesStatus } from './useSourcesStatus'
+import { useVideo } from './useVideo'
 import { useYear } from './useYear'
 import { YearPage } from './YearPage'
 
@@ -53,6 +55,7 @@ export function App() {
   const coffee = useCoffee(date, onSessionLost, auth === 'in')
   const music = useMusic(date, onSessionLost, auth === 'in')
   const activity = useActivity(date, onSessionLost, auth === 'in')
+  const video = useVideo(date, onSessionLost, auth === 'in')
   // Le mois affiché, ou celui du jour : la page du jour y lit si sa journée est incomplète.
   const calendar = useMonth(shownMonth ?? monthOf(date), onSessionLost, auth === 'in', shownMonth)
   // L'année n'est lue que vue ouverte : la rouvrir la relit.
@@ -92,7 +95,9 @@ export function App() {
   const menu = wide ? null : <MenuButton open={drawerOpen} onOpen={() => setMenuOpen(true)} buttonRef={menuButton} attention={attention} />
 
   let page
-  if (route.page === 'status') {
+  if (route.page === 'authorization') {
+    page = <AuthorizationPage menu={menu} statusHref={routePath(STATUS)} onStatus={() => go(STATUS)} onSessionLost={onSessionLost} />
+  } else if (route.page === 'status') {
     page = (
       <StatusPage
         menu={menu}
@@ -147,6 +152,7 @@ export function App() {
         coffee={coffee}
         music={music}
         activity={activity}
+        video={video}
       />
     )
   }
@@ -157,7 +163,8 @@ export function App() {
         wide={wide}
         open={drawerOpen}
         onClose={closeMenu}
-        current={route.page === 'status' ? 'status' : 'calendar'}
+        // Le retour de Google fait partie de la page d'état.
+        current={route.page === 'status' || route.page === 'authorization' ? 'status' : 'calendar'}
         calendarHref={routePath(TODAY)}
         onCalendar={() => go(TODAY)}
         statusHref={routePath(STATUS)}
@@ -168,6 +175,7 @@ export function App() {
           coffee.reset()
           music.reset()
           activity.reset()
+          video.reset()
           calendar.reset()
           year.reset()
           sources.reset()

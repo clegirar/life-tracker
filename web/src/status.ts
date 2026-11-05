@@ -21,11 +21,37 @@ export const EXPIRY_WARNING_DAYS = 14
 const LISTEN_FRESHNESS_MS = 3 * 86_400_000
 
 const DAY_MS = 86_400_000
+/** Le connecteur YouTube passe en erreur sans export reçu depuis 48 h (`EXPORT_STALE_AFTER`). */
+const EXPORT_STALE_MS = 2 * DAY_MS
 const NBSP = ' '
 
 // Un remplacement de token crée une nouvelle source : `garmin-2`, `lastfm-2`.
 const isGarmin = (name: string) => /^garmin\b/.test(name)
 const isLastfm = (name: string) => /^lastfm\b/.test(name)
+const isYoutube = (name: string) => /^youtube\b/.test(name)
+
+/** Comment une source dit son échéance. */
+interface ExpiryPolicy {
+  label: string
+  /** La ligne passe en couleur tant de jours avant. */
+  warnDays: number
+  /** L'échéance proche suffit à rendre la carte « À faire ». */
+  todo: boolean
+  /** L'heure compte (un jeton), pas seulement le jour (une clé). */
+  precise: boolean
+}
+
+const KEY_POLICY: ExpiryPolicy = { label: 'Échéance', warnDays: EXPIRY_WARNING_DAYS, todo: true, precise: false }
+
+/**
+ * Le jeton de Google dure 7 jours : prévenir 14 jours avant mettrait la carte toujours « À faire ». Le
+ * connecteur redemande l'accord lui-même la veille, et c'est ce qui rend la carte « À faire ».
+ */
+function expiryPolicy(name: string): ExpiryPolicy {
+  if (isGarmin(name)) return { ...KEY_POLICY, label: 'Clé' }
+  if (isYoutube(name)) return { label: 'Accès Google', warnDays: 2, todo: false, precise: true }
+  return KEY_POLICY
+}
 
 /** « 9 h 05 », heure de Paris, insécable. */
 export function clock(instant: number): string {
@@ -74,14 +100,18 @@ export interface Line {
   warn?: boolean
 }
 
-/**
- * La marche à suivre. Les étapes peuvent citer un fichier ou une commande entre accents graves.
- * Un bouton (« Renouveler l'accord ») trouvera sa place ici quand un connecteur saura le proposer.
- */
+/** Le bouton de la marche à suivre : une page à ouvrir dans l'onglet même (Google revient sur l'app). */
+export interface Action {
+  label: string
+  href: string
+}
+
+/** La marche à suivre. Les étapes peuvent citer un fichier ou une commande entre accents graves. */
 export interface Guidance {
   title: string
   steps: string[]
   note: string | null
+  action?: Action
 }
 
 export interface Card {
@@ -120,15 +150,18 @@ function daysLeft(expires: number, now: number): number {
   return Math.round((day(expiryDate(expires)) - day(parisDate(now))) / DAY_MS)
 }
 
-export function expiresSoon(status: ReportedStatus | null, now: number): boolean {
+export function expiresSoon(status: ReportedStatus | null, now: number, warnDays = EXPIRY_WARNING_DAYS): boolean {
   const expires = time(status?.expires_at ?? null)
-  return expires !== null && (expires <= now || daysLeft(expires, now) <= EXPIRY_WARNING_DAYS)
+  return expires !== null && (expires <= now || daysLeft(expires, now) <= warnDays)
 }
 
 export function cardState(source: SourceStatus, now: number): CardState {
   const status = currentStatus(source)
+  const policy = expiryPolicy(source.name)
   if (status?.state === 'error') return 'broken'
-  if (status?.state === 'action_required' || expiresSoon(status, now)) return 'todo'
+  // Une page de consentement attend : le connecteur attend que je l'ouvre.
+  if (status?.state === 'action_required' || source.authorization_url) return 'todo'
+  if (policy.todo && expiresSoon(status, now, policy.warnDays)) return 'todo'
   if (source.silent) return 'silent'
   return 'ok'
 }
@@ -173,18 +206,57 @@ function expiring(name: string, expires: number, now: number): Guidance {
   return { ...keyRejected(name), title }
 }
 
+/**
+ * Un accord à donner ou à redonner à Google. Le bouton suit `authorization_url`, quelle que soit la
+ * source ; sans elle, le connecteur ne l'a pas encore préparée.
+ */
+function consent(source: SourceStatus, reason: 'consent_required' | 'consent_expired'): Guidance {
+  const first = reason === 'consent_required'
+  const title = first
+    ? 'La collecte attend ton accord pour commencer.'
+    : "L'accord donné à Google est à renouveler : la collecte attend que tu le redonnes."
+  if (!source.authorization_url) {
+    return {
+      title,
+      steps: [],
+      note: "Le lien vers Google arrive d'ici quelques minutes, à la prochaine passe du collecteur. Si rien ne vient, regarde ses logs sur le NAS : `sudo docker compose logs collector`.",
+    }
+  }
+  return {
+    title,
+    steps: [
+      "Google s'ouvre dans cette page : choisis ton compte et accepte l'accès demandé.",
+      "Si Google prévient que l'application n'est pas validée, continue : c'est la tienne.",
+      'Google te ramène ici, et la collecte reprend seule dans la minute.',
+    ],
+    note: first ? null : "Rien n'est perdu : l'export suivant reprend depuis la dernière donnée reçue.",
+    action: { label: first ? "Donner l'accord" : "Renouveler l'accord", href: source.authorization_url },
+  }
+}
+
 const LOGS = 'si cela dure, regarde ses logs sur le NAS : `sudo docker compose logs collector`.'
 
-function byReason(source: SourceStatus, reason: ReportedStatus['reason']): Guidance | null {
+/** YouTube : Google répond, mais aucun export n'a abouti depuis deux jours. */
+function exportsStale(source: SourceStatus, status: ReportedStatus | null, now: number): boolean {
+  if (!isYoutube(source.name) || status?.reason !== 'service_unavailable') return false
+  const collected = time(status.last_collected_at ?? null)
+  return collected === null || now - collected > EXPORT_STALE_MS
+}
+
+function byReason(source: SourceStatus, reason: ReportedStatus['reason'], now: number): Guidance | null {
+  if (exportsStale(source, currentStatus(source), now)) {
+    return {
+      title: "Google répond, mais aucun export n'a abouti depuis 2 jours.",
+      steps: [],
+      note: `Le collecteur réessaie seul à chaque export permis ; ${LOGS}`,
+    }
+  }
   switch (reason) {
     case 'key_rejected':
       return keyRejected(source.name)
+    case 'consent_required':
     case 'consent_expired':
-      return {
-        title: "L'accord donné au service a expiré : la collecte attend que tu le redonnes.",
-        steps: [],
-        note: "Un bouton « Renouveler l'accord » viendra ici. En attendant, suis la marche du runbook pour ce service.",
-      }
+      return consent(source, reason)
     case 'rate_limited':
       return {
         title: "Le service limite les appels pour l'instant.",
@@ -223,9 +295,10 @@ function silence(source: SourceStatus): Guidance {
 
 export function guidance(source: SourceStatus, state: CardState, now: number): Guidance | null {
   const status = currentStatus(source)
-  if (state === 'broken') return byReason(source, status?.reason ?? null)
+  if (state === 'broken') return byReason(source, status?.reason ?? null, now)
   if (state === 'todo') {
-    if (status?.state === 'action_required') return byReason(source, status.reason)
+    if (status?.state === 'action_required') return byReason(source, status.reason, now)
+    if (source.authorization_url) return consent(source, 'consent_expired')
     const expires = time(status?.expires_at ?? null)
     return expires === null ? null : expiring(source.name, expires, now)
   }
@@ -240,6 +313,7 @@ const LAST_OF: Record<string, string> = {
   coffee: 'Dernier café',
   'music.listen': 'Dernière écoute',
   workout: 'Dernière séance',
+  'video.watch': 'Dernière vidéo',
 }
 
 export function metricLine(metric: SourceStatus['metrics'][number], now: number): Line {
@@ -251,11 +325,17 @@ export function metricLine(metric: SourceStatus['metrics'][number], now: number)
 function expiryLine(source: SourceStatus, status: ReportedStatus | null, now: number): Line | null {
   const expires = time(status?.expires_at ?? null)
   if (expires === null) return null
-  const label = isGarmin(source.name) ? 'Clé' : 'Échéance'
+  const { label, warnDays, precise } = expiryPolicy(source.name)
+  if (precise) {
+    // Un jeton échoit à une heure précise : « expire demain à 14 h 32 ».
+    if (expires <= now) return { label, value: `expiré ${dayWord(parisDate(expires), parisDate(now))} à ${clock(expires)}`, warn: true }
+    if (expires - now <= warnDays * DAY_MS) return { label, value: `expire ${until(expires, now)}`, warn: true }
+    return { label, value: `valable jusqu'au ${shortDate(parisDate(expires), parisDate(now))} à ${clock(expires)}` }
+  }
   const date = shortDate(expiryDate(expires), parisDate(now))
   const left = daysLeft(expires, now)
   if (expires <= now) return { label, value: `expirée le ${date}`, warn: true }
-  if (left <= EXPIRY_WARNING_DAYS) {
+  if (left <= warnDays) {
     const when = left === 0 ? 'ce soir' : left === 1 ? 'demain' : `dans ${plural(left, 'jour')}`
     return { label, value: `expire le ${date}, ${when}`, warn: true }
   }
@@ -273,8 +353,16 @@ export function sourceCard(source: SourceStatus, now: number): Card {
       ? { label: 'Dernière passe', value: seen === null ? "aucune pour l'instant" : since(seen, now) }
       : { label: 'Dernier contact', value: seen === null ? "aucun pour l'instant" : since(seen, now) },
   ]
+  // La dernière collecte réussie : pour YouTube, le dernier export, attendu même avant le premier.
+  const lastCollected = time(status?.last_collected_at ?? null)
+  if (isYoutube(source.name) && status) {
+    lines.push({ label: 'Dernier export', value: lastCollected === null ? "aucun pour l'instant" : since(lastCollected, now) })
+  } else if (lastCollected !== null) {
+    lines.push({ label: 'Dernière collecte', value: since(lastCollected, now) })
+  }
   const next = time(status?.next_run_at ?? null)
-  if (next !== null && next > now) lines.push({ label: 'Prochaine passe', value: until(next, now) })
+  // YouTube : la prochaine passe est le prochain export que Google permet.
+  if (next !== null && next > now) lines.push({ label: isYoutube(source.name) ? 'Prochain export' : 'Prochaine passe', value: until(next, now) })
   const expiry = expiryLine(source, status, now)
   if (expiry) lines.push(expiry)
   lines.push(...source.metrics.map((metric) => metricLine(metric, now)))

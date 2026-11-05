@@ -84,6 +84,9 @@ export function hoursText(minutes: number): string {
   return `${Math.floor(total / 60)} h ${String(total % 60).padStart(2, '0')}`
 }
 
+/** Le nom d'une métrique dans une phrase : la majuscule initiale tombe, celle d'un nom propre reste. */
+export const lowerLabel = (label: string) => label.charAt(0).toLowerCase() + label.slice(1)
+
 /** Les unités qui se disent après le nombre, sans accord : « 8 412 pas », « 2 350 kcal ». */
 const PLAIN_UNITS = new Set(['pas', 'kcal'])
 
@@ -92,11 +95,13 @@ const PLAIN_UNITS = new Set(['pas', 'kcal'])
  * du registre dit comment, et le nom de la métrique sinon.
  */
 export function valueText(metric: MonthMetric, value: number | null): string {
-  const label = metric.label.toLowerCase()
+  const label = lowerLabel(metric.label)
   if (value === null) return `${label} : pas de données`
   if (metric.unit === 'min') return hoursText(value)
   if (metric.unit && PLAIN_UNITS.has(metric.unit)) return `${NUMBER.format(value)} ${metric.unit}`
-  const one = label.endsWith('s') ? label.slice(0, -1) : label
+  // Le premier mot porte le pluriel : « 1 vidéo YouTube », « 3 vidéos YouTube ».
+  const [head, ...rest] = label.split(' ')
+  const one = [head.endsWith('s') ? head.slice(0, -1) : head, ...rest].join(' ')
   return plural(Math.round(value), one, label)
 }
 
@@ -109,7 +114,7 @@ export function dayNotes(day: MonthDay, metrics: MonthMetric[]): string[] {
   for (const source of day.pending) notes.push(`en attente de ${sourceName(source)}`)
   for (const name of day.to_check) {
     const metric = metrics.find((m) => m.metric === name)
-    notes.push(`${metric ? metric.label.toLowerCase() : name} à vérifier`)
+    notes.push(`${metric ? lowerLabel(metric.label) : name} à vérifier`)
   }
   return notes
 }
