@@ -6,10 +6,12 @@ Le [POC](poc.md) est validé depuis le 4 nov. 2026. Chaque chantier a sa section
 
 | Chantier | État |
 | --- | --- |
-| Garmin Connect | En production depuis le 4 nov. 2026 (v0.3.1) ; fréquence cardiaque de la nuit en cours |
+| Garmin Connect | Fait le 5 nov. 2026 (v0.4.0) |
 | Ouvrir la web app sur Internet | À faire, quand je le demanderai |
 
 ## Garmin Connect
+
+Fait le 5 nov. 2026, par ma décision, tous les critères vérifiés sur le vrai NAS (voir ci-dessous).
 
 Premier tracker après le POC : mes pas, mon sommeil, mes séances de course et mes calories brûlées, par jour. Les choix du 4 nov. 2026 sont au journal des décisions de [l'architecture](architecture.md).
 
@@ -35,6 +37,8 @@ Premier tracker après le POC : mes pas, mon sommeil, mes séances de course et 
 
 **Fréquence cardiaque de la nuit, ajoutée le 4 nov. 2026** à ma demande, sur la branche `feat/garmin-fc-sommeil` : pour chaque nuit, la fréquence cardiaque la plus basse et la moyenne pendant le sommeil, que le résumé de sommeil de Garmin ne donne pas (`avgHeartRate` y est vide). Essai sur le vrai compte le même jour (structure seulement) : `/wellness-service/wellness/dailyHeartRate?date=AAAA-MM-JJ` rend la série d'un jour, un échantillon toutes les deux minutes (720 par jour) du minuit au minuit de Paris, avec des vides ; un jour par appel. Une nuit chevauche deux séries : celle de la veille du réveil et celle du jour. Le connecteur garde dans la nuit les échantillons compris entre son début et sa fin ; l'interprète en tire la plus basse et la moyenne, que voient la carte Activité (« FC la plus basse 48 bpm · moyenne 55 bpm ») et le MCP. Le premier passage après le déploiement relit une fois tout le sommeil de l'historique avec sa fréquence cardiaque et annule l'ancienne version de chaque nuit (voir le journal des décisions de [l'architecture](architecture.md)).
 
+
+**Fréquence cardiaque de la nuit vérifiée en production le 5 nov. 2026** (v0.4.0) : relecture unique de l'historique du sommeil passée, minimum et moyenne affichés dans la web app, `admin rebuild` à 0 différence.
 **Terminé quand**
 
 - Les pas, les calories, le sommeil et les courses d'une journée réelle correspondent à Garmin Connect, dans le calendrier comme par le MCP.
