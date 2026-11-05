@@ -86,7 +86,7 @@ for kind in garmin.daily_summary garmin.sleep garmin.activity garmin.activity_tr
 done
 E2E_YOUTUBE_TOKEN="$(ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin create-source youtube --silence-threshold "3 days" 2>/dev/null)"
 export E2E_YOUTUBE_TOKEN
-for kind in youtube.watch youtube.video_info; do
+for kind in youtube.watch youtube.video_info record.cancel; do
   ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin grant-kind youtube "$kind" 2>/dev/null
 done
 # Les noms affichés de la page d'état, comme sur le NAS.

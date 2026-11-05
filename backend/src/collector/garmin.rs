@@ -936,17 +936,8 @@ struct Unit {
     previous: Option<String>,
 }
 
-/// L'annulation d'une version de Garmin par la même source, sous une clé qui ne dépend que de sa cible :
-/// la renvoyer ne fait qu'un `duplicate`.
-pub fn cancel_record(source: &str, key: &str, now: DateTime<Utc>) -> Value {
-    json!({
-        "key": format!("cancel:{key}"),
-        "kind": "record.cancel",
-        "schema_version": 1,
-        "occurred_at": utc(now),
-        "payload": { "source": source, "key": key },
-    })
-}
+/// L'annulation d'une version de Garmin par la même source.
+pub use super::cancel_record;
 
 pub struct Collector {
     config: Config,
