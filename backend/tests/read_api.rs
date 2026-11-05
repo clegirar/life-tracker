@@ -32,7 +32,7 @@ impl App {
             .await
             .unwrap();
         let service = admin::create_service_token(&db.admin, "mcp").await.unwrap();
-        let lastfm = admin::create_source(&db.admin, "lastfm", Some("6 hours"))
+        let lastfm = admin::create_source(&db.admin, "lastfm", Some("6 hours"), None)
             .await
             .unwrap();
         for kind in ["lastfm.scrobble", "lastfm.track_info"] {
@@ -351,7 +351,7 @@ async fn the_service_token_never_writes() {
 async fn a_revoked_or_unknown_token_reads_nothing() {
     let app = App::new().await;
     let unknown = "0".repeat(64);
-    let source = admin::create_source(&app.db.admin, "ios", None)
+    let source = admin::create_source(&app.db.admin, "ios", None, None)
         .await
         .unwrap();
     for token in [&unknown, &source, &app.lastfm] {

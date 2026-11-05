@@ -69,7 +69,9 @@ impl TestDb {
 
     /// Une source à token ; renvoie son id et son token.
     pub async fn source(&self, name: &str, kinds: &[&str]) -> (i16, String) {
-        let token = admin::create_source(&self.admin, name, None).await.unwrap();
+        let token = admin::create_source(&self.admin, name, None, None)
+            .await
+            .unwrap();
         for kind in kinds {
             admin::grant_kind(&self.admin, name, kind).await.unwrap();
         }
@@ -184,7 +186,7 @@ impl Ctx {
         let app = db::pool(&app_url()).unwrap();
         let admin_pool = db::pool(&admin_url()).unwrap();
         let source = unique_name();
-        let token = admin::create_source(&admin_pool, &source, None)
+        let token = admin::create_source(&admin_pool, &source, None, None)
             .await
             .unwrap();
         for kind in kinds {

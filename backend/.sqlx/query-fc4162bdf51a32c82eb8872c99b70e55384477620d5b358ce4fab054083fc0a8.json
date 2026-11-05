@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE core.sources SET status = $2::text::jsonb, status_reported_at = now() WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int2",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fc4162bdf51a32c82eb8872c99b70e55384477620d5b358ce4fab054083fc0a8"
+}

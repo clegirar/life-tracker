@@ -26,7 +26,7 @@ impl App {
         admin::set_password(&db.admin, "moi", PASSWORD)
             .await
             .unwrap();
-        let lastfm = admin::create_source(&db.admin, "lastfm", Some("6 hours"))
+        let lastfm = admin::create_source(&db.admin, "lastfm", Some("6 hours"), None)
             .await
             .unwrap();
         for kind in ["lastfm.scrobble", "lastfm.track_info"] {
@@ -68,7 +68,7 @@ impl App {
 
     /// Une seconde source d'écoutes, sans seuil de silence : un historique importé une fois.
     async fn history_source(&self) -> String {
-        let token = admin::create_source(&self.db.admin, "history", None)
+        let token = admin::create_source(&self.db.admin, "history", None, None)
             .await
             .unwrap();
         admin::grant_kind(&self.db.admin, "history", "lastfm.scrobble")

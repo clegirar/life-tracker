@@ -1,5 +1,5 @@
 // La barre latérale : fixe à gauche sur un écran large, tiroir derrière un bouton sur iPhone.
-// Elle n'accueille pour l'instant que le calendrier ; d'autres entrées viendront s'y ranger.
+// Deux rubriques : le calendrier et l'état des trackers, marqué d'un point quand une carte attend une action.
 
 import { useEffect, useRef, useSyncExternalStore, type MouseEvent, type RefObject } from 'react'
 
@@ -23,7 +23,23 @@ function CalendarIcon() {
   )
 }
 
-export function MenuButton({ open, onOpen, buttonRef }: { open: boolean; onOpen: () => void; buttonRef: RefObject<HTMLButtonElement | null> }) {
+function StatusIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 12h4l2.5-6 5 12 2.5-6h4" />
+    </svg>
+  )
+}
+
+interface MenuButtonProps {
+  open: boolean
+  onOpen: () => void
+  buttonRef: RefObject<HTMLButtonElement | null>
+  /** Une carte de la page d'état attend une action : le tiroir fermé le dit aussi. */
+  attention: boolean
+}
+
+export function MenuButton({ open, onOpen, buttonRef, attention }: MenuButtonProps) {
   return (
     <button
       ref={buttonRef}
@@ -37,6 +53,7 @@ export function MenuButton({ open, onOpen, buttonRef }: { open: boolean; onOpen:
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
         <path d="M4 7h16M4 12h16M4 17h16" />
       </svg>
+      {attention && <span className="menu-dot" data-testid="menu-dot" aria-hidden="true" />}
     </button>
   )
 }
@@ -45,13 +62,19 @@ interface Props {
   wide: boolean
   open: boolean
   onClose: () => void
+  /** La rubrique ouverte. */
+  current: 'calendar' | 'status'
   /** L'adresse de l'entrée « Calendrier ». */
   calendarHref: string
   onCalendar: () => void
+  statusHref: string
+  onStatus: () => void
+  /** Une carte de la page d'état attend une action. */
+  attention: boolean
   onLogout: () => void
 }
 
-export function Sidebar({ wide, open, onClose, calendarHref, onCalendar, onLogout }: Props) {
+export function Sidebar({ wide, open, onClose, current, calendarHref, onCalendar, statusHref, onStatus, attention, onLogout }: Props) {
   const first = useRef<HTMLAnchorElement>(null)
   const drawer = !wide
   const shown = wide || open
@@ -67,11 +90,11 @@ export function Sidebar({ wide, open, onClose, calendarHref, onCalendar, onLogou
     return () => document.removeEventListener('keydown', onKey)
   }, [drawer, open, onClose])
 
-  const goCalendar = (event: MouseEvent<HTMLAnchorElement>) => {
+  const go = (action: () => void) => (event: MouseEvent<HTMLAnchorElement>) => {
     // Un clic avec modificateur garde son sens : nouvel onglet, nouvelle fenêtre.
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return
     event.preventDefault()
-    onCalendar()
+    action()
   }
 
   return (
@@ -90,9 +113,29 @@ export function Sidebar({ wide, open, onClose, calendarHref, onCalendar, onLogou
         <nav aria-label="Rubriques">
           <ul className="sidebar-list">
             <li>
-              <a ref={first} href={calendarHref} className="sidebar-item" aria-current="page" onClick={goCalendar}>
+              <a
+                ref={first}
+                href={calendarHref}
+                className="sidebar-item"
+                aria-current={current === 'calendar' ? 'page' : undefined}
+                onClick={go(onCalendar)}
+              >
                 <CalendarIcon />
                 Calendrier
+              </a>
+            </li>
+            <li>
+              <a
+                href={statusHref}
+                className="sidebar-item"
+                // Le point ne se lit pas : le nom le dit.
+                aria-label={attention ? 'État, une action attendue' : undefined}
+                aria-current={current === 'status' ? 'page' : undefined}
+                onClick={go(onStatus)}
+              >
+                <StatusIcon />
+                État
+                {attention && <span className="sidebar-dot" data-testid="status-dot" aria-hidden="true" />}
               </a>
             </li>
           </ul>

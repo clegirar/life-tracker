@@ -7,6 +7,8 @@ Le [POC](poc.md) est validé depuis le 4 nov. 2026. Chaque chantier a sa section
 | Chantier | État |
 | --- | --- |
 | Garmin Connect | Fait le 5 nov. 2026 (v0.4.0) |
+| Page d'état des trackers | En cours depuis le 5 nov. 2026, avant YouTube |
+| YouTube | En cours depuis le 5 nov. 2026 : essai fait, construction après la page d'état |
 | Ouvrir la web app sur Internet | À faire, quand je le demanderai |
 
 ## Garmin Connect
@@ -46,6 +48,94 @@ Premier tracker après le POC : mes pas, mon sommeil, mes séances de course et 
 - La clé n'apparaît ni dans le dépôt ni dans les logs ; le connecteur n'a pas accès à la base.
 - Tout l'historique (depuis juin 2026) est collecté, sans doublon à la relecture.
 - L'affichage est vérifié à la largeur d'un iPhone et sur Mac, en clair et en sombre.
+
+## Page d'état des trackers
+
+Ouvert le 5 nov. 2026, à ma demande, avant YouTube : une page de la web app qui dit, tracker par tracker, s'il fonctionne et ce qu'il attend de moi. YouTube viendra s'y brancher avec son bouton « Renouveler ».
+
+**Base existante.** `/v1/sources/health` donne déjà, par source, le dernier contact et le seuil de silence, et par métrique la fraîcheur et la couverture de chaque source (le bandeau de silence de la musique s'en sert).
+
+**Ajout.** Chaque connecteur rapporte son état avec son heartbeat : bon, action requise ou erreur, une raison codée (jamais de donnée personnelle), une échéance éventuelle et une action éventuelle. Le backend garde le dernier état rapporté par source, hors du journal. La page montre une carte par tracker :
+
+- **Garmin Connect :** dernière passe réussie, échéance de la clé personnelle (un an au plus ; donnée par Garmin si l'échange de la clé la renvoie, à vérifier, sinon la date que je donne à la création), et un refus `401` signalé « clé expirée ou révoquée », avec la marche à suivre. La page affiche et rappelle, sans recevoir de clé : la nouvelle se met sur le NAS comme aujourd'hui.
+- **Musique (Apple Music par le scrobbler, Last.fm) :** le scrobbler est sur mon téléphone, la page ne le pilote pas ; elle montre le dernier scrobble reçu, la dernière passe du connecteur Last.fm, et alerte quand rien n'arrive plus (scrobbler arrêté).
+- **Raccourci café :** le dernier contact.
+
+**Conception, le 5 nov. 2026** (à reporter au journal des décisions de [l'architecture](architecture.md) à la construction) :
+
+- **Deux signaux distincts.** Le dernier contact (`last_seen_at`) garde son sens : le service a bien été interrogé. Un connecteur en panne n'envoie pas de heartbeat, et le seuil de silence continue d'alerter. L'état, lui, passe par une route à part, `PUT /v1/sources/me/status`, authentifiée par le token de la source mais **sans toucher au dernier contact**. Sinon, un connecteur qui dirait « clé refusée » paraîtrait vivant.
+- **Un vocabulaire fermé, aucun texte libre.** Le corps contient seulement :
+  - `state` : `ok`, `action_required` ou `error` ;
+  - `reason` : un code connu, par exemple `key_rejected`, `consent_expired`, `rate_limited`, `service_unavailable`, `ingest_failed` ;
+  - `expires_at` (facultatif) : l'échéance de la clé ou du jeton ;
+  - `next_run_at` (facultatif).
+
+  Le backend refuse tout autre champ ou code. Aucun message d'erreur, aucune donnée personnelle ni aucun secret ne peut donc s'y glisser. C'est la web app qui traduit chaque code en phrase et en marche à suivre.
+- **Le stockage.** Deux colonnes sur `core.sources`, par une nouvelle migration : `status jsonb` et `status_reported_at timestamptz`, avec le droit `UPDATE` sur elles seules pour `tracker_app`. Un seul état par source, le dernier, hors du journal comme le dernier contact. Une colonne `label` donne en plus le nom affiché (« Garmin Connect »), fixé par `admin create-source --label` ou `admin set-label <source> <libellé>`. Sans libellé, la page montre le nom.
+- **Les connecteurs.** Last.fm et Garmin rapportent leur état à la fin de chaque passe, qu'elle réussisse ou non. Un rapport qui échoue ne fait pas échouer la passe.
+  - Garmin ne connaît pas l'échéance de sa clé : le jeton échangé dure 24 h, la clé jusqu'à un an. On lui donne cette échéance par `GARMIN_KEY_EXPIRES_ON` (la date affichée par Garmin à la création de la clé), et il la rapporte. La carte prévient 14 jours avant.
+- **La lecture.** `GET /v1/sources/status`, sous session, réunit par source :
+  - le libellé, le dernier contact et le seuil de silence ;
+  - l'état rapporté et sa date ;
+  - pour chaque métrique que la source alimente, sa dernière donnée (déjà calculée pour `/v1/sources/health`).
+
+  La page montre les sources qui ont un seuil de silence ou un état. L'import Apple, ponctuel, et la source `webapp` n'apparaissent pas.
+- **La page.** Une rubrique « État » dans le menu, à côté du calendrier, avec un point quand une carte demande une action. Chaque carte montre :
+  - le nom et un état en un mot (Fonctionne, À faire, En panne, Silencieux) ;
+  - les dernières données, par exemple « dernier scrobble il y a 2 h » ou « dernière passe Garmin il y a 10 min » ;
+  - l'échéance éventuelle ;
+  - quand il le faut, la marche à suivre.
+
+  Les cartes du jour : Garmin Connect, Musique (le scrobbler par Last.fm) et Raccourci café.
+
+**Terminé quand**
+
+- Chaque tracker en service a sa carte, avec un état juste : je le vérifie en coupant un connecteur sur le NAS et en le voyant passer en alerte, puis revenir.
+- Un état rapporté ne contient ni secret ni donnée personnelle, et n'entre pas au journal.
+- La page exige la session, comme toute route.
+- La règle est écrite : tout nouveau tracker a sa carte dans cette page (principe 12 de l'architecture, `CLAUDE.md`).
+- L'affichage est vérifié à la largeur d'un iPhone et sur Mac, en clair et en sombre.
+
+**Construit le 5 nov. 2026, backend** : migration `20261105120000_source_status.sql`, `PUT /v1/sources/me/status`, `GET /v1/sources/status`, `admin create-source --label` et `admin set-label`, rapports d'état de Last.fm et de Garmin, `GARMIN_KEY_EXPIRES_ON` (voir le journal des décisions de [l'architecture](architecture.md), 5 nov. 2026). Écart : un libellé suffit aussi à faire paraître une source, pour le raccourci café, sans seuil de silence.
+
+**Construit le 5 nov. 2026, web app** : rubrique « État » (`/etat`) dans le menu, une carte par source avec son état en un mot (Fonctionne, À faire, En panne, Silencieux), ses dernières données, l'échéance de la clé et, au besoin, « Que faire ». Un point dans le menu pour À faire et En panne, pas pour Silencieux. Une erreur rapportée avant un contact réussi plus récent est ignorée. Écart : un connecteur Last.fm silencieux veut dire que le collecteur n'atteint plus Last.fm, pas que le scrobbler s'est arrêté ; ce dernier cas est une simple note sur la carte Musique quand la dernière écoute dépasse 3 jours. Captures Playwright à 390 et 1280 px, en clair et en sombre. Reste la mise en service (`docs/deploiement.md`, « Mise à jour : page d'état des trackers »).
+
+## YouTube
+
+Ouvert le 5 nov. 2026, à ma demande. Ce que je regarde sur YouTube : les vidéos vues, par chaîne et par vidéo (tops et découvertes, comme la musique), et le temps de visionnage.
+
+**Accès.** L'API YouTube Data v3 ne donne plus l'historique de visionnage. Le scraper (Maxun ou autre) est écarté pour les raisons qui ont écarté l'accès non officiel à Garmin : il faudrait les cookies du compte Google sur le NAS, ce serait fragile et contraire aux conditions de Google. On passe par l'API Google Data Portability (`dataportability.myactivity.youtube`), dans un connecteur du collecteur avec sa source `youtube` : au plus un export toutes les 24 h. Mon client OAuth reste en mode Testing (passer en production demanderait la vérification de Google et un audit de sécurité) : le jeton expire au bout de 7 jours et je redonne mon accord chaque semaine. Un oubli ne perd rien, l'export suivant reprend depuis la dernière donnée.
+
+**Renouveler l'accord depuis la web app** (ajouté le 5 nov. 2026, à ma demande). Quand le jeton expire, la web app affiche un bouton « Renouveler » qui ouvre la page de consentement de Google. Google renvoie sur la web app, et le collecteur reprend seul.
+- Le collecteur prépare la demande (état aléatoire et vérificateur PKCE, qu'il garde) et confie seulement l'URL au backend, avec le token de sa source.
+- Google renvoie un code d'usage unique sur une route de la web app, sous session. Le backend le garde quelques minutes, en mémoire, et le collecteur vient le chercher puis l'échange lui-même.
+- Le jeton et le secret client ne vivent que dans le collecteur ; le code seul ne sert à rien sans le vérificateur PKCE. Rien n'entre au journal, et le collecteur ne touche pas la base.
+- Le client OAuth devient de type « Application Web », avec l'adresse de retour `https://<nas>.<tailnet>.ts.net:8443/…`. Reste à vérifier que Google accepte une adresse en `ts.net` ; sinon, une sous-commande `youtube-authorize` en ligne de commande.
+
+**Historique.** Par l'API seule : son premier export rend tout mon historique (voir l'essai ci-dessous). L'import Google Takeout, d'abord prévu, est donc retiré.
+
+**Temps de visionnage.** Google ne donne pas le temps réellement regardé. On compte la durée de chaque vidéo, tirée de l'API Data v3 (clé publique) et entrée au journal comme enrichissement, sur le modèle de la durée des morceaux. L'interface dit que c'est la durée des vidéos. Une vidéo sans durée connue est comptée à part, jamais à zéro.
+
+**Écartés et comptés par motif :** les publicités, les recherches, les posts consultés, les abonnements et les écoutes YouTube Music (déjà couvertes par la musique ; aucune dans mon historique).
+
+**Essai sur le vrai compte, le 5 nov. 2026** (structure seulement, jamais les valeurs ; jeton et archives restés hors du dépôt) :
+
+- **Consentement :** le scope restreint est accepté pour mon client « Desktop » non vérifié en mode Testing, une fois mon adresse ajoutée aux utilisateurs de test (sans elle : `403 access_denied`). Accès choisi : 180 jours ; Google rend quand même `refresh_token_expires_in = 604799`, soit 7 jours.
+- **Export :** `portabilityArchive:initiate` sur `myactivity.youtube`, puis `archiveJobs/<id>/portabilityArchiveState` : terminé en 11 minutes environ. Deux zips sur `storage.googleapis.com`, sans redirection : `Portability/My Activity/YouTube/MyActivity.json` et un `archive_browser.json` sans intérêt.
+- **Format :** une liste d'entrées au format de Takeout (`header`, `title`, `titleUrl`, `subtitles[{name, url}]`, `time`, `products`, `details`, `activityControls`, `description`). `time` en UTC ISO, à la milliseconde le plus souvent. Libellés en anglais (« Watched », « From Google Ads ») quand Takeout est en français : on reconnaît une vidéo à `titleUrl` en `/watch?v=` (id de 11 caractères, seul paramètre) et une publicité à `details`, jamais au texte. Le fichier mêle vidéos vues, recherches, posts et abonnements.
+- **Historique :** 24 558 vidéos vues depuis sept. 2023, autant que Takeout (24 594). Environ 19 % des entrées sont des publicités. 2 039 vidéos vues n'ont plus de chaîne (supprimées ou privées ; leur titre est l'URL) : on garde l'id seul.
+- **Stabilité :** deux exports du même jour (Takeout et Data Portability) ont 24 318 visionnages communs et diffèrent d'environ 1 % de chaque côté, sans décalage d'heure. Aucun doublon sur la paire (vidéo, instant).
+- **Fréquence :** un second export dans les 24 h est refusé en `429 RESOURCE_EXHAUSTED_TIME_BASED`, avec l'heure de la prochaine autorisation (`timestamp_after_24hrs`).
+- **Restent à voir :** le filtre `startTime` sur un export suivant (après le 6 nov. 13 h 53), l'expiration effective du jeton (12 nov.), et `videos.list` de Data v3.
+
+**Terminé quand**
+
+- Une journée réelle correspond à mon historique YouTube, dans le calendrier comme par le MCP.
+- Tout l'historique est collecté, sans doublon à la relecture, et `admin rebuild` donne 0 différence.
+- Après l'expiration du jeton, je renouvelle l'accord depuis la web app (iPhone comme Mac), et l'export suivant reprend sans trou.
+- Ni clé, ni jeton, ni donnée personnelle dans le dépôt ou les logs ; le connecteur n'a pas accès à la base.
+- YouTube a sa carte dans la page d'état : échéance du jeton, dernier export, prochain export permis, bouton « Renouveler ».
+- L'affichage est vérifié à la largeur d'un iPhone et sur Mac, en clair et en sombre, et la durée y est présentée comme celle des vidéos.
 
 ## Ouvrir la web app sur Internet
 

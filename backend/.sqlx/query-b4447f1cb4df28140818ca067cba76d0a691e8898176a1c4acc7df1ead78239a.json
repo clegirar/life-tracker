@@ -1,0 +1,95 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, name, label, last_seen_at,\n                  extract(epoch FROM silence_threshold)::float8 AS threshold,\n                  COALESCE(now() - COALESCE(last_seen_at, created_at) > silence_threshold, false)\n                    AS \"silent!\",\n                  status::text AS status, status_reported_at\n           FROM core.sources\n           WHERE auth = 'token' AND revoked_at IS NULL\n             AND (silence_threshold IS NOT NULL OR status IS NOT NULL OR label IS NOT NULL)\n           ORDER BY lower(COALESCE(label, name)), name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "core.sources",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.sources",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "label",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.sources",
+            "name": "label"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "last_seen_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.sources",
+            "name": "last_seen_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "threshold",
+        "type_info": "Float8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "silent!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "status",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "status_reported_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.sources",
+            "name": "status_reported_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      null,
+      null,
+      null,
+      true
+    ]
+  },
+  "hash": "b4447f1cb4df28140818ca067cba76d0a691e8898176a1c4acc7df1ead78239a"
+}

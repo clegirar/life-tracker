@@ -27,6 +27,7 @@ pub use crate::ingest_client::install_tls;
 use crate::ingest_client::{IngestClient, IngestFailure, RecordOutcome, http_client};
 use crate::interpreters::lastfm_name;
 use crate::music;
+use crate::source_status::{Reason, SourceStatus, State as Health};
 use lastfm::{Lastfm, RecentPage, ServiceError};
 
 const STATE_FILE: &str = "state.json";
@@ -38,6 +39,8 @@ const ENRICHMENTS_BETWEEN_SAVES: usize = 25;
 /// Bien en dessous du seuil de silence de 6 h, pour qu'un retour de Last.fm se voie vite.
 const MAX_BACKOFF: Duration = Duration::from_secs(1800);
 const MAX_RATE_LIMIT_WAIT: Duration = Duration::from_secs(3600);
+/// Last.fm : clé d'API invalide (10) ou suspendue (26).
+const KEY_REJECTED_CODES: [i64; 2] = [10, 26];
 
 pub const DEFAULT_LASTFM_URL: &str = "https://ws.audioscrobbler.com/2.0/";
 
@@ -202,6 +205,46 @@ pub fn rate_limit_wait(retry_after: Duration) -> Duration {
     retry_after.min(MAX_RATE_LIMIT_WAIT)
 }
 
+/// L'état rapporté pour la page d'état après un passage en échec (`ok` sinon). Une clé invalide ou
+/// suspendue (codes 10 et 26, ou un 403) demande une action ; le reste passe seul. Un état qui ne
+/// s'écrit plus sur disque n'a pas de code à lui : `service_unavailable`, le connecteur est en panne.
+pub fn failure_status(error: &TickError) -> SourceStatus {
+    let (state, reason) = match error {
+        TickError::Service(ServiceError::Failed { status, code })
+            if *status == 403 || code.is_some_and(|c| KEY_REJECTED_CODES.contains(&c)) =>
+        {
+            (Health::ActionRequired, Reason::KeyRejected)
+        }
+        TickError::Service(ServiceError::RateLimited { .. }) => {
+            (Health::Error, Reason::RateLimited)
+        }
+        TickError::Service(_) | TickError::State => (Health::Error, Reason::ServiceUnavailable),
+        TickError::Ingest { .. } => (Health::Error, Reason::IngestFailed),
+    };
+    SourceStatus::failed(state, reason)
+}
+
+/// Rapporte l'état d'un connecteur, au mieux : un échec se note et n'arrête rien. `next_run_at` est
+/// la prochaine passe prévue.
+pub(crate) async fn report_status(
+    ingest: &IngestClient,
+    mut status: SourceStatus,
+    delay: Duration,
+    connector: &'static str,
+) {
+    status.next_run_at = chrono::TimeDelta::from_std(delay)
+        .ok()
+        .and_then(|delay| Utc::now().checked_add_signed(delay));
+    if let Err(failure) = ingest.report_status(&status).await {
+        warn!(
+            connector,
+            reason = failure.reason,
+            status = failure.status,
+            "status not reported"
+        );
+    }
+}
+
 /// Une limitation de débit n'est jamais une erreur à signaler. Rien d'autre que des codes.
 fn log_failure(error: &TickError, failures: u32) {
     match error {
@@ -232,6 +275,8 @@ pub struct Collector {
     /// Déjà accusés depuis le démarrage : les relire à chaque passage serait sans effet, sauf du
     /// travail pour la base. Limité aux clés de la dernière fenêtre.
     acknowledged: HashSet<String>,
+    /// Passages en échec d'affilée, pour espacer les essais.
+    failures: u32,
 }
 
 impl Collector {
@@ -256,6 +301,7 @@ impl Collector {
             ingest,
             state,
             acknowledged: HashSet::new(),
+            failures: 0,
         })
     }
 
@@ -419,32 +465,39 @@ impl Collector {
         save_state(&self.config.state_dir, STATE_FILE, &self.state).map_err(|_| TickError::State)
     }
 
+    /// Un passage, son journal et son état rapporté ; renvoie le délai avant le suivant. Le rapport
+    /// d'état vient après le passage et n'en change ni le résultat ni le signal de vie.
+    pub async fn pass(&mut self) -> Duration {
+        let (delay, status) = match self.tick().await {
+            Ok(report) => {
+                self.failures = 0;
+                info!(
+                    pages = report.pages,
+                    accepted = report.accepted,
+                    duplicate = report.duplicate,
+                    rejected = report.rejected,
+                    enriched = report.enriched,
+                    pending = self.state.pending.len(),
+                    interrupted = report.interrupted,
+                    "collect pass completed"
+                );
+                (self.config.interval, SourceStatus::ok())
+            }
+            Err(err) => {
+                self.failures += 1;
+                log_failure(&err, self.failures);
+                (retry_delay(self.failures, &err), failure_status(&err))
+            }
+        };
+        report_status(&self.ingest, status, delay, "lastfm").await;
+        delay
+    }
+
     /// Jusqu'à l'arrêt demandé. Aucune erreur n'arrête le collecteur : il réessaie, son curseur reste
     /// en place, et le seuil de silence de la source signale une panne qui dure.
     pub async fn run(mut self, mut stop: watch::Receiver<bool>) {
-        let mut failures = 0;
         while !*stop.borrow() {
-            let delay = match self.tick().await {
-                Ok(report) => {
-                    failures = 0;
-                    info!(
-                        pages = report.pages,
-                        accepted = report.accepted,
-                        duplicate = report.duplicate,
-                        rejected = report.rejected,
-                        enriched = report.enriched,
-                        pending = self.state.pending.len(),
-                        interrupted = report.interrupted,
-                        "collect pass completed"
-                    );
-                    self.config.interval
-                }
-                Err(err) => {
-                    failures += 1;
-                    log_failure(&err, failures);
-                    retry_delay(failures, &err)
-                }
-            };
+            let delay = self.pass().await;
             tokio::select! {
                 _ = tokio::time::sleep(delay) => {}
                 _ = stop.changed() => {}
@@ -547,5 +600,43 @@ mod tests {
         assert_eq!(retry_delay(1, &limited(90)), Duration::from_secs(90));
         assert_eq!(retry_delay(9, &limited(90)), Duration::from_secs(90));
         assert_eq!(retry_delay(1, &limited(99_999)), MAX_RATE_LIMIT_WAIT);
+    }
+
+    #[test]
+    fn an_invalid_key_asks_for_an_action_and_the_rest_is_an_error() {
+        let status = |error| {
+            let s = failure_status(&error);
+            assert!(s.is_consistent());
+            (s.state, s.reason.unwrap())
+        };
+        let failed = |status, code| TickError::Service(ServiceError::Failed { status, code });
+        for key in [
+            failed(403, Some(10)),
+            failed(200, Some(26)),
+            failed(403, None),
+        ] {
+            assert_eq!(status(key), (Health::ActionRequired, Reason::KeyRejected));
+        }
+        for other in [
+            failed(200, Some(11)),
+            failed(502, None),
+            TickError::Service(ServiceError::Unavailable { reason: "timeout" }),
+            TickError::State,
+        ] {
+            assert_eq!(status(other), (Health::Error, Reason::ServiceUnavailable));
+        }
+        assert_eq!(
+            status(TickError::Service(ServiceError::RateLimited {
+                retry_after: Duration::from_secs(1)
+            })),
+            (Health::Error, Reason::RateLimited)
+        );
+        assert_eq!(
+            status(TickError::Ingest {
+                reason: "connect",
+                status: None
+            }),
+            (Health::Error, Reason::IngestFailed)
+        );
     }
 }

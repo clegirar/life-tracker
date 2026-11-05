@@ -84,6 +84,10 @@ export E2E_GARMIN_TOKEN
 for kind in garmin.daily_summary garmin.sleep garmin.activity garmin.activity_track record.cancel; do
   ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin grant-kind garmin "$kind" 2>/dev/null
 done
+# Les noms affichés de la page d'état, comme sur le NAS.
+ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin set-label garmin "Garmin Connect" 2>/dev/null
+ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin set-label lastfm "Musique" 2>/dev/null
+ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin set-label ios "Raccourci café" 2>/dev/null
 
 API_PORT="$(free_port)"
 # Sans DEV_INSECURE_COOKIE : le cookie est Secure, comme en production.

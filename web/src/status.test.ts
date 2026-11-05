@@ -1,0 +1,208 @@
+import { describe, expect, it } from 'vitest'
+import type { SourceStatus } from './api'
+import { cardState, codeParts, currentStatus, metricLine, since, sourceCard, summary, until } from './status'
+
+// Le 5 nov. 2026, 14 h 00 à Paris (heure d'hiver, UTC+1).
+const NOW = Date.parse('2026-11-05T13:00:00Z')
+const NBSP = ' '
+const iso = (offsetMs: number) => new Date(NOW + offsetMs).toISOString()
+const MIN = 60_000
+const HOUR = 3_600_000
+const DAY = 86_400_000
+
+function source(overrides: Partial<SourceStatus> = {}): SourceStatus {
+  return {
+    name: 'garmin',
+    label: 'Garmin Connect',
+    last_seen_at: iso(-10 * MIN),
+    silence_threshold_seconds: 43_200,
+    silent: false,
+    status: { state: 'ok', reason: null, expires_at: iso(300 * DAY), next_run_at: iso(5 * MIN) },
+    status_reported_at: iso(-10 * MIN),
+    metrics: [],
+    ...overrides,
+  }
+}
+
+describe('les heures relatives', () => {
+  it('dit le passé simplement, puis le jour et l’heure', () => {
+    expect(since(NOW - 20_000, NOW)).toBe("à l'instant")
+    expect(since(NOW - 10 * MIN, NOW)).toBe(`il y a 10${NBSP}min`)
+    expect(since(NOW - 2 * HOUR - 5 * MIN, NOW)).toBe(`il y a 2${NBSP}h`)
+    expect(since(Date.parse('2026-11-05T06:05:00Z'), NOW)).toBe(`aujourd'hui à 7${NBSP}h${NBSP}05`)
+    expect(since(Date.parse('2026-11-04T19:30:00Z'), NOW)).toBe(`hier à 20${NBSP}h${NBSP}30`)
+    expect(since(Date.parse('2026-11-01T19:30:00Z'), NOW)).toBe(`le 1${NBSP}nov. à 20${NBSP}h${NBSP}30`)
+    expect(since(Date.parse('2025-12-24T19:30:00Z'), NOW)).toBe(`le 24${NBSP}déc. 2025 à 20${NBSP}h${NBSP}30`)
+  })
+
+  it('dit le futur en heure de Paris', () => {
+    expect(until(Date.parse('2026-11-05T13:05:00Z'), NOW)).toBe(`à 14${NBSP}h${NBSP}05`)
+    expect(until(Date.parse('2026-11-06T06:00:00Z'), NOW)).toBe(`demain à 7${NBSP}h${NBSP}00`)
+  })
+
+  it('passe minuit à Paris, pas en UTC', () => {
+    // 23 h 30 UTC le 4 : déjà le 5 à Paris.
+    expect(since(Date.parse('2026-11-04T23:30:00Z'), NOW)).toBe(`aujourd'hui à 0${NBSP}h${NBSP}30`)
+  })
+})
+
+describe("l'état d'une carte", () => {
+  it('fonctionne par défaut', () => {
+    expect(cardState(source(), NOW)).toBe('ok')
+    expect(cardState(source({ status: null, silence_threshold_seconds: null }), NOW)).toBe('ok')
+  })
+
+  it('est en panne sur une erreur rapportée, avec sa raison', () => {
+    const broken = source({
+      last_seen_at: iso(-3 * HOUR),
+      status: { state: 'error', reason: 'service_unavailable', expires_at: null, next_run_at: null },
+      status_reported_at: iso(-5 * MIN),
+    })
+    expect(cardState(broken, NOW)).toBe('broken')
+    expect(sourceCard(broken, NOW).guidance?.title).toBe('Le service ne répond pas, ou refuse la demande.')
+  })
+
+  it("oublie une erreur suivie d'un contact réussi, sauf si la source est muette", () => {
+    const stale = source({
+      last_seen_at: iso(-1 * MIN),
+      status: { state: 'error', reason: 'rate_limited', expires_at: iso(300 * DAY), next_run_at: null },
+      status_reported_at: iso(-20 * MIN),
+    })
+    expect(cardState(stale, NOW)).toBe('ok')
+    expect(currentStatus(stale)?.expires_at).toBe(iso(300 * DAY))
+    expect(cardState({ ...stale, silent: true }, NOW)).toBe('broken')
+  })
+
+  it('demande une action sur une clé refusée, même muette', () => {
+    const card = sourceCard(
+      source({
+        silent: true,
+        status: { state: 'action_required', reason: 'key_rejected', expires_at: null, next_run_at: null },
+      }),
+      NOW,
+    )
+    expect(card.state).toBe('todo')
+    expect(card.guidance?.title).toBe('Garmin refuse la clé : elle a expiré ou a été révoquée.')
+    expect(card.guidance?.steps.join(' ')).toContain('GARMIN_KEY_EXPIRES_ON')
+    expect(card.guidance?.note).toContain('Mise à jour : Garmin Connect')
+  })
+
+  it('donne une marche générique pour une autre clé refusée', () => {
+    const card = sourceCard(
+      source({
+        name: 'lastfm',
+        label: 'Musique',
+        status: { state: 'action_required', reason: 'key_rejected', expires_at: null, next_run_at: null },
+      }),
+      NOW,
+    )
+    expect(card.guidance?.title).toBe('Le service refuse la clé du collecteur : elle a expiré ou a été révoquée.')
+    expect(card.guidance?.steps.join(' ')).toContain('LASTFM_API_KEY')
+    expect(card.guidance?.steps.join(' ')).not.toContain('Garmin')
+  })
+
+  it('prévient quatorze jours avant l’échéance, et après', () => {
+    // Fin du 12 nov. à Paris : minuit du 13, heure de Paris.
+    const soon = source({ status: { state: 'ok', reason: null, expires_at: '2026-11-12T23:00:00Z', next_run_at: null } })
+    const card = sourceCard(soon, NOW)
+    expect(card.state).toBe('todo')
+    expect(card.lines).toContainEqual({ label: 'Clé', value: `expire le 12${NBSP}nov., dans 7 jours`, warn: true })
+    expect(card.guidance?.title).toBe(`La clé expire le 12${NBSP}nov. : remplace-la avant.`)
+
+    const far = sourceCard(source({ status: { state: 'ok', reason: null, expires_at: '2027-11-04T23:00:00Z', next_run_at: null } }), NOW)
+    expect(far.state).toBe('ok')
+    expect(far.lines).toContainEqual({ label: 'Clé', value: `valable jusqu'au 4${NBSP}nov. 2027` })
+    expect(far.guidance).toBeNull()
+
+    const past = sourceCard(source({ status: { state: 'ok', reason: null, expires_at: '2026-11-03T23:00:00Z', next_run_at: null } }), NOW)
+    expect(past.state).toBe('todo')
+    expect(past.lines).toContainEqual({ label: 'Clé', value: `expirée le 3${NBSP}nov.`, warn: true })
+    expect(past.guidance?.title).toBe(`La clé a expiré le 3${NBSP}nov. : remplace-la.`)
+  })
+
+  it('est silencieuse au-delà du seuil', () => {
+    const card = sourceCard(source({ name: 'lastfm', label: 'Musique', silence_threshold_seconds: 21_600, silent: true, status: null }), NOW)
+    expect(card.state).toBe('silent')
+    expect(card.guidance?.title).toBe(`Aucun contact réussi avec Last.fm depuis plus de 6${NBSP}h : des données peuvent manquer.`)
+  })
+
+  it('traduit chaque raison', () => {
+    for (const reason of ['consent_expired', 'rate_limited', 'service_unavailable', 'ingest_failed'] as const) {
+      const card = sourceCard(source({ status: { state: 'error', reason, expires_at: null, next_run_at: null } }), NOW)
+      expect(card.guidance?.title, reason).toBeTruthy()
+    }
+  })
+})
+
+describe('les lignes', () => {
+  it('dit la dernière passe, la prochaine et les dernières données', () => {
+    const card = sourceCard(
+      source({
+        metrics: [
+          { metric: 'steps', label: 'Pas', last_at: '2026-11-05T11:00:00Z' },
+          { metric: 'sleep', label: 'Sommeil', last_at: '2026-11-04T11:00:00Z' },
+          { metric: 'workout', label: 'Séances', last_at: iso(-2 * HOUR) },
+        ],
+      }),
+      NOW,
+    )
+    expect(card.title).toBe('Garmin Connect')
+    expect(card.lines).toEqual([
+      { label: 'Dernière passe', value: `il y a 10${NBSP}min` },
+      { label: 'Prochaine passe', value: `à 14${NBSP}h${NBSP}05` },
+      { label: 'Clé', value: `valable jusqu'au 1${NBSP}sept. 2027` },
+      { label: 'Pas', value: "aujourd'hui" },
+      { label: 'Sommeil', value: 'hier' },
+      { label: 'Dernière séance', value: `il y a 2${NBSP}h` },
+    ])
+  })
+
+  it('montre le nom sans libellé, un contact sans connecteur', () => {
+    const card = sourceCard(
+      source({ name: 'ios', label: null, silence_threshold_seconds: null, status: null, status_reported_at: null, last_seen_at: null }),
+      NOW,
+    )
+    expect(card.title).toBe('ios')
+    expect(card.lines[0]).toEqual({ label: 'Dernier contact', value: "aucun pour l'instant" })
+  })
+
+  it('nomme les métriques connues, et les autres par leur libellé', () => {
+    expect(metricLine({ metric: 'coffee', label: 'Cafés', last_at: iso(-3 * HOUR) }, NOW).label).toBe('Dernier café')
+    expect(metricLine({ metric: 'music.listen', label: 'Écoutes', last_at: iso(-3 * HOUR) }, NOW).label).toBe('Dernière écoute')
+    expect(metricLine({ metric: 'tea', label: 'Thés', last_at: iso(-3 * HOUR) }, NOW).label).toBe('Dernière donnée, thés')
+  })
+
+  it("ne montre pas une prochaine passe dépassée", () => {
+    const card = sourceCard(source({ status: { state: 'ok', reason: null, expires_at: null, next_run_at: iso(-MIN) } }), NOW)
+    expect(card.lines.map((line) => line.label)).not.toContain('Prochaine passe')
+  })
+
+  it('signale des écoutes qui n’arrivent plus, sans changer l’état', () => {
+    const card = sourceCard(
+      source({ name: 'lastfm', label: 'Musique', status: null, metrics: [{ metric: 'music.listen', label: 'Écoutes', last_at: iso(-4 * DAY) }] }),
+      NOW,
+    )
+    expect(card.state).toBe('ok')
+    expect(card.hint).toContain('scrobbler')
+  })
+})
+
+describe('la page', () => {
+  it('résume', () => {
+    const ok = sourceCard(source(), NOW)
+    const silent = sourceCard(source({ silent: true }), NOW)
+    const todo = sourceCard(source({ status: { state: 'action_required', reason: 'key_rejected', expires_at: null, next_run_at: null } }), NOW)
+    expect(summary([ok])).toBe('Tout fonctionne')
+    expect(summary([ok, silent])).toBe('Un tracker silencieux')
+    expect(summary([ok, silent, todo])).toBe('Un tracker attend quelque chose de toi')
+    expect(summary([todo, todo])).toBe('2 trackers attendent quelque chose de toi')
+  })
+
+  it('sépare le code du texte', () => {
+    expect(codeParts('Relance : `sudo docker compose up -d collector`.')).toEqual([
+      { code: false, text: 'Relance : ' },
+      { code: true, text: 'sudo docker compose up -d collector' },
+      { code: false, text: '.' },
+    ])
+  })
+})

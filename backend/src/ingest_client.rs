@@ -9,9 +9,12 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::collector::lastfm::network_reason;
+use crate::source_status::SourceStatus;
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Un rapport d'état ne doit jamais retarder la passe suivante de plus que cela.
+const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// reqwest sans fournisseur de cryptographie imposé : c'est `ring`, installé une fois par processus.
 pub fn install_tls() {
@@ -134,6 +137,32 @@ impl IngestClient {
             });
         }
         Ok(body.results)
+    }
+
+    /// Le dernier état de la source, pour la page d'état. Ne compte pas comme un contact : le serveur ne
+    /// touche pas au dernier contact (voir `PUT /v1/sources/me/status`).
+    pub async fn report_status(&self, status: &SourceStatus) -> Result<(), IngestFailure> {
+        let response = self
+            .http
+            .put(format!("{}/v1/sources/me/status", self.url))
+            .bearer_auth(&self.token)
+            .header("X-Client-Version", self.client_version)
+            .timeout(STATUS_TIMEOUT)
+            .json(status)
+            .send()
+            .await
+            .map_err(|err| IngestFailure {
+                reason: network_reason(&err),
+                status: None,
+            })?;
+        if response.status().is_success() {
+            Ok(())
+        } else {
+            Err(IngestFailure {
+                reason: "status",
+                status: Some(response.status().as_u16()),
+            })
+        }
     }
 
     pub async fn heartbeat(&self) -> Result<(), IngestFailure> {

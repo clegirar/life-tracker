@@ -391,7 +391,7 @@ impl Bench {
             .await
             .unwrap();
         let service = admin::create_service_token(&db.admin, "mcp").await.unwrap();
-        let token = admin::create_source(&db.admin, "garmin", Some("12 hours"))
+        let token = admin::create_source(&db.admin, "garmin", Some("12 hours"), None)
             .await
             .unwrap();
         for kind in [
@@ -450,8 +450,8 @@ impl Bench {
         }
     }
 
-    fn collector(&self, fake: &Fake) -> Collector {
-        Collector::new(Config {
+    fn config(&self, fake: &Fake) -> Config {
+        Config {
             api_url: fake.url.clone(),
             api_key: KEY.to_owned(),
             ingest_url: self.base.clone(),
@@ -460,8 +460,12 @@ impl Bench {
             state_dir: self.state_dir.clone(),
             interval: Duration::from_secs(900),
             pause: Duration::ZERO,
-        })
-        .unwrap()
+            key_expires_at: None,
+        }
+    }
+
+    fn collector(&self, fake: &Fake) -> Collector {
+        Collector::new(self.config(fake)).unwrap()
     }
 
     async fn journal(&self, kind: &str) -> i64 {
@@ -534,6 +538,16 @@ impl Bench {
             .fetch_one(&self.db.app)
             .await
             .unwrap()
+    }
+
+    /// Le dernier état rapporté pour la page d'état.
+    async fn status(&self) -> Option<Value> {
+        let text: Option<String> =
+            sqlx::query_scalar("SELECT status::text FROM core.sources WHERE name = 'garmin'")
+                .fetch_one(&self.db.app)
+                .await
+                .unwrap();
+        text.map(|t| serde_json::from_str(&t).unwrap())
     }
 }
 
@@ -1045,6 +1059,75 @@ async fn a_rejected_key_sends_nothing_and_no_sign_of_life() {
     assert!(!collector.backfilled());
 }
 
+/// L'échéance de la clé part avec chaque état, bon ou mauvais.
+#[tokio::test]
+async fn each_pass_reports_its_status_with_the_key_expiry() {
+    let bench = Bench::new().await;
+    let fake = Fake::start().await;
+    fake.with(|d| {
+        d.mint_status = 401;
+        d.summaries = vec![summary(day(1), Some(5000))];
+    });
+    let mut collector = Collector::new(Config {
+        key_expires_at: garmin::key_expiry("2027-11-04"),
+        ..bench.config(&fake)
+    })
+    .unwrap();
+    let delay = collector.pass().await;
+    assert_eq!(delay, Duration::from_secs(60));
+    let status = bench.status().await.unwrap();
+    assert_eq!(status["state"], "action_required");
+    assert_eq!(status["reason"], "key_rejected");
+    assert_eq!(status["expires_at"], "2027-11-04T23:00:00Z");
+    assert!(status["next_run_at"].is_string());
+    assert_eq!(
+        bench.last_seen().await,
+        None,
+        "le seuil de silence alertera"
+    );
+
+    fake.with(|d| d.mint_status = 200);
+    assert_eq!(collector.pass().await, Duration::from_secs(900));
+    let status = bench.status().await.unwrap();
+    assert_eq!(
+        (&status["state"], &status["reason"], &status["expires_at"]),
+        (&json!("ok"), &Value::Null, &json!("2027-11-04T23:00:00Z"))
+    );
+    let next: chrono::DateTime<Utc> = status["next_run_at"].as_str().unwrap().parse().unwrap();
+    assert!(
+        (next - Utc::now() - chrono::TimeDelta::seconds(900))
+            .num_seconds()
+            .abs()
+            < 10
+    );
+    assert!(bench.last_seen().await.is_some());
+    assert_eq!(bench.journal("garmin.daily_summary").await, 1);
+
+    // Sans échéance donnée, aucune n'est inventée.
+    bench.collector(&fake).pass().await;
+    assert_eq!(bench.status().await.unwrap()["expires_at"], Value::Null);
+}
+
+#[test]
+fn an_unreadable_key_expiry_stops_the_collector_at_startup() {
+    let output = Command::new(env!("CARGO_BIN_EXE_life-tracker"))
+        .arg("collect")
+        .env_clear()
+        .env("INGEST_URL", "http://127.0.0.1:9")
+        .env("GARMIN_API_KEY", KEY)
+        .env("GARMIN_TOKEN", "token-fictif")
+        .env("GARMIN_KEY_EXPIRES_ON", "04/11/2027")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("GARMIN_KEY_EXPIRES_ON"), "{stderr}");
+    assert!(
+        !stderr.contains(KEY) && !stderr.contains("token-fictif"),
+        "{stderr}"
+    );
+}
+
 #[tokio::test]
 async fn a_missing_cancel_grant_sends_everything_again_once_granted() {
     let bench = Bench::new().await;
@@ -1510,6 +1593,7 @@ fn collect_process(fake: &Fake, bench: &Bench) -> (std::process::Child, PathBuf)
         .env("GARMIN_API_URL", &fake.url)
         .env("GARMIN_API_KEY", KEY)
         .env("GARMIN_TOKEN", &bench.token)
+        .env("GARMIN_KEY_EXPIRES_ON", "2027-11-04")
         .env("INGEST_URL", &bench.base)
         .env("COLLECTOR_STATE_DIR", &bench.state_dir)
         .stdout(Stdio::from(file))
@@ -1548,6 +1632,18 @@ async fn logs_never_cite_the_key_the_token_a_place_or_a_coordinate() {
         d.summaries = vec![summary(day(1), Some(8412))];
     });
     let (child, log) = collect_process(&fake, &bench);
+    // L'état d'abord : le rapport suit le passage, et `logs_until` bloque le serveur de test en
+    // attendant la fin du processus.
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let status = loop {
+        if let Some(status) = bench.status().await {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "aucun état rapporté");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert_eq!(status["state"], "ok");
+    assert_eq!(status["expires_at"], "2027-11-04T23:00:00Z");
     let logs = logs_until(child, &log, "garmin pass completed").await;
     assert!(logs.contains("\"accepted\":3"), "{logs}");
     let issued = fake.with(|d| d.issued.clone());

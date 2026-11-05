@@ -26,6 +26,29 @@ SELECT t.check(has_table_privilege('tracker_admin', 'core.service_tokens', 'INSE
            AND NOT has_table_privilege('tracker_admin', 'core.service_tokens', 'DELETE'),
                'tracker_admin crée et révoque les jetons de service, sans les supprimer');
 
+SELECT t.check(has_column_privilege('tracker_app', 'core.sources', 'status', 'UPDATE')
+           AND has_column_privilege('tracker_app', 'core.sources', 'status_reported_at', 'UPDATE')
+           AND NOT has_column_privilege('tracker_app', 'core.sources', 'label', 'UPDATE')
+           AND NOT has_column_privilege('tracker_app', 'core.sources', 'silence_threshold', 'UPDATE')
+           AND NOT has_column_privilege('tracker_app', 'core.sources', 'token_hash', 'UPDATE')
+           AND NOT has_column_privilege('tracker_app', 'core.sources', 'revoked_at', 'UPDATE'),
+               'tracker_app rapporte l''état d''une source sans toucher à son libellé, son seuil, son token ni sa révocation');
+SELECT t.check(has_column_privilege('tracker_admin', 'core.sources', 'label', 'UPDATE'),
+               'tracker_admin fixe le libellé d''une source');
+
+SELECT t.make_source('status', '{}');
+SELECT t.expect_error('tracker_owner', 'UPDATE core.sources SET status = ''[]'' WHERE name = ''status''',
+                      '23514', 'un état qui n''est pas un objet');
+SELECT t.expect_error('tracker_owner', 'UPDATE core.sources SET label = '' Garmin'' WHERE name = ''status''',
+                      '23514', 'un libellé avec des espaces autour');
+SELECT t.expect_error('tracker_owner', 'UPDATE core.sources SET label = '''' WHERE name = ''status''',
+                      '23514', 'un libellé vide');
+SELECT t.check(t.exec_as('tracker_app',
+  $q$UPDATE core.sources SET status = '{"state": "ok"}', status_reported_at = now() WHERE name = 'status'$q$) = 1,
+  'tracker_app : rapporter un état passe');
+SELECT t.expect_error('tracker_app', 'UPDATE core.sources SET label = ''x'' WHERE name = ''status''',
+                      '42501', 'tracker_app : changer un libellé');
+
 SELECT t.check(cache_size = 1, 'séquence du journal en CACHE 1')
 FROM pg_sequences
 WHERE format('%I.%I', schemaname, sequencename) = pg_get_serial_sequence('core.records', 'seq');

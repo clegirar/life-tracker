@@ -9,8 +9,10 @@ export type Route =
   | { page: 'day'; date: string | null }
   | { page: 'month'; month: string }
   | { page: 'year'; year: string }
+  | { page: 'status' }
 
 export const TODAY: Route = { page: 'day', date: null }
+export const STATUS: Route = { page: 'status' }
 
 /** Une vraie date du calendrier, au format strict. */
 function isDate(value: string): boolean {
@@ -24,6 +26,7 @@ function isDate(value: string): boolean {
 export function parseRoute(path: string, today: string): Route | null {
   const clean = path.length > 1 ? path.replace(/\/+$/, '') : path
   if (clean === '/') return TODAY
+  if (clean === '/etat') return STATUS
   let match = /^\/jour\/([^/]+)$/.exec(clean)
   if (match) {
     const date = match[1]
@@ -53,6 +56,8 @@ export function routePath(route: Route): string {
       return `/mois/${route.month}`
     case 'year':
       return `/annee/${route.year}`
+    case 'status':
+      return '/etat'
   }
 }
 

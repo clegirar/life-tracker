@@ -201,6 +201,28 @@ impl Bench {
             .await
             .unwrap()
     }
+
+    /// Le dernier état rapporté pour la page d'état.
+    async fn status(&self) -> Option<Value> {
+        let text: Option<String> =
+            sqlx::query_scalar("SELECT status::text FROM core.sources WHERE id = $1")
+                .bind(self.source_id)
+                .fetch_one(&self.db.app)
+                .await
+                .unwrap();
+        text.map(|t| serde_json::from_str(&t).unwrap())
+    }
+}
+
+/// `next_run_at` : maintenant plus le délai, à quelques secondes près.
+fn assert_next_run(status: &Value, delay: Duration) {
+    let next: chrono::DateTime<chrono::Utc> =
+        status["next_run_at"].as_str().unwrap().parse().unwrap();
+    let expected = chrono::Utc::now() + chrono::TimeDelta::from_std(delay).unwrap();
+    assert!(
+        (next - expected).num_seconds().abs() < 10,
+        "{status} au lieu de {expected}"
+    );
 }
 
 #[tokio::test]
@@ -494,6 +516,80 @@ async fn no_sign_of_life_until_lastfm_has_answered() {
     let mock = Mock::start(|_| ok("recent_empty")).await;
     bench.collector(&mock).tick().await.unwrap();
     assert!(bench.last_seen().await.is_some());
+}
+
+#[tokio::test]
+async fn each_pass_reports_its_status_which_is_never_a_sign_of_life() {
+    let bench = Bench::new().await;
+    let invalid_key =
+        r#"{"error":10,"message":"Invalid API key - You must be granted a valid key by last.fm"}"#;
+    let mock = Mock::start(move |_| (403, None, invalid_key.to_owned())).await;
+    let mut collector = bench.collector(&mock);
+    let delay = collector.pass().await;
+    assert_eq!(delay, Duration::from_secs(60));
+    let status = bench.status().await.unwrap();
+    assert_eq!(status["state"], "action_required");
+    assert_eq!(status["reason"], "key_rejected");
+    assert_eq!(status["expires_at"], Value::Null);
+    assert_next_run(&status, delay);
+    assert_eq!(
+        bench.last_seen().await,
+        None,
+        "le seuil de silence alertera"
+    );
+
+    mock.set(|_| (429, Some("90"), fixture("error_rate_limit").to_string()));
+    let delay = collector.pass().await;
+    assert_eq!(delay, Duration::from_secs(90));
+    let status = bench.status().await.unwrap();
+    assert_eq!(
+        (&status["state"], &status["reason"]),
+        (&json!("error"), &json!("rate_limited"))
+    );
+    assert_next_run(&status, delay);
+
+    mock.set(|_| (200, None, fixture("error_offline").to_string()));
+    collector.pass().await;
+    let status = bench.status().await.unwrap();
+    assert_eq!(status["reason"], "service_unavailable");
+
+    mock.set(one_page);
+    let delay = collector.pass().await;
+    assert_eq!(delay, Duration::from_secs(300));
+    let status = bench.status().await.unwrap();
+    assert_eq!(status["state"], "ok");
+    assert_eq!(status["reason"], Value::Null);
+    assert_next_run(&status, delay);
+    assert!(bench.last_seen().await.is_some());
+    assert_eq!(bench.journal("lastfm.scrobble").await, 2);
+}
+
+/// Une API qui refuse les rapports d'état, et rien d'autre : la passe n'en voit rien.
+#[tokio::test]
+async fn a_refused_status_report_never_fails_the_pass() {
+    let bench = Bench::new().await;
+    let mock = Mock::start(one_page).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let app = life_tracker::api::router(bench.db.app.clone()).layer(axum::middleware::from_fn(
+        |request: axum::extract::Request, next: axum::middleware::Next| async move {
+            if request.uri().path() == "/v1/sources/me/status" {
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+            next.run(request).await
+        },
+    ));
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    let mut collector = bench.collector_to(&mock, &base);
+    assert_eq!(collector.pass().await, Duration::from_secs(300));
+    assert_eq!(bench.journal("lastfm.scrobble").await, 2);
+    assert!(bench.last_seen().await.is_some());
+    assert_eq!(bench.status().await, None);
+    assert_eq!(
+        collector.pass().await,
+        Duration::from_secs(300),
+        "pas d'échec compté"
+    );
 }
 
 #[tokio::test]

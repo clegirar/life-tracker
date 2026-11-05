@@ -12,7 +12,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Extension, Json, Router};
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
@@ -30,20 +30,25 @@ use crate::ingest::{Envelope, RejectReason, Rejection, parse_envelope};
 use crate::music::fold;
 use crate::privacy::Zones;
 use crate::read::{self, Exposure, Period, ReadError};
+use crate::source_status::SourceStatus;
 
 pub const MAX_RECORDS: usize = 500;
 pub const MAX_BODY_BYTES: usize = 1_000_000;
 
 const LOGIN: &str = "/v1/auth/login";
 const RECORDS: &str = "/v1/records";
+const SOURCE_STATUS: &str = "/v1/sources/me/status";
+/// Un état tient en quelques champs fermés.
+const MAX_STATUS_BYTES: usize = 1024;
 /// Le mot de passe et l'identifiant n'ont pas besoin de plus.
 const MAX_LOGIN_BYTES: usize = 4096;
 /// Argon2 prend 19 Mio par calcul : le NAS n'en fait pas plus de deux à la fois.
 const MAX_CONCURRENT_LOGINS: usize = 2;
 
 /// Une route exige la session par défaut (voir `guard`) : seules celles-ci en sont dispensées.
-/// `/v1/records` est à part : le token, ou sinon la session.
-pub const NO_SESSION_ROUTES: [&str; 3] = ["/health", LOGIN, "/v1/heartbeat"];
+/// `/v1/records` est à part : le token, ou sinon la session. `/v1/heartbeat` et
+/// `/v1/sources/me/status` n'acceptent que le token d'une source (voir leurs extracteurs).
+pub const NO_SESSION_ROUTES: [&str; 4] = ["/health", LOGIN, "/v1/heartbeat", SOURCE_STATUS];
 
 /// Toute écriture par cookie doit porter cet en-tête. Un autre site ne peut pas l'ajouter sans
 /// une autorisation CORS préalable, et le serveur n'en donne jamais.
@@ -114,6 +119,10 @@ fn routes() -> Router<AppState> {
         )
         .route("/v1/heartbeat", post(post_heartbeat))
         .route(
+            SOURCE_STATUS,
+            put(put_source_status).layer(DefaultBodyLimit::max(MAX_STATUS_BYTES)),
+        )
+        .route(
             LOGIN,
             post(login).layer(DefaultBodyLimit::max(MAX_LOGIN_BYTES)),
         )
@@ -128,6 +137,8 @@ fn routes() -> Router<AppState> {
         // Pas dans `READ_ROUTES` : la vue de l'année ne sert qu'à la web app.
         .route("/v1/years/{year}", get(get_year))
         .route("/v1/sources/health", get(get_sources_health))
+        // Pas dans `READ_ROUTES` : la page d'état ne sert qu'à la web app.
+        .route("/v1/sources/status", get(get_sources_status))
         .route("/v1/inventory", get(get_inventory))
         .route("/v1/search", get(get_search))
         .route("/v1/occurrences", get(get_occurrences))
@@ -365,6 +376,30 @@ impl FromRequestParts<AppState> for Source {
     }
 }
 
+/// Source authentifiée par son token, sans rien mettre à jour : rapporter un état n'est pas un contact
+/// réussi avec le service (voir `put_source_status`). Jamais la session : `webapp` ne rapporte rien.
+struct TokenSource {
+    id: i16,
+}
+
+impl FromRequestParts<AppState> for TokenSource {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
+        let token = bearer_token(&parts.headers).ok_or(ApiError::Unauthorized)?;
+        let hash = token_hash(token);
+        let id = sqlx::query_scalar!(
+            "SELECT id FROM core.sources
+             WHERE token_hash = $1 AND auth = 'token' AND revoked_at IS NULL",
+            hash,
+        )
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or(ApiError::Unauthorized)?;
+        Ok(Self { id })
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 enum Status {
@@ -583,6 +618,33 @@ async fn post_heartbeat(
     _source: Source,
 ) -> Json<Value> {
     Json(json!({ "request_id": request_id }))
+}
+
+/// Le dernier état rapporté par la source, hors du journal. Ne touche ni au dernier contact ni à la
+/// version du client : une source qui dit « clé refusée » ne doit pas paraître vivante. Le corps n'est
+/// jamais journalisé ; il ne peut d'ailleurs rien contenir d'autre que le vocabulaire fermé.
+async fn put_source_status(
+    State(state): State<AppState>,
+    source: TokenSource,
+    // Dernier extracteur : le corps n'est lu qu'après l'authentification.
+    body: Result<Bytes, BytesRejection>,
+) -> Result<StatusCode, ApiError> {
+    let body = body.map_err(|_| ApiError::InvalidJson)?;
+    // Hors du contrat, quelle qu'en soit la raison : 400 `invalid_json`, sans dire quel champ.
+    let status: SourceStatus = serde_json::from_slice(&body)
+        .ok()
+        .filter(SourceStatus::is_consistent)
+        .ok_or(ApiError::InvalidJson)?;
+    let status = serde_json::to_string(&status).map_err(|_| ApiError::Internal)?;
+    sqlx::query!(
+        "UPDATE core.sources SET status = $2::text::jsonb, status_reported_at = now() WHERE id = $1",
+        source.id,
+        status,
+    )
+    .execute(&state.pool)
+    .await?;
+    info!(source_id = source.id, "status reported");
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn health(State(state): State<AppState>) -> StatusCode {
@@ -1187,6 +1249,97 @@ async fn get_sources_health(
             })
             .collect(),
     }))
+}
+
+#[derive(Serialize)]
+struct SourceStatusEntry {
+    name: String,
+    /// Le nom affiché ; vide, la page montre `name`.
+    label: Option<String>,
+    last_seen_at: Option<DateTime<Utc>>,
+    silence_threshold_seconds: Option<f64>,
+    /// Même règle que `/v1/sources/health` ; jamais muette sans seuil.
+    silent: bool,
+    /// Le dernier état rapporté, tel que validé à l'écriture (`source_status::SourceStatus`).
+    status: Option<Value>,
+    status_reported_at: Option<DateTime<Utc>>,
+    metrics: Vec<SourceMetric>,
+}
+
+#[derive(Serialize)]
+struct SourceMetric {
+    metric: String,
+    label: String,
+    /// La dernière donnée vivante de cette source pour cette métrique.
+    last_at: DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+struct SourcesStatus {
+    sources: Vec<SourceStatusEntry>,
+}
+
+/// La page d'état : les sources à token qui ont un seuil de silence, un état rapporté ou un libellé
+/// (ni `webapp`, ni un import ponctuel ; le libellé fait paraître une source sans seuil, comme le
+/// raccourci café, qu'une journée sans café ne rend pas muet), et pour chacune la dernière donnée de
+/// chaque métrique affichée qu'elle alimente, d'après la vue comme `/v1/sources/health`.
+async fn get_sources_status(
+    State(state): State<AppState>,
+) -> Result<Json<SourcesStatus>, ApiError> {
+    let sources = sqlx::query!(
+        r#"SELECT id, name, label, last_seen_at,
+                  extract(epoch FROM silence_threshold)::float8 AS threshold,
+                  COALESCE(now() - COALESCE(last_seen_at, created_at) > silence_threshold, false)
+                    AS "silent!",
+                  status::text AS status, status_reported_at
+           FROM core.sources
+           WHERE auth = 'token' AND revoked_at IS NULL
+             AND (silence_threshold IS NOT NULL OR status IS NOT NULL OR label IS NOT NULL)
+           ORDER BY lower(COALESCE(label, name)), name"#,
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let metrics = sqlx::query!(
+        r#"SELECT e.source_id AS "source_id!", e.metric AS "metric!", m.label,
+                  max(e.occurred_at) AS "last_at!"
+           FROM derived.live_events e
+           JOIN core.metrics m ON m.metric = e.metric
+           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+             AND m.applies_to IS NULL
+           GROUP BY e.source_id, e.metric, m.label, m.display_order
+           ORDER BY m.display_order NULLS LAST, e.metric"#,
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let sources = sources
+        .into_iter()
+        .map(|s| {
+            // Écrit par `put_source_status` seul, donc toujours lisible.
+            let status = s
+                .status
+                .map(|text| serde_json::from_str(&text).map_err(|_| ApiError::Internal))
+                .transpose()?;
+            Ok(SourceStatusEntry {
+                metrics: metrics
+                    .iter()
+                    .filter(|m| m.source_id == s.id)
+                    .map(|m| SourceMetric {
+                        metric: m.metric.clone(),
+                        label: m.label.clone(),
+                        last_at: m.last_at,
+                    })
+                    .collect(),
+                name: s.name,
+                label: s.label,
+                last_seen_at: s.last_seen_at,
+                silence_threshold_seconds: s.threshold,
+                silent: s.silent,
+                status,
+                status_reported_at: s.status_reported_at,
+            })
+        })
+        .collect::<Result<_, ApiError>>()?;
+    Ok(Json(SourcesStatus { sources }))
 }
 
 // ─── Lectures génériques (outils du MCP, voir `read`) ────────────────────────

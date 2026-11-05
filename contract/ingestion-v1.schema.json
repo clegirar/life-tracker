@@ -92,6 +92,31 @@
         "request_id": { "type": "string", "format": "uuid" }
       }
     },
+    "source_status_request": {
+      "description": "PUT /v1/sources/me/status, réponse 204 sans corps : le dernier état de la source, pour la page d'état. Ne touche pas au dernier contact. Vocabulaire fermé : tout autre champ ou code est refusé (400 invalid_json). `ok` sans raison, les autres états avec. Le corps fait 1 024 octets au plus.",
+      "type": "object",
+      "required": ["state"],
+      "additionalProperties": false,
+      "properties": {
+        "state": { "enum": ["ok", "action_required", "error"] },
+        "reason": {
+          "enum": [null, "key_rejected", "consent_expired", "rate_limited", "service_unavailable", "ingest_failed"]
+        },
+        "expires_at": {
+          "description": "L'échéance de la clé ou du jeton, RFC 3339.",
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "next_run_at": {
+          "description": "La prochaine passe prévue, RFC 3339.",
+          "type": ["string", "null"],
+          "format": "date-time"
+        }
+      },
+      "if": { "properties": { "state": { "const": "ok" } } },
+      "then": { "properties": { "reason": { "const": null } } },
+      "else": { "required": ["reason"], "properties": { "reason": { "type": "string" } } }
+    },
     "error_response": {
       "description": "401 unauthorized, 400 invalid_json, 413 batch_too_large, 500 internal (à renvoyer plus tard).",
       "type": "object",
