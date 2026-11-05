@@ -12,6 +12,8 @@ const MIN_PASSWORD_CHARS: usize = 12;
 /// Une première écoute séparée de la suivante par plus que cela n'est pas un démarrage : c'est une date
 /// ancienne, un test ou un import, et elle ne doit pas donner la priorité sur tout ce qui la suit.
 const MAX_START_GAP_DAYS: i64 = 7;
+/// La limite de `core.sources.label`.
+const MAX_LABEL_CHARS: usize = 80;
 
 /// SHA-256 du token, tel que stocké dans core.sources.token_hash.
 pub fn token_hash(token: &str) -> Vec<u8> {
@@ -24,24 +26,53 @@ pub(crate) fn generate_token() -> Result<String> {
     Ok(hex::encode(bytes))
 }
 
-/// Crée une source à token et renvoie le token : seul son haché est conservé.
+/// Crée une source à token et renvoie le token : seul son haché est conservé. Le libellé est le nom
+/// affiché par la page d'état ; sans lui, elle montre le nom.
 pub async fn create_source(
     pool: &PgPool,
     name: &str,
     silence_threshold: Option<&str>,
+    label: Option<&str>,
 ) -> Result<String> {
+    let label = label.map(check_label).transpose()?;
     let token = generate_token()?;
     let hash = token_hash(&token);
     sqlx::query!(
-        "INSERT INTO core.sources (name, auth, token_hash, silence_threshold)
-         VALUES ($1, 'token', $2, $3::text::interval)",
+        "INSERT INTO core.sources (name, auth, token_hash, silence_threshold, label)
+         VALUES ($1, 'token', $2, $3::text::interval, $4)",
         name,
         hash,
         silence_threshold,
+        label,
     )
     .execute(pool)
     .await?;
     Ok(token)
+}
+
+/// Fixe le nom affiché d'une source, révoquée ou non.
+pub async fn set_label(pool: &PgPool, name: &str, label: &str) -> Result<()> {
+    let label = check_label(label)?;
+    let updated = sqlx::query!(
+        "UPDATE core.sources SET label = $2 WHERE name = $1",
+        name,
+        label,
+    )
+    .execute(pool)
+    .await?;
+    if updated.rows_affected() == 0 {
+        bail!("source inconnue : {name}");
+    }
+    Ok(())
+}
+
+/// Les règles de la base (`core.sources.label`), dites ici en clair plutôt que par un refus de contrainte.
+fn check_label(label: &str) -> Result<&str> {
+    let label = label.trim();
+    if label.is_empty() || label.chars().count() > MAX_LABEL_CHARS {
+        bail!("libellé vide ou trop long : {MAX_LABEL_CHARS} caractères au plus");
+    }
+    Ok(label)
 }
 
 pub async fn revoke_source(pool: &PgPool, name: &str) -> Result<()> {

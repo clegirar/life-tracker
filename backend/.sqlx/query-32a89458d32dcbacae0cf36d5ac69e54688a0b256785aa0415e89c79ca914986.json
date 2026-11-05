@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO core.sources (name, auth, token_hash, silence_threshold, label)\n         VALUES ($1, 'token', $2, $3::text::interval, $4)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Bytea",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "32a89458d32dcbacae0cf36d5ac69e54688a0b256785aa0415e89c79ca914986"
+}

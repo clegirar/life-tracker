@@ -1,0 +1,57 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.source_id AS \"source_id!\", e.metric AS \"metric!\", m.label,\n                  max(e.occurred_at) AS \"last_at!\"\n           FROM derived.live_events e\n           JOIN core.metrics m ON m.metric = e.metric\n           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND m.applies_to IS NULL\n           GROUP BY e.source_id, e.metric, m.label, m.display_order\n           ORDER BY m.display_order NULLS LAST, e.metric",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "source_id!",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "source_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "metric!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "metric"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "label",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.metrics",
+            "name": "label"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "last_at!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      true,
+      true,
+      false,
+      null
+    ]
+  },
+  "hash": "2630f55640254695900ac50d3476482f0a8629d03e8f5d28c3d8f9787b2d724c"
+}

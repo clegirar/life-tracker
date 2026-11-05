@@ -69,6 +69,9 @@ enum Command {
         garmin_source: String,
         #[arg(long, env = "GARMIN_INTERVAL_SECONDS", default_value_t = 900)]
         garmin_interval_seconds: u64,
+        /// L'échéance de la clé Garmin, `AAAA-MM-JJ`, telle que Garmin l'affiche à sa création
+        #[arg(long, env = "GARMIN_KEY_EXPIRES_ON")]
+        garmin_key_expires_on: Option<String>,
         #[arg(long, env = "INGEST_URL")]
         ingest_url: String,
         /// Où garder l'état de chaque connecteur ; le perdre ne coûte qu'un rattrapage
@@ -110,7 +113,12 @@ enum AdminCommand {
         /// Durée au format PostgreSQL, par exemple « 6 hours » ; sans elle, jamais muette
         #[arg(long)]
         silence_threshold: Option<String>,
+        /// Le nom affiché par la page d'état, par exemple « Garmin Connect »
+        #[arg(long)]
+        label: Option<String>,
     },
+    /// Fixe le nom affiché d'une source par la page d'état
+    SetLabel { source: String, label: String },
     /// Révoque une source et son token
     RevokeSource { name: String },
     /// Crée un jeton de service de l'API de lecture (serveur MCP, niveau pseudonymes, sans écriture) ;
@@ -173,6 +181,7 @@ async fn main() -> Result<()> {
             garmin_url,
             garmin_source,
             garmin_interval_seconds,
+            garmin_key_expires_on,
             ingest_url,
             state_dir,
         } => {
@@ -194,6 +203,13 @@ async fn main() -> Result<()> {
                     bail!("Last.fm demande LASTFM_API_KEY, LASTFM_USER et COLLECTOR_TOKEN ensemble")
                 }
             };
+            let key_expires_at = set(garmin_key_expires_on)
+                .map(|text| {
+                    collector::garmin::key_expiry(&text).context(
+                        "GARMIN_KEY_EXPIRES_ON illisible : une date AAAA-MM-JJ est attendue",
+                    )
+                })
+                .transpose()?;
             let garmin = match (set(garmin_api_key), set(garmin_token)) {
                 (None, None) => None,
                 (Some(api_key), Some(token)) => Some(collector::garmin::Config {
@@ -205,6 +221,7 @@ async fn main() -> Result<()> {
                     state_dir,
                     interval: Duration::from_secs(garmin_interval_seconds),
                     pause: GARMIN_PAUSE,
+                    key_expires_at,
                 }),
                 _ => bail!("Garmin demande GARMIN_API_KEY et GARMIN_TOKEN ensemble"),
             };
@@ -396,11 +413,18 @@ async fn run_admin(database_url: &str, command: AdminCommand) -> Result<()> {
         AdminCommand::CreateSource {
             name,
             silence_threshold,
+            label,
         } => {
-            let token = admin::create_source(&pool, &name, silence_threshold.as_deref()).await?;
+            let token =
+                admin::create_source(&pool, &name, silence_threshold.as_deref(), label.as_deref())
+                    .await?;
             // Sur stdout, seul : scriptable. Il ne sera plus jamais affiché.
             println!("{token}");
             eprintln!("source {name} créée ; conservez ce token, il ne sera plus affiché");
+        }
+        AdminCommand::SetLabel { source, label } => {
+            admin::set_label(&pool, &source, &label).await?;
+            eprintln!("libellé de {source} enregistré");
         }
         AdminCommand::RevokeSource { name } => {
             admin::revoke_source(&pool, &name).await?;

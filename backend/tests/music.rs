@@ -25,7 +25,7 @@ impl App {
         admin::set_password(&db.admin, "moi", PASSWORD)
             .await
             .unwrap();
-        let token = admin::create_source(&db.admin, "lastfm", Some("6 hours"))
+        let token = admin::create_source(&db.admin, "lastfm", Some("6 hours"), None)
             .await
             .unwrap();
         for kind in ["lastfm.scrobble", "lastfm.track_info", "record.cancel"] {
@@ -616,7 +616,7 @@ async fn only_sources_with_a_threshold_can_be_silent_and_a_revoked_one_is_gone()
             .map(|s| s["name"].as_str().unwrap().to_owned())
             .collect()
     };
-    admin::create_source(&app.db.admin, "ios", None)
+    admin::create_source(&app.db.admin, "ios", None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -1049,7 +1049,7 @@ async fn a_new_interpreter_catches_up_by_its_cursor_alone() {
         .filter(|i| i.kind != "music.mark_known")
         .copied()
         .collect();
-    let source = admin::create_source(&db.admin, "lastfm", None)
+    let source = admin::create_source(&db.admin, "lastfm", None, None)
         .await
         .unwrap();
     admin::grant_kind(&db.admin, "lastfm", "lastfm.scrobble")

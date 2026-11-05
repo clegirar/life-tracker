@@ -446,7 +446,12 @@ async fn every_route_refuses_a_request_without_session() {
 async fn the_routes_without_session_are_exactly_these() {
     assert_eq!(
         NO_SESSION_ROUTES,
-        ["/health", "/v1/auth/login", "/v1/heartbeat"]
+        [
+            "/health",
+            "/v1/auth/login",
+            "/v1/heartbeat",
+            "/v1/sources/me/status"
+        ]
     );
     let web = Web::new().await;
     let health = web

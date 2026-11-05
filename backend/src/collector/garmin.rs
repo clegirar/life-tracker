@@ -32,8 +32,9 @@ use tokio::sync::watch;
 use tracing::{error, info, warn};
 
 use super::lastfm::network_reason;
-use super::{backoff, load_state, rate_limit_wait, save_state};
+use super::{backoff, load_state, rate_limit_wait, report_status, save_state};
 use crate::ingest_client::{IngestClient, IngestFailure, RecordOutcome, http_client};
+use crate::source_status::{Reason, SourceStatus, State as Health};
 
 pub const DEFAULT_GARMIN_URL: &str = "https://personal.connectapi.garmin.com";
 const STATE_FILE: &str = "garmin-state.json";
@@ -78,6 +79,9 @@ pub struct Config {
     pub interval: Duration,
     /// Garmin n'annonce aucune limite de débit : une pause entre deux appels, comme pour Last.fm.
     pub pause: Duration,
+    /// L'échéance de la clé (`GARMIN_KEY_EXPIRES_ON`, voir `key_expiry`) : Garmin ne la donne pas.
+    /// Rapportée avec chaque état, pour que la page d'état prévienne avant.
+    pub key_expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -175,6 +179,21 @@ pub fn paris_noon(date: NaiveDate) -> String {
         .single()
         .expect("décalage fixe")
         .to_rfc3339_opts(SecondsFormat::Secs, false)
+}
+
+/// La fin du jour de Paris où la clé expire, en UTC : la date affichée par Garmin à la création de la
+/// clé, `AAAA-MM-JJ`. La clé vaut tout ce jour-là ; l'heure exacte n'est pas connue. `None` : illisible.
+pub fn key_expiry(text: &str) -> Option<DateTime<Utc>> {
+    let date = (text.len() == 10)
+        .then(|| NaiveDate::parse_from_str(text, "%Y-%m-%d").ok())
+        .flatten()?;
+    let next = date.checked_add_days(Days::new(1))?;
+    // Minuit à Paris tombe la veille à 22 h ou 23 h UTC, jamais près d'un changement d'heure (01:00 UTC).
+    let around = next.and_hms_opt(0, 0, 0)?.and_utc();
+    next.and_hms_opt(0, 0, 0)?
+        .and_local_timezone(paris_offset(around))
+        .single()
+        .map(|at| at.with_timezone(&Utc))
 }
 
 fn utc(at: DateTime<Utc>) -> String {
@@ -934,6 +953,25 @@ pub struct Collector {
     garmin: Garmin,
     ingest: IngestClient,
     state: State,
+    /// Passages en échec d'affilée, pour espacer les essais.
+    failures: u32,
+}
+
+/// L'état rapporté pour la page d'état après un passage en échec (`ok` sinon). Une clé refusée
+/// demande une action ; le reste passe seul. Un état qui ne s'écrit plus sur disque n'a pas de code à
+/// lui : `service_unavailable`, le connecteur est en panne.
+pub fn failure_status(error: &TickError) -> SourceStatus {
+    let (state, reason) = match error {
+        TickError::Service(ServiceError::KeyRejected { .. }) => {
+            (Health::ActionRequired, Reason::KeyRejected)
+        }
+        TickError::Service(ServiceError::RateLimited { .. }) => {
+            (Health::Error, Reason::RateLimited)
+        }
+        TickError::Service(_) | TickError::State => (Health::Error, Reason::ServiceUnavailable),
+        TickError::Ingest { .. } => (Health::Error, Reason::IngestFailed),
+    };
+    SourceStatus::failed(state, reason)
 }
 
 /// Le motif de log d'un échec : jamais de secret ni de donnée.
@@ -986,6 +1024,7 @@ impl Collector {
             garmin,
             ingest,
             state,
+            failures: 0,
         })
     }
 
@@ -1277,30 +1316,39 @@ impl Collector {
         save_state(&self.config.state_dir, STATE_FILE, &self.state).map_err(|_| TickError::State)
     }
 
+    /// Un passage, son journal et son état rapporté, avec l'échéance de la clé ; renvoie le délai avant
+    /// le suivant. Le rapport d'état vient après le passage et n'en change ni le résultat ni le signal
+    /// de vie.
+    pub async fn pass(&mut self) -> Duration {
+        let (delay, mut status) = match self.tick().await {
+            Ok(report) => {
+                self.failures = 0;
+                info!(
+                    calls = report.calls,
+                    accepted = report.accepted,
+                    duplicate = report.duplicate,
+                    rejected = report.rejected,
+                    cancelled = report.cancelled,
+                    skipped = report.skipped,
+                    "garmin pass completed"
+                );
+                (self.config.interval, SourceStatus::ok())
+            }
+            Err(err) => {
+                self.failures += 1;
+                log_failure(&err, self.failures);
+                (retry_delay(self.failures, &err), failure_status(&err))
+            }
+        };
+        status.expires_at = self.config.key_expires_at;
+        report_status(&self.ingest, status, delay, "garmin").await;
+        delay
+    }
+
     /// Jusqu'à l'arrêt demandé, comme le connecteur Last.fm : aucune erreur ne l'arrête.
     pub async fn run(mut self, mut stop: watch::Receiver<bool>) {
-        let mut failures = 0;
         while !*stop.borrow() {
-            let delay = match self.tick().await {
-                Ok(report) => {
-                    failures = 0;
-                    info!(
-                        calls = report.calls,
-                        accepted = report.accepted,
-                        duplicate = report.duplicate,
-                        rejected = report.rejected,
-                        cancelled = report.cancelled,
-                        skipped = report.skipped,
-                        "garmin pass completed"
-                    );
-                    self.config.interval
-                }
-                Err(err) => {
-                    failures += 1;
-                    log_failure(&err, failures);
-                    retry_delay(failures, &err)
-                }
-            };
+            let delay = self.pass().await;
             tokio::select! {
                 _ = tokio::time::sleep(delay) => {}
                 _ = stop.changed() => {}
@@ -1645,5 +1693,70 @@ mod tests {
             kept.len()
         );
         assert_eq!(kept[0], json!([45.0, -1.0, 0]));
+    }
+
+    #[test]
+    fn the_key_expires_at_the_end_of_its_paris_day() {
+        assert_eq!(
+            key_expiry("2027-11-04").unwrap().to_rfc3339(),
+            "2027-11-04T23:00:00+00:00"
+        );
+        assert_eq!(
+            key_expiry("2027-06-30").unwrap().to_rfc3339(),
+            "2027-06-30T22:00:00+00:00"
+        );
+        // La veille du passage à l'heure d'hiver : minuit est encore à l'heure d'été.
+        assert_eq!(
+            key_expiry("2027-10-30").unwrap().to_rfc3339(),
+            "2027-10-30T22:00:00+00:00"
+        );
+        for invalid in [
+            "",
+            "2027-6-30",
+            "2027-02-30",
+            "30/06/2027",
+            "2027-06-30T00:00",
+            " 2027-06-30",
+        ] {
+            assert_eq!(key_expiry(invalid), None, "{invalid}");
+        }
+    }
+
+    #[test]
+    fn a_rejected_key_asks_for_an_action_and_the_rest_is_an_error() {
+        let status = |error| {
+            let s = failure_status(&error);
+            assert!(s.is_consistent());
+            (s.state, s.reason.unwrap())
+        };
+        assert_eq!(
+            status(TickError::Service(ServiceError::KeyRejected {
+                status: 401
+            })),
+            (Health::ActionRequired, Reason::KeyRejected)
+        );
+        assert_eq!(
+            status(TickError::Service(ServiceError::RateLimited {
+                retry_after: Duration::from_secs(1)
+            })),
+            (Health::Error, Reason::RateLimited)
+        );
+        for error in [
+            TickError::Service(ServiceError::Failed {
+                status: 500,
+                call: "summaries",
+            }),
+            TickError::Service(ServiceError::Unavailable { reason: "connect" }),
+            TickError::State,
+        ] {
+            assert_eq!(status(error), (Health::Error, Reason::ServiceUnavailable));
+        }
+        assert_eq!(
+            status(TickError::Ingest {
+                reason: "status",
+                status: Some(503)
+            }),
+            (Health::Error, Reason::IngestFailed)
+        );
     }
 }

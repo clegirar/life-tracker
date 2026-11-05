@@ -82,13 +82,13 @@ impl App {
         admin::set_password(&db.admin, "moi", PASSWORD)
             .await
             .unwrap();
-        let apple = admin::create_source(&db.admin, "apple", None)
+        let apple = admin::create_source(&db.admin, "apple", None, None)
             .await
             .unwrap();
         admin::grant_kind(&db.admin, "apple", apple::KIND)
             .await
             .unwrap();
-        let lastfm = admin::create_source(&db.admin, "lastfm", Some("6 hours"))
+        let lastfm = admin::create_source(&db.admin, "lastfm", Some("6 hours"), None)
             .await
             .unwrap();
         admin::grant_kind(&db.admin, "lastfm", "lastfm.scrobble")
