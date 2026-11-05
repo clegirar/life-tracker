@@ -477,7 +477,7 @@ Notées telles quelles, faisabilité à étudier plus tard.
 - [ ] Consommation électrique du logement (compteur Linky)
 - [ ] Nombre de tokens Claude utilisés
 - [ ] API GitHub
-- [ ] API Garmin Connect (entraînements et sommeil) : en cours, par l'API personnelle, voir [les chantiers](chantiers.md)
+- [x] API Garmin Connect (entraînements et sommeil) : fait le 5 nov. 2026, par l'API personnelle, voir [les chantiers](chantiers.md)
 - [ ] Temps d'écran sur l'iPhone
 - [ ] Boîte mail (API Gmail ?)
 - [ ] Déplacements via géolocalisation

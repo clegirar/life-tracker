@@ -1,6 +1,6 @@
 # Life tracker
 
-App auto-hébergée sur un NAS Synology qui retrace ma vie jour par jour, avec un calendrier web et un serveur MCP pour Claude. Le POC (compteur de cafés et musique) est validé depuis le 4 nov. 2026 ; on construit le premier tracker après le POC : Garmin Connect.
+App auto-hébergée sur un NAS Synology qui retrace ma vie jour par jour, avec un calendrier web et un serveur MCP pour Claude. Le POC (compteur de cafés et musique) est validé depuis le 4 nov. 2026 ; Garmin Connect (pas, sommeil, séances, calories) s'y est ajouté le 5 nov. 2026. Les chantiers suivants se décident un par un.
 
 ## Où trouver quoi
 
@@ -12,7 +12,7 @@ App auto-hébergée sur un NAS Synology qui retrace ma vie jour par jour, avec u
 
 ## Périmètre
 
-En cours : Garmin Connect (voir `docs/chantiers.md`). Hors champ tant que je ne les demande pas : les messages et l'agent Mac, l'annuaire côté interface, les autres trackers, les « fonctionnalités futures » de l'architecture, les sauvegardes, l'ouverture de la web app sur Internet, le contenu de `TODO.md`. Ne rien construire pour eux par anticipation ; le design des messages reste dans l'architecture pour plus tard.
+Aucun chantier en cours : Garmin Connect est fait (voir `docs/chantiers.md`). Hors champ tant que je ne les demande pas : les messages et l'agent Mac, l'annuaire côté interface, les autres trackers, les « fonctionnalités futures » de l'architecture, les sauvegardes, l'ouverture de la web app sur Internet, le contenu de `TODO.md`. Ne rien construire pour eux par anticipation ; le design des messages reste dans l'architecture pour plus tard.
 
 ## Commandes
 
