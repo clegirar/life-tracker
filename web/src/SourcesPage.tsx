@@ -1,10 +1,10 @@
-// La page Sources : une fiche par tracker, puis les autres clés à garder en vie. Elle dit où vit chaque
-// clé et comment la remplacer ; elle n'en montre jamais la valeur. Les échéances que le serveur connaît
-// (la clé Garmin, l'accès Google) et l'état des sources viennent de la même lecture que la page État.
+// La page Sources : une fiche par tracker, puis les autres clés à garder en vie. De chaque clé, seulement
+// son nom et son échéance, jamais sa valeur. Les échéances que le serveur connaît (la clé Garmin, l'accès
+// Google) et l'état des sources viennent de la même lecture que la page État.
 
 import type { ReactNode } from 'react'
 import type { SourceStatus, SourcesStatus } from './api'
-import { docText, frenchSpaces, keyExpiry, OTHER_KEYS, sheetState, sourceOf, TRACKERS, type KeyInfo } from './sources'
+import { frenchSpaces, keyExpiry, OTHER_KEYS, sheetState, sourceOf, TRACKERS, type KeyInfo } from './sources'
 import { STATE_WORD } from './status'
 import { Rich } from './StatusPage'
 
@@ -24,7 +24,6 @@ function Text({ text }: { text: string }) {
 
 function Key({ info, source, now, id }: { info: KeyInfo; source: SourceStatus | null; now: number; id: string }) {
   const expiry = keyExpiry(info, source, now)
-  // Repliée : le nom et l'échéance, ce qu'on cherche d'un coup d'œil ; le reste au toucher.
   return (
     <section className="source-key" aria-labelledby={id}>
       <h4 id={id} className="source-key-name">
@@ -38,28 +37,6 @@ function Key({ info, source, now, id }: { info: KeyInfo; source: SourceStatus | 
           </dd>
         </div>
       </dl>
-      <details className="source-more">
-        <summary className="source-more-toggle">Où elle vit, comment la remplacer</summary>
-        <p className="source-key-role">
-          <Text text={info.role} />
-        </p>
-        <dl className="source-facts">
-          <div className="source-fact">
-            <dt>Où</dt>
-            <dd>
-              <Text text={info.where} />
-            </dd>
-          </div>
-          <div className="source-fact">
-            <dt>Remplacer</dt>
-            <dd>
-              <Text text={info.replace} /> <span className="source-doc">
-                <Text text={docText(info.doc)} />
-              </span>
-            </dd>
-          </div>
-        </dl>
-      </details>
     </section>
   )
 }
@@ -75,8 +52,8 @@ export function SourcesPage({ menu, now, data, loadFailed, onReload }: Props) {
       </header>
 
       <p className="sources-lead">
-        Comment chaque tracker reçoit ses données, et les clés à garder en vie. Aucune valeur ici&nbsp;: seulement où chaque clé vit, son échéance
-        et comment la remplacer.
+        Comment chaque tracker reçoit ses données, et les clés à garder en vie. Aucune valeur ici&nbsp;: seulement le nom de chaque clé et son
+        échéance.
       </p>
 
       {loadFailed && (
@@ -157,7 +134,7 @@ export function SourcesPage({ menu, now, data, loadFailed, onReload }: Props) {
 
       <p className="sources-note">
         Une échéance passe en orange 14 jours avant (2 jours pour l'accord Google, qui ne dure que 7 jours), comme sur la page État, puis en
-        rouge une fois passée. Les marches à suivre complètes sont dans <code>docs/deploiement.md</code>.
+        rouge une fois passée.
       </p>
     </main>
   )

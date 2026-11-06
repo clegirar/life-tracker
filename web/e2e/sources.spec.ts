@@ -95,7 +95,7 @@ test('les fiches, les autres clés et les échéances vivantes, sans aucune vale
   ])
   await expect(sheet(page, 'garmin')).toContainText("tous les quarts d'heure")
   await expect(sheet(page, 'twitch')).toContainText('segments de 60 s')
-  await expect(sheet(page, 'musique')).toContainText('secrets/apple-import.token')
+  await expect(sheet(page, 'musique')).toContainText('Token de la source apple')
   for (const name of ['NAS_SSH_KEY', 'TS_OAUTH_SECRET', 'WEB_EXT_API_KEY', 'MCP_LOGIN_HASH', 'tracker_owner', 'read:packages']) {
     await expect(page.locator('main')).toContainText(name)
   }
@@ -107,13 +107,6 @@ test('les fiches, les autres clés et les échéances vivantes, sans aucune vale
   await expect(expiryOf(page, 'garmin', GARMIN_KEY)).not.toHaveAttribute('data-warn')
   await expect(expiryOf(page, 'youtube', GOOGLE_CONSENT)).toContainText(/Valable jusqu'au/)
   await expect(expiryOf(page, 'youtube', GOOGLE_CONSENT)).not.toHaveAttribute('data-warn')
-  // Repliée : le nom et l'échéance ; « Où » et « Remplacer » au toucher.
-  const garminKey = sheet(page, 'garmin').getByRole('region', { name: GARMIN_KEY })
-  await expect(garminKey.getByText('Remplacer', { exact: true })).toBeHidden()
-  await garminKey.getByText('Où elle vit, comment la remplacer').click()
-  await expect(garminKey.getByText('Remplacer', { exact: true })).toBeVisible()
-  await garminKey.getByText('Où elle vit, comment la remplacer').click()
-  await expect(garminKey.getByText('Remplacer', { exact: true })).toBeHidden()
   // Une clé sans échéance au serveur garde son texte.
   await expect(sheet(page, 'cafe').getByTestId('key-expiry')).toContainText('Sans échéance.')
 

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { SourceStatus } from './api'
-import { allKeys, docText, frenchSpaces, keyExpiry, OTHER_KEYS, sheetState, sourceOf, TRACKERS, type KeyInfo } from './sources'
+import { allKeys, frenchSpaces, keyExpiry, OTHER_KEYS, sheetState, sourceOf, TRACKERS, type KeyInfo } from './sources'
 
 // Le 5 nov. 2026, 14 h 00 à Paris (heure d'hiver, UTC+1).
 const NOW = Date.parse('2026-11-05T13:00:00Z')
@@ -10,7 +10,6 @@ const DAY = 86_400_000
 const iso = (offsetMs: number) => new Date(NOW + offsetMs).toISOString()
 
 const repo = (path: string) => readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8')
-const RUNBOOK = repo('docs/deploiement.md')
 
 function source(overrides: Partial<SourceStatus> = {}): SourceStatus {
   return {
@@ -29,7 +28,7 @@ function source(overrides: Partial<SourceStatus> = {}): SourceStatus {
 
 const sheet = (id: string) => TRACKERS.find((tracker) => tracker.id === id)!
 const liveKey = (id: string) => sheet(id).keys.find((key) => key.live)!
-const texts = (key: KeyInfo) => [key.name, key.role, key.where, key.expiry, key.replace, docText(key.doc)]
+const texts = (key: KeyInfo) => [key.name, key.expiry]
 
 describe('les fiches', () => {
   it('couvrent chaque tracker, chacun avec au moins une clé', () => {
@@ -41,19 +40,14 @@ describe('les fiches', () => {
     expect(OTHER_KEYS.every((group) => group.keys.length > 0)).toBe(true)
   })
 
-  it('donnent à chaque clé un nom unique et tous ses champs', () => {
+  it('donnent à chaque clé un nom unique et une échéance', () => {
     const names = allKeys().map((key) => key.name)
     expect(new Set(names).size).toBe(names.length)
     for (const key of allKeys()) for (const text of texts(key)) expect(text.trim(), key.name).not.toBe('')
   })
 
-  it('renvoient à des sections qui existent dans docs/deploiement.md', () => {
-    const headings = new Set(RUNBOOK.split('\n').filter((line) => line.startsWith('#')).map((line) => line.replace(/^#+\s*/, '')))
-    for (const key of allKeys()) expect(headings, `${key.name} → ${key.doc.section}`).toContain(key.doc.section)
-  })
-
   it("ne citent que des variables qu'utilisent vraiment le dépôt", () => {
-    const corpus = [RUNBOOK, repo('.env.prod.example'), repo('.github/workflows/release.yml'), repo('extension/sign.sh'), repo('CLAUDE.md')].join('\n')
+    const corpus = [repo('docs/deploiement.md'), repo('.env.prod.example'), repo('.github/workflows/release.yml'), repo('extension/sign.sh'), repo('CLAUDE.md')].join('\n')
     for (const key of allKeys()) {
       for (const variable of texts(key).join(' ').match(/\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/g) ?? []) {
         expect(corpus, `${key.name} : ${variable}`).toContain(variable)
@@ -62,7 +56,8 @@ describe('les fiches', () => {
   })
 
   it("ne contiennent aucune valeur : ni nom d'hôte, ni adresse, ni jeton", () => {
-    const all = [...TRACKERS.map((tracker) => tracker.arrival), ...allKeys().flatMap(texts)].join('\n')
+    const titles = [...TRACKERS.flatMap((tracker) => [tracker.title, tracker.arrival]), ...OTHER_KEYS.map((group) => group.title)]
+    const all = [...titles, ...allKeys().flatMap(texts)].join('\n')
     expect(all).not.toMatch(/ts\.net/)
     expect(all).not.toMatch(/\b100\.\d+\.\d+\.\d+\b/)
     expect(all).not.toMatch(/[0-9a-f]{24,}/i)
@@ -124,10 +119,5 @@ describe('les sources des fiches', () => {
 
   it('gardent les signes doubles avec leur mot', () => {
     expect(frenchSpaces('« Tester » ; puis : fini')).toBe(`«${NBSP}Tester${NBSP}»${NBSP}; puis${NBSP}: fini`)
-  })
-
-  it('citent la section du runbook', () => {
-    expect(docText({ section: 'Mise à jour : YouTube', detail: 'étape 3' })).toBe('`docs/deploiement.md`, « Mise à jour : YouTube », étape 3.')
-    expect(docText({ section: '8. Compte web' })).toBe('`docs/deploiement.md`, « 8. Compte web ».')
   })
 })
