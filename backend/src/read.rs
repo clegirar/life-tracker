@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
 
@@ -621,6 +621,159 @@ pub async fn occurrences(
     }
 }
 
+// ─── Temps mesuré : la forme `duration` ──────────────────────────────────────
+
+/// Le temps mesuré d'un jour de Paris, pour une métrique de forme `duration`, en tout ou pour un
+/// élément.
+pub struct Measured {
+    pub day: NaiveDate,
+    /// La clé de l'élément au niveau demandé (`by_item`), `None` pour les événements qui n'en ont pas,
+    /// ou pour le total du jour.
+    pub item_key: Option<String>,
+    /// Le dernier nom affiché de l'élément ce jour-là.
+    pub name: Option<String>,
+    /// L'événement le plus récent du groupe, pour le contexte de l'élément.
+    pub latest: Option<(i64, i16)>,
+    /// Les événements commencés ce jour-là ; un intervalle commencé la veille compte dans le temps du
+    /// jour, pas ici.
+    pub events: i64,
+    /// L'union des intervalles, coupée aux minuits de Paris : ce qui se chevauche compte une fois.
+    pub seconds: f64,
+}
+
+/// Le temps mesuré d'une métrique de forme `duration`, jour de Paris par jour (voir le journal des
+/// décisions de l'architecture, 6 nov. 2026). Chaque événement est l'intervalle `[occurred_at,
+/// occurred_at + details.played_ms]` ; le temps d'un jour est l'union de ces intervalles (`range_agg`),
+/// coupée à ses minuits, donc juste les jours de 23 et 25 heures. `level` et `key` restreignent aux
+/// événements de cet élément ; `by_item` donne une ligne par élément du niveau `level` (et une pour les
+/// événements sans élément), son temps étant l'union de ses seuls intervalles. Un événement dure
+/// `MAX_MEASURED_MS` au plus : chercher ceux commencés ce temps avant la période suffit, et garde
+/// l'index `(generation, metric, occurred_at)`. Seuls les jours qui ont du temps sont rendus.
+pub async fn measured(
+    pool: &PgPool,
+    metric: &str,
+    period: Period,
+    level: Option<&str>,
+    key: Option<&str>,
+    by_item: bool,
+) -> std::result::Result<Vec<Measured>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"WITH spans AS (
+             SELECT e.seq, e.ordinal, e.occurred_at, i.item_key, i.display,
+                    tstzrange(e.occurred_at,
+                              e.occurred_at + (e.details->>'played_ms')::bigint * interval '1 millisecond') AS span
+             FROM derived.live_events e
+             LEFT JOIN derived.event_items i
+               ON i.generation = e.generation AND i.seq = e.seq AND i.ordinal = e.ordinal
+              AND i.level = $4
+             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+               AND e.metric = $1
+               AND e.occurred_at >= ($2::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+                                    - $7::bigint * interval '1 millisecond'
+               AND e.occurred_at < (($3::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+               AND (e.details->>'played_ms')::bigint > 0
+               AND ($5::text IS NULL OR i.item_key = $5)
+           ),
+           days AS (
+             SELECT d::date AS day,
+                    tstzrange(d AT TIME ZONE (SELECT timezone FROM core.settings),
+                              (d + interval '1 day') AT TIME ZONE (SELECT timezone FROM core.settings)) AS bounds
+             FROM generate_series($2::date::timestamp, $3::date::timestamp, interval '1 day') AS d
+           ),
+           covered AS (
+             SELECT d.day, CASE WHEN $6::bool THEN s.item_key END AS item_key,
+                    range_agg(s.span * d.bounds) AS covered,
+                    count(DISTINCT (s.seq, s.ordinal)) FILTER (WHERE s.occurred_at <@ d.bounds) AS events,
+                    (array_agg(s.display ORDER BY s.occurred_at DESC, s.seq DESC))[1] AS name,
+                    (array_agg(s.seq ORDER BY s.occurred_at DESC, s.seq DESC))[1] AS seq,
+                    (array_agg(s.ordinal ORDER BY s.occurred_at DESC, s.seq DESC))[1] AS ordinal
+             FROM days d
+             JOIN spans s ON s.span && d.bounds
+             GROUP BY 1, 2
+           )
+           SELECT day AS "day!", item_key AS "item_key?", name AS "name?", seq AS "seq?", ordinal AS "ordinal?", events AS "events!",
+                  (SELECT sum(extract(epoch FROM upper(r) - lower(r))) FROM unnest(covered) AS r)::float8 AS "seconds!"
+           FROM covered
+           ORDER BY day, item_key"#,
+        metric,
+        period.from,
+        period.to,
+        level,
+        key,
+        by_item,
+        crate::interpreters::MAX_MEASURED_MS,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| Measured {
+            day: r.day,
+            item_key: r.item_key,
+            name: r.name,
+            latest: r.seq.zip(r.ordinal),
+            events: r.events,
+            seconds: r.seconds,
+        })
+        .collect())
+}
+
+fn round_minutes(seconds: f64) -> i64 {
+    (seconds / 60.0).round() as i64
+}
+
+/// Le libellé d'un jour dans un regroupement : le jour, la semaine ISO de son lundi, ou le mois.
+fn period_label(day: NaiveDate, group: &str) -> String {
+    match group {
+        "day" => day.format("%Y-%m-%d").to_string(),
+        "week" => {
+            let week = day.iso_week();
+            format!("{}-W{:02}", week.year(), week.week())
+        }
+        _ => day.format("%Y-%m").to_string(),
+    }
+}
+
+/// La durée cumulée d'une métrique de forme `duration` : la somme, jour par jour, des unions.
+async fn measured_durations(
+    pool: &PgPool,
+    metric: &Metric,
+    period: Period,
+    level: Option<&str>,
+    key: Option<&str>,
+    group: &str,
+) -> Result<Durations> {
+    let days = measured(pool, &metric.metric, period, level, key, false).await?;
+    let mut periods: Vec<(String, f64, i64)> = Vec::new();
+    for day in days {
+        let label = period_label(day.day, group);
+        match periods.last_mut() {
+            Some(last) if last.0 == label => {
+                last.1 += day.seconds;
+                last.2 += day.events;
+            }
+            _ => periods.push((label, day.seconds, day.events)),
+        }
+    }
+    let total: f64 = periods.iter().map(|p| p.1).sum();
+    let events: i64 = periods.iter().map(|p| p.2).sum();
+    Ok(Durations {
+        group: group.to_owned(),
+        total_minutes: (!periods.is_empty()).then(|| round_minutes(total)),
+        events,
+        events_without_duration: 0,
+        periods: periods
+            .into_iter()
+            .map(|(period, seconds, events)| DurationPeriod {
+                period,
+                minutes: Some(round_minutes(seconds)),
+                events,
+                events_without_duration: 0,
+            })
+            .collect(),
+    })
+}
+
 // ─── Durée cumulée ───────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -644,7 +797,9 @@ pub struct Durations {
 /// Le temps passé, par jour, semaine (lundi, `AAAA-Wss` ISO) ou mois. La durée d'un événement est celle
 /// mesurée par la source (`played_ms` dans ses détails) si elle existe, sinon la dernière valeur connue
 /// de la référence que le registre désigne (`duration_from`) pour son élément au niveau de cette
-/// référence : la même règle que les minutes de la page du jour. Une jointure, donc en vue.
+/// référence : la même règle que les minutes de la page du jour. Une jointure, donc en vue. Une
+/// métrique de forme `duration` a son propre calcul : l'union des intervalles de chaque jour
+/// (`measured`), où ce qui se chevauche compte une fois.
 #[allow(clippy::too_many_arguments)]
 pub async fn durations(
     pool: &PgPool,
@@ -656,6 +811,9 @@ pub async fn durations(
 ) -> Result<Durations> {
     if !matches!(group, "day" | "week" | "month") {
         return Err(ReadError::Invalid("group"));
+    }
+    if metric.shape == "duration" {
+        return measured_durations(pool, metric, period, level, key, group).await;
     }
     let reference = metric
         .duration_from
@@ -842,6 +1000,9 @@ pub struct Ranked {
     #[serde(skip_serializing_if = "Option::is_none")]
     context: Option<HashMap<String, String>>,
     occurrences: i64,
+    /// Une métrique de forme `duration` : le temps de l'élément sur la période, qui fait le classement.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    minutes: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -863,6 +1024,9 @@ pub async fn top(
     limit: i64,
 ) -> Result<Top> {
     metric.check_level(level)?;
+    if metric.shape == "duration" {
+        return measured_top(pool, metric, level, period, limit).await;
+    }
     let rows = sqlx::query!(
         r#"WITH period AS (
              SELECT i.*
@@ -908,6 +1072,84 @@ pub async fn top(
                 key: r.item_key,
                 name: r.name,
                 occurrences: r.occurrences,
+                minutes: None,
+            })
+            .collect(),
+    })
+}
+
+/// Le classement d'une métrique de forme `duration` : par temps sur la période (la somme, jour par jour,
+/// des unions de l'élément), puis par clé. `occurrences` compte les événements commencés sur la période.
+async fn measured_top(
+    pool: &PgPool,
+    metric: &Metric,
+    level: &str,
+    period: Period,
+    limit: i64,
+) -> Result<Top> {
+    struct Total {
+        key: String,
+        name: String,
+        latest: Option<(i64, i16)>,
+        events: i64,
+        seconds: f64,
+    }
+    let mut totals: HashMap<String, Total> = HashMap::new();
+    // Jour par jour, du plus ancien au plus récent : le nom et l'événement gardés sont les derniers.
+    for day in measured(pool, &metric.metric, period, Some(level), None, true).await? {
+        let Some(key) = day.item_key else { continue };
+        let total = totals.entry(key.clone()).or_insert_with(|| Total {
+            key,
+            name: String::new(),
+            latest: None,
+            events: 0,
+            seconds: 0.0,
+        });
+        if let Some(name) = day.name {
+            total.name = name;
+        }
+        total.latest = day.latest.or(total.latest);
+        total.events += day.events;
+        total.seconds += day.seconds;
+    }
+    let with_item = sqlx::query_scalar!(
+        r#"SELECT count(DISTINCT (i.seq, i.ordinal)) AS "count!"
+           FROM derived.live_event_items i
+           WHERE i.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+             AND i.metric = $1 AND i.level = $2
+             AND i.occurred_at >= ($3::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+             AND i.occurred_at < (($4::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))"#,
+        metric.metric,
+        level,
+        period.from,
+        period.to,
+    )
+    .fetch_one(pool)
+    .await?;
+    let mut ranked: Vec<Total> = totals.into_values().collect();
+    ranked.sort_by(|a, b| {
+        b.seconds
+            .total_cmp(&a.seconds)
+            .then_with(|| a.key.cmp(&b.key))
+    });
+    let distinct_items = ranked.len() as i64;
+    ranked.truncate(usize::try_from(limit).unwrap_or(0));
+    let events: Vec<(i64, i16)> = ranked.iter().filter_map(|t| t.latest).collect();
+    let contexts = contexts(pool, &events).await?;
+    Ok(Top {
+        level: level.to_owned(),
+        distinct_items,
+        occurrences_with_item: with_item,
+        items: ranked
+            .into_iter()
+            .map(|t| Ranked {
+                context: t
+                    .latest
+                    .and_then(|e| context_of(&contexts, e, Some(level), &metric.item_levels)),
+                key: t.key,
+                name: t.name,
+                occurrences: t.events,
+                minutes: Some(round_minutes(t.seconds)),
             })
             .collect(),
     })
@@ -1018,6 +1260,69 @@ pub async fn discoveries(
             })
             .collect(),
     })
+}
+
+/// Un élément vu pour la première fois un jour donné.
+#[derive(Serialize)]
+pub struct DayDiscovery {
+    pub level: String,
+    pub key: String,
+    pub name: String,
+}
+
+/// Les éléments d'une métrique vus ce jour-là pour la première fois de la vie, aux niveaux donnés et
+/// dans leur ordre, puis par première heure : aucune occurrence vivante du même niveau et de la même clé
+/// avant minuit, heure de Paris. Sans les marquages « déjà connu », que seule la musique a, et qu'elle
+/// lit à part (`api::first_listens`). Le coût suit le jour demandé, pas l'historique : une recherche
+/// d'index par élément, d'où le `LIMIT 1` latéral, qu'un `NOT EXISTS` ferait devenir un parcours de
+/// tous les éléments.
+pub async fn day_discoveries(
+    pool: &PgPool,
+    metric: &str,
+    levels: &[&str],
+    date: NaiveDate,
+) -> std::result::Result<Vec<DayDiscovery>, sqlx::Error> {
+    let levels: Vec<String> = levels.iter().map(|l| (*l).to_owned()).collect();
+    let rows = sqlx::query!(
+        r#"WITH seen AS (
+             SELECT DISTINCT ON (i.level, i.item_key)
+                    e.generation, i.level, i.item_key, i.display,
+                    min(e.occurred_at) OVER (PARTITION BY i.level, i.item_key) AS first_at,
+                    ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings)) AS day_start
+             FROM derived.live_events e
+               JOIN derived.event_items i USING (generation, seq, ordinal)
+             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+               AND e.metric = $2
+               AND i.level = ANY($3)
+               AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+               AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+             ORDER BY i.level, i.item_key, e.occurred_at DESC, e.seq DESC
+           )
+           SELECT w.level, w.item_key, w.display
+           FROM seen w
+           LEFT JOIN LATERAL (
+             SELECT 1 AS found FROM derived.live_event_items x
+             WHERE x.generation = w.generation AND x.metric = $2
+               AND x.level = w.level AND x.item_key = w.item_key
+               AND x.occurred_at < w.day_start
+             LIMIT 1
+           ) earlier ON true
+           WHERE earlier.found IS NULL
+           ORDER BY array_position($3, w.level), w.first_at, w.item_key"#,
+        date,
+        metric,
+        &levels,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| DayDiscovery {
+            level: row.level,
+            key: row.item_key,
+            name: row.display,
+        })
+        .collect())
 }
 
 // ─── Parcours ────────────────────────────────────────────────────────────────

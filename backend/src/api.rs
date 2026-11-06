@@ -32,6 +32,7 @@ use crate::music::fold;
 use crate::privacy::Zones;
 use crate::read::{self, Exposure, Period, ReadError};
 use crate::source_status::SourceStatus;
+use crate::stream;
 
 pub const MAX_RECORDS: usize = 500;
 pub const MAX_BODY_BYTES: usize = 1_000_000;
@@ -161,6 +162,9 @@ fn routes() -> Router<AppState> {
         // Pas dans `READ_ROUTES` : la carte YouTube de la web app ; le MCP lit les mêmes faits par les
         // lectures génériques.
         .route("/v1/days/{date}/video", get(get_day_video))
+        // Pas dans `READ_ROUTES` : la carte Twitch de la web app ; le MCP lit les mêmes faits par les
+        // lectures génériques.
+        .route("/v1/days/{date}/stream", get(get_day_stream))
         // Pas dans `READ_ROUTES` : des coordonnées et des traces entières, pour la carte Activité.
         // Le MCP lit les siennes par les occurrences et `/v1/route`, à travers les zones.
         .route("/v1/days/{date}/activity", get(get_day_activity))
@@ -1235,14 +1239,6 @@ struct VideoWatch {
     duration_s: Option<i64>,
 }
 
-/// Une chaîne ou une vidéo vue pour la première fois ce jour-là.
-#[derive(Serialize)]
-struct VideoDiscovery {
-    level: String,
-    key: String,
-    name: String,
-}
-
 #[derive(Serialize)]
 struct DayVideo {
     date: NaiveDate,
@@ -1252,7 +1248,8 @@ struct DayVideo {
     /// Vidéos sans durée connue : jamais comptées à zéro, et cela doit se voir.
     without_duration: usize,
     watches: Vec<VideoWatch>,
-    discoveries: Vec<VideoDiscovery>,
+    /// Les chaînes et les vidéos vues pour la première fois ce jour-là.
+    discoveries: Vec<read::DayDiscovery>,
 }
 
 /// Les vidéos YouTube d'un jour, dans l'ordre. La durée croise deux enregistrements (la vue et la
@@ -1291,35 +1288,8 @@ async fn get_day_video(
     )
     .fetch_all(&state.pool)
     .await?;
-    let discoveries = sqlx::query!(
-        r#"WITH watched AS (
-             SELECT DISTINCT ON (i.level, i.item_key)
-                    e.generation, i.level, i.item_key, i.display,
-                    min(e.occurred_at) OVER (PARTITION BY i.level, i.item_key) AS first_at,
-                    ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings)) AS day_start
-             FROM derived.live_events e
-               JOIN derived.event_items i USING (generation, seq, ordinal)
-             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
-               AND e.metric = 'video.watch'
-               AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
-               AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
-             ORDER BY i.level, i.item_key, e.occurred_at DESC, e.seq DESC
-           )
-           SELECT w.level, w.item_key, w.display
-           FROM watched w
-           LEFT JOIN LATERAL (
-             SELECT 1 AS found FROM derived.live_event_items x
-             WHERE x.generation = w.generation AND x.metric = 'video.watch'
-               AND x.level = w.level AND x.item_key = w.item_key
-               AND x.occurred_at < w.day_start
-             LIMIT 1
-           ) earlier ON true
-           WHERE earlier.found IS NULL
-           ORDER BY array_position(ARRAY['channel', 'video'], w.level), w.first_at, w.item_key"#,
-        date,
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    let discoveries =
+        read::day_discoveries(&state.pool, "video.watch", &["channel", "video"], date).await?;
     let known: Vec<i64> = rows.iter().filter_map(|row| row.duration_s).collect();
     Ok(Json(DayVideo {
         date,
@@ -1338,18 +1308,19 @@ async fn get_day_video(
                 duration_s: row.duration_s,
             })
             .collect(),
-        discoveries: discoveries
-            .into_iter()
-            .map(|row| VideoDiscovery {
-                level: row.level,
-                key: row.item_key,
-                name: row.display,
-            })
-            .collect(),
+        discoveries,
     }))
 }
 
-/// Le mois, jour par jour : valeurs, erreurs, journées en attente ou à vérifier (voir `calendar`).
+/// Le temps passé sur Twitch un jour, par chaîne, et les nouvelles chaînes (voir `stream`).
+async fn get_day_stream(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Result<Json<stream::DayStream>, ApiError> {
+    let date = parse_day(&date).ok_or(ApiError::InvalidDate)?;
+    Ok(Json(stream::day(&state.pool, date).await?))
+}
+
 /// Pas, calories, sommeil et séances d'un jour, avec leurs détails (voir `activity`).
 async fn get_day_activity(
     State(state): State<AppState>,

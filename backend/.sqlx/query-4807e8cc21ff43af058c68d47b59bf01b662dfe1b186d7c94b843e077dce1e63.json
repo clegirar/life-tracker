@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT count(DISTINCT (i.seq, i.ordinal)) AS \"count!\"\n           FROM derived.live_event_items i\n           WHERE i.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND i.metric = $1 AND i.level = $2\n             AND i.occurred_at >= ($3::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n             AND i.occurred_at < (($4::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Date",
+        "Date"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "4807e8cc21ff43af058c68d47b59bf01b662dfe1b186d7c94b843e077dce1e63"
+}

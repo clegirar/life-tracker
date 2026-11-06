@@ -1,0 +1,4 @@
+{"records":[
+  {"key":"0192f0a6-1c3e-7d2a-9b41-2f6c8e1d4a01","kind":"twitch.watch","schema_version":1,"occurred_at":"2026-11-06T21:14:03.250+01:00","payload":{"channel":"chaine_fictive","channel_name":"Chaîne_Fictive","content":"live","duration_ms":60000,"category":"Just Chatting"}},
+  {"key":"0192f0a6-1c3e-7d2a-9b41-2f6c8e1d4a02","kind":"twitch.watch","schema_version":1,"occurred_at":"2026-11-06T21:15:03.250+01:00","payload":{"channel":null,"channel_name":null,"content":"vod","duration_ms":42000,"category":null}}
+]}

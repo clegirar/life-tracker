@@ -296,7 +296,7 @@ export function buildServer(backend: Backend): McpServer {
     {
       title: 'Cumulative duration',
       description:
-        'Time spent over a period, in minutes, by day, ISO week (Monday) or month, for a metric with a duration (e.g. listening minutes). Occurrences without a known duration are counted apart and not included in the minutes.',
+        'Time spent over a period, in minutes, by day, ISO week (Monday) or month, for a metric with a duration (e.g. listening minutes, Twitch watching). Occurrences without a known duration are counted apart and not included in the minutes. For a metric of shape "duration" (measured time, e.g. Twitch), each occurrence is a time interval: overlapping time (two streams at once) counts once in the total, and fully for each item when filtered by level and key; a period counts only its own part of an interval that crosses midnight.',
       inputSchema: z.object({
         metric,
         from: date,
@@ -365,7 +365,7 @@ export function buildServer(backend: Backend): McpServer {
     {
       title: 'Top',
       description:
-        'The most frequent items of a level over a period (e.g. top artists of the month), with their keys. A listen credited to several artists counts for each of them in items and distinct_items, but once in occurrences_with_item.',
+        'The most frequent items of a level over a period (e.g. top artists of the month), with their keys. A listen credited to several artists counts for each of them in items and distinct_items, but once in occurrences_with_item. For a metric of shape "duration" (e.g. Twitch channels), items are ranked by time spent (`minutes`), not by occurrences.',
       inputSchema: z.object({
         metric,
         level,
@@ -403,7 +403,7 @@ export function buildServer(backend: Backend): McpServer {
     {
       title: 'Day summary',
       description:
-        'Everything the calendar shows for one day: the value of each metric (null means no data that day, never zero; a measure such as steps or sleep minutes is the value of the day), times of counted events, each workout with its items and value, top items, discoveries, minutes, and the completeness signals of the day.',
+        'Everything the calendar shows for one day: the value of each metric (null means no data that day, never zero; a measure such as steps or sleep minutes is the value of the day), times of counted events, each workout with its items and value, top items, discoveries, minutes (for a metric of shape "duration", the value is already the minutes of the day, overlapping time counted once), and the completeness signals of the day.',
       inputSchema: z.object({ date }),
       annotations: READ_ONLY,
     },

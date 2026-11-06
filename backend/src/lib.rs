@@ -16,4 +16,5 @@ pub mod privacy;
 pub mod read;
 pub mod replay;
 pub mod source_status;
+pub mod stream;
 pub mod youtube;

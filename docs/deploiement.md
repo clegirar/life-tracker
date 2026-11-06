@@ -900,6 +900,34 @@ Puis, par le MCP, `inventory` : le nombre de « Vidéos YouTube » tombe à ≈1
 
 **Retour arrière.** Couper YouTube seul : retirer les cinq lignes `YOUTUBE_*` de `secrets/collector.env`, puis `sudo docker compose up -d collector`. Le journal garde ce qui est entré ; `admin revoke-source youtube` coupe le token, et retirer l'accès dans le compte Google coupe le jeton. Revenir à une image d'avant : les migrations ajoutent des registres et un index que l'ancienne version ignore.
 
+## Mise à jour : Twitch
+
+À faire une fois, sur le NAS déjà en service. La PR du backend part en production à la fusion, migration comprise (`20261106120000_twitch.sql`, par le service `migrate` : un type et une métrique, pas de `rebuild`). `compose.yaml` ne change pas, et aucun secret ne va dans `secrets/` : le token de la source vit dans l'extension Firefox, sur le Mac. La métrique « Twitch » apparaît dans les filtres du calendrier dès le déploiement, vide jusqu'au premier segment. Je ne lance rien de tout cela depuis le dépôt.
+
+1. Après le déploiement de la version, sur le NAS, en root dans le dossier en `700` :
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   sudo docker compose logs migrate | tail -3   # « migrations à jour »
+   TOKEN=$(sudo docker compose run --rm -T admin create-source twitch --silence-threshold "3 days" --label "Twitch" </dev/null)
+   [ "${#TOKEN}" = 64 ] && echo "token ok" || echo "ÉCHEC : ne pas continuer"
+   sudo docker compose run --rm -T admin grant-kind twitch twitch.watch </dev/null
+   ```
+
+   Le token ne s'affiche qu'une fois : le copier dans le gestionnaire de mots de passe (pour la page d'options de l'extension), puis `unset TOKEN`. Seulement `twitch.watch` : l'extension n'annule rien, et ce token n'écrit rien d'autre.
+
+2. **L'extension Firefox** arrive dans une PR suivante (`extension/`) : signée sur le Mac par `web-ext sign` (canal non listé, clés AMO lues dans l'environnement, jamais dans le dépôt), installée par about:addons, « Installer depuis un fichier ». Sa page d'options demande l'adresse `https://<nas>.<tailnet>.ts.net:8443` (Firefox demande alors la permission pour cette seule origine) et le token, puis « Tester ». Le détail viendra avec elle.
+
+3. Vérifier les critères du chantier Twitch dans [les chantiers](chantiers.md) : une vraie soirée sur la page du jour et par le MCP (`cumulative_duration` sur une chaîne, `level=channel`, `key=<login>`) ; puis le rejeu :
+
+   ```sh
+   sudo docker compose run --rm -T admin coverage stream.watch </dev/null
+   sudo docker compose run --rm -T admin rebuild </dev/null   # 0 différence
+   ```
+
+**Retour arrière.** Couper Twitch seul : `admin revoke-source twitch` ; l'extension voit alors un 401, s'arrête d'envoyer et affiche « ! ». Le journal garde ce qui est entré. Revenir à une image d'avant : la migration ajoute des registres que l'ancienne version ignore, sauf le calendrier, qui montre alors la métrique comme une somme vide ; rien n'est perdu.
+
 ## Vérifier les critères « Terminé quand »
 
 **Un café saisi depuis l'iPhone, par la web app comme par le raccourci, apparaît.**
