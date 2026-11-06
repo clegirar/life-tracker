@@ -363,4 +363,11 @@ test('la page se déclare installable', async ({ page, request }) => {
     expect(response.status(), src).toBe(200)
     expect(response.headers()['content-type']).toBe('image/png')
   }
+  // Le logo vectoriel d'abord, le PNG en repli pour les navigateurs qui ne lisent pas le SVG.
+  const icons = page.locator('link[rel="icon"]')
+  await expect(icons.first()).toHaveAttribute('type', 'image/svg+xml')
+  await expect(icons.nth(1)).toHaveAttribute('type', 'image/png')
+  const logo = await request.get((await icons.first().getAttribute('href'))!)
+  expect(logo.status()).toBe(200)
+  expect(logo.headers()['content-type']).toMatch(/^image\/svg\+xml/)
 })

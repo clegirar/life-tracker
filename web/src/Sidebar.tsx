@@ -41,6 +41,24 @@ function SourcesIcon() {
   )
 }
 
+/** Le logo, « la grille du jour » : les couleurs des trackers en mode sombre (le même que /icons/logo.svg). */
+const LOGO_TILES = [
+  ['#ff7a8a', '#30d158', '#7d7aff'],
+  ['#ff9f0a', '#ff6fd8', '#64d2ff'],
+  ['#da8fff', '#ffcc4d', '#e0a96d'],
+]
+
+function Logo({ size = 28 }: { size?: number }) {
+  return (
+    <svg className="logo" width={size} height={size} viewBox="0 0 64 64" aria-hidden="true" data-testid="logo">
+      <rect width="64" height="64" rx="14" fill="#1c1c1e" />
+      {LOGO_TILES.map((row, y) =>
+        row.map((fill, x) => <rect key={`${x}-${y}`} x={9 + 17 * x} y={9 + 17 * y} width="12" height="12" rx="3" fill={fill} />),
+      )}
+    </svg>
+  )
+}
+
 interface MenuButtonProps {
   open: boolean
   onOpen: () => void
@@ -121,7 +139,10 @@ export function Sidebar({ wide, open, onClose, current, calendarHref, onCalendar
         aria-label="Menu"
         inert={!shown}
       >
-        <p className="sidebar-title">Life tracker</p>
+        <p className="sidebar-title">
+          <Logo />
+          Life tracker
+        </p>
         <nav aria-label="Rubriques">
           <ul className="sidebar-list">
             <li>

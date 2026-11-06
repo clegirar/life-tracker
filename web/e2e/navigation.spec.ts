@@ -111,6 +111,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
       expect(page.viewportSize()!.width).toBe(390)
       await openMenu(page)
       await page.waitForTimeout(350) // la fin de l'ouverture
+      await expect(page.getByRole('dialog', { name: 'Menu' }).getByTestId('logo')).toBeVisible()
       await checkLayout(page)
       await page.screenshot({ path: `${SHOTS}/${colorScheme}-tiroir.png` })
     })
@@ -123,6 +124,16 @@ for (const colorScheme of ['light', 'dark'] as const) {
         const sidebar = page.getByRole('complementary', { name: 'Menu' })
         await expect(sidebar).toBeVisible()
         await expect(sidebar.getByRole('link', { name: 'Calendrier' })).toHaveAttribute('aria-current', 'page')
+        // Le logo à côté du titre, décoratif : le nom de l'app reste le seul texte lu.
+        const title = sidebar.locator('.sidebar-title')
+        await expect(title).toHaveText('Life tracker')
+        const logo = title.getByTestId('logo')
+        await expect(logo).toBeVisible()
+        await expect(logo).toHaveAttribute('aria-hidden', 'true')
+        const [logoBox, titleBox] = [(await logo.boundingBox())!, (await title.boundingBox())!]
+        expect(logoBox.width).toBe(28)
+        // Centré sur la ligne du titre.
+        expect(Math.abs(logoBox.y + logoBox.height / 2 - (titleBox.y + 4 + 14))).toBeLessThanOrEqual(1)
         await expect(page.getByRole('button', { name: 'Menu' })).toHaveCount(0)
         await expect(page.locator('.content')).not.toHaveAttribute('inert', '')
         // La barre ne recouvre pas la page : elle a sa colonne.

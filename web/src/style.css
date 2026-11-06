@@ -206,10 +206,27 @@ button:disabled {
 }
 
 .sidebar-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 4px 12px 12px;
   font-size: 22px;
   line-height: 28px;
   font-weight: 700;
+}
+
+/* Le logo, à la hauteur de la ligne du titre. Son fond sombre se perd sur la barre sombre :
+   un liseré d'un demi-pixel le détache, comme une icône d'app. */
+.logo {
+  flex: none;
+  display: block;
+  border-radius: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .logo {
+    box-shadow: 0 0 0 0.5px rgb(255 255 255 / 0.14);
+  }
 }
 
 .sidebar-list {
