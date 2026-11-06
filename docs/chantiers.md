@@ -9,7 +9,7 @@ Le [POC](poc.md) est validé depuis le 4 nov. 2026. Chaque chantier a sa section
 | Garmin Connect | Fait le 5 nov. 2026 (v0.4.0) |
 | Page d'état des trackers | Construite le 5 nov. 2026 (PR #13), mise en service à vérifier |
 | YouTube | En cours depuis le 5 nov. 2026 : backend construit, web app en cours |
-| Twitch | En cours depuis le 6 nov. 2026 : backend en production (#17), extension Firefox et web app construites, essai sur le vrai Twitch à faire avant leur fusion |
+| Twitch | En cours depuis le 6 nov. 2026 : backend en production (#17), extension Firefox et web app construites, essai sur le vrai Twitch concluant ; restent la fusion, la signature et l'installation |
 | Twitch : import de l'historique (export RGPD) | À faire, quand je le demanderai (l'export est demandé à Twitch) |
 | Ouvrir la web app sur Internet | À faire, quand je le demanderai |
 
@@ -165,18 +165,20 @@ Ouvert le 6 nov. 2026, à ma demande. Voir dans le calendrier, dès le lendemain
 **Étapes** (le backend dans sa propre PR, fusionné d'abord pour essayer l'extension contre le NAS ; l'extension et la web app ensemble, un commit chacune) :
 
 1. **Backend** (fusionné le 6 nov. 2026, #17) : migration `20261106120000_twitch.sql` (type `twitch.watch`, métrique `stream.watch`, première de forme `duration`), interprète `twitch_watch`, sens générique de la forme `duration` (union des intervalles par jour de Paris) dans `/v1/durations`, `/v1/top` (classé par minutes) et le calendrier, `GET /v1/days/{date}/stream`, textes des outils MCP.
-2. **Extension Firefox** (construite le 6 nov. 2026, `extension/`, sans release) : segments de 60 s au plus, file dans `storage.local`, heartbeat et état, page d'options ; signée par `web-ext sign` sur le Mac seulement (`extension/sign.sh`). Testée par `extension/test.sh` (page, segmenteur, file avec un faux `fetch`, lot validé contre le contrat, `web-ext lint`), **mais pas encore sur le vrai Twitch** : les sélecteurs du DOM (`SELECTORS` de `extension/src/lib/page.ts`) sont des hypothèses, que l'essai de l'étape 0 doit confirmer ou corriger.
+2. **Extension Firefox** (construite le 6 nov. 2026, `extension/`, sans release) : segments de 60 s au plus, file dans `storage.local`, heartbeat et état, page d'options ; signée par `web-ext sign` sur le Mac seulement (`extension/sign.sh`). Testée par `extension/test.sh` (page, segmenteur, file avec un faux `fetch`, lot validé contre le contrat, `web-ext lint`), puis essayée sur le vrai Twitch (ci-dessous) sans correction des sélecteurs du DOM (`SELECTORS` de `extension/src/lib/page.ts`).
 3. **Web app** (construite le 6 nov. 2026) : carte Twitch du jour (temps total et temps à deux streams, chaînes par temps avec leurs contenus et leurs heures, chaîne inconnue, nouvelles chaînes, texte d'une journée vide), couleur fuchsia du calendrier, carte de la page d'état (dernier signal de Firefox, dernier envoi, dernier visionnage, consignes de silence et d'échec d'envoi propres à l'extension). Testée par `web/e2e/twitch.spec.ts` sur des chaînes fictives.
 
-**Reste à faire : l'essai du DOM réel** (étape 0, sans PR, avec moi). L'extension a été écrite avant lui ; il se fait désormais avec elle, chargée par about:debugging (« Charger un module complémentaire temporaire », `extension/dist/manifest.json` après `npm run build`), contre le NAS (source `twitch` créée après la mise en production du backend). À relever, la structure seulement et jamais les valeurs : live, rediffusion, clip (www et clips.twitch.tv), mini-lecteur, popout ; et à vérifier :
+**Essai sur le vrai Twitch** (étape 0, fait le 6 nov. 2026 avec moi, extension temporaire chargée par about:debugging contre le NAS, source `twitch` créée après la v0.8.0). Sans aucune correction de `SELECTORS` :
 
-- la chaîne d'une rediffusion et d'un clip de clips.twitch.tv (liens `/<login>` de `SELECTORS.channelLink`), le nom affiché (`SELECTORS.channelName`, retenu seulement s'il est le login à la casse près), la catégorie (`a[data-a-target='stream-game-link']`, un lien vers `/directory/`) ;
-- le mini-lecteur : le même `<video>` garde-t-il sa chaîne en passant à l'annuaire, et `.persistent-player` le contient-il ;
-- qu'aucune vidéo d'aperçu (accueil, survol de l'annuaire, page d'une chaîne hors ligne) ne compte ; qu'une chaîne hors ligne qui lit une rediffusion n'est pas comptée comme live ;
-- les événements média d'un live (pause, chargement, publicité) et l'avance de `currentTime` ;
-- un envoi depuis l'arrière-plan : Origin `moz-extension://`, en-tête `Cross-Origin-Resource-Policy` de `web`, permission d'hôte sans port pour `https://<nas>.ts.net:8443`.
+- le battement passe : écriture depuis l'arrière-plan sans CORS, `Cross-Origin-Resource-Policy` de `web` sans effet, permission d'hôte sans port acceptée ;
+- live : chaîne depuis l'URL, catégorie lue, segments de 60 s, la pause ferme le segment ;
+- rediffusion (`/videos/<id>`) : chaîne lue dans la page, `vod` ;
+- clip : chaîne et catégorie, `clip` ;
+- mini-lecteur et onglet en arrière-plan : le live d'un autre onglet continue de compter sur sa chaîne pendant qu'un autre stream joue ; le total du jour en fait l'union ;
+- changement de chaîne : un nouveau segment ;
+- délai d'arrivée au NAS d'une à deux minutes (segment fermé au plus tard à 60 s, puis la file), l'heure enregistrée restant celle du début réel.
 
-Les constats iront ici, et les corrections dans `SELECTORS` seulement, si possible.
+Non essayés : popout, clips.twitch.tv, page d'une chaîne hors ligne qui lit une rediffusion. À reprendre seulement si un écart apparaît.
 
 **Terminé quand**
 
