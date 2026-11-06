@@ -60,9 +60,6 @@ export function channelRows(day: DayStream): ChannelRow[] {
   return rows
 }
 
-/** Les chaînes regardées pour la première fois ce jour-là, dans l'ordre du serveur. */
-export const newStreamChannels = (day: DayStream) => day.discoveries.filter((d) => d.level === 'channel')
-
 /** La source Twitch se tait : des streams de ce jour peuvent manquer. */
 export const twitchSilent = (health: SourcesHealth | null) =>
   health?.sources.some((source) => isTwitch(source.name) && source.silent) ?? false

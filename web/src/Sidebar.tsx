@@ -1,5 +1,6 @@
 // La barre latérale : fixe à gauche sur un écran large, tiroir derrière un bouton sur iPhone.
-// Deux rubriques : le calendrier et l'état des trackers, marqué d'un point quand une carte attend une action.
+// Trois rubriques : le calendrier, l'état des trackers (marqué d'un point quand une carte attend une action)
+// et les sources, leurs fiches et leurs clés.
 
 import { useEffect, useRef, useSyncExternalStore, type MouseEvent, type RefObject } from 'react'
 
@@ -27,6 +28,15 @@ function StatusIcon() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M3 12h4l2.5-6 5 12 2.5-6h4" />
+    </svg>
+  )
+}
+
+function SourcesIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="8" cy="15" r="4.5" />
+      <path d="M11.2 11.8 20 3M16.5 6.5l2.5 2.5M14 9l2 2" />
     </svg>
   )
 }
@@ -63,18 +73,20 @@ interface Props {
   open: boolean
   onClose: () => void
   /** La rubrique ouverte. */
-  current: 'calendar' | 'status'
+  current: 'calendar' | 'status' | 'sources'
   /** L'adresse de l'entrée « Calendrier ». */
   calendarHref: string
   onCalendar: () => void
   statusHref: string
   onStatus: () => void
+  sourcesHref: string
+  onSources: () => void
   /** Une carte de la page d'état attend une action. */
   attention: boolean
   onLogout: () => void
 }
 
-export function Sidebar({ wide, open, onClose, current, calendarHref, onCalendar, statusHref, onStatus, attention, onLogout }: Props) {
+export function Sidebar({ wide, open, onClose, current, calendarHref, onCalendar, statusHref, onStatus, sourcesHref, onSources, attention, onLogout }: Props) {
   const first = useRef<HTMLAnchorElement>(null)
   const drawer = !wide
   const shown = wide || open
@@ -136,6 +148,12 @@ export function Sidebar({ wide, open, onClose, current, calendarHref, onCalendar
                 <StatusIcon />
                 État
                 {attention && <span className="sidebar-dot" data-testid="status-dot" aria-hidden="true" />}
+              </a>
+            </li>
+            <li>
+              <a href={sourcesHref} className="sidebar-item" aria-current={current === 'sources' ? 'page' : undefined} onClick={go(onSources)}>
+                <SourcesIcon />
+                Sources
               </a>
             </li>
           </ul>

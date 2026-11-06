@@ -10,6 +10,7 @@ describe('les adresses', () => {
     expect(parseRoute('/mois/2026-02', TODAY_DATE)).toEqual({ page: 'month', month: '2026-02' })
     expect(parseRoute('/annee/2022', TODAY_DATE)).toEqual({ page: 'year', year: '2022' })
     expect(parseRoute('/etat', TODAY_DATE)).toEqual({ page: 'status' })
+    expect(parseRoute('/sources', TODAY_DATE)).toEqual({ page: 'sources' })
     expect(parseRoute('/autorisation', TODAY_DATE)).toEqual({ page: 'authorization' })
     // Une barre finale ne change rien.
     expect(parseRoute('/mois/2026-02/', TODAY_DATE)).toEqual({ page: 'month', month: '2026-02' })
@@ -39,7 +40,7 @@ describe('les adresses', () => {
   })
 
   it('écrit chaque page, et relit ce qu’elle écrit', () => {
-    for (const route of [TODAY, { page: 'day', date: '2026-10-25' }, { page: 'month', month: '2026-10' }, { page: 'year', year: '2026' }, { page: 'status' }, { page: 'authorization' }] as const) {
+    for (const route of [TODAY, { page: 'day', date: '2026-10-25' }, { page: 'month', month: '2026-10' }, { page: 'year', year: '2026' }, { page: 'status' }, { page: 'sources' }, { page: 'authorization' }] as const) {
       expect(parseRoute(routePath(route), TODAY_DATE)).toEqual(route)
     }
     expect(routePath(TODAY)).toBe('/')

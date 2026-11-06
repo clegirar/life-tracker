@@ -7,9 +7,10 @@ import { DayPage } from './DayPage'
 import { Login } from './Login'
 import { useMetricSelection } from './metrics'
 import { MonthPage } from './MonthPage'
-import { STATUS, TODAY, routePath, useRoute, type Route } from './route'
+import { SOURCES, STATUS, TODAY, routePath, useRoute, type Route } from './route'
 import { MenuButton, Sidebar, useWide } from './Sidebar'
 import { needsAction, sourceCard } from './status'
+import { SourcesPage } from './SourcesPage'
 import { StatusPage } from './StatusPage'
 import { parisDate } from './time'
 import { useCoffee } from './useCoffee'
@@ -63,8 +64,9 @@ export function App() {
   // L'année n'est lue que vue ouverte : la rouvrir la relit.
   const shownYear = route.page === 'year' ? route.year : today.slice(0, 4)
   const year = useYear(shownYear, onSessionLost, auth === 'in' && route.page === 'year')
-  // Lu dès la connexion : le point du menu en dépend. Relu à chaque ouverture de la page.
-  const sources = useSourcesStatus(onSessionLost, auth === 'in', route.page === 'status')
+  // Lu dès la connexion : le point du menu en dépend. Relu à chaque ouverture de la page d'état ou des
+  // sources, qui en montre les échéances.
+  const sources = useSourcesStatus(onSessionLost, auth === 'in', route.page === 'status' || route.page === 'sources')
   const attention = (sources.status?.sources ?? []).some((source) => needsAction(sourceCard(source, now).state))
 
   // Une panne n'est pas une déconnexion : la page du jour saura la signaler.
@@ -102,6 +104,16 @@ export function App() {
   } else if (route.page === 'status') {
     page = (
       <StatusPage
+        menu={menu}
+        now={now}
+        data={sources.status}
+        loadFailed={sources.loadFailed}
+        onReload={() => void sources.reload()}
+      />
+    )
+  } else if (route.page === 'sources') {
+    page = (
+      <SourcesPage
         menu={menu}
         now={now}
         data={sources.status}
@@ -173,11 +185,15 @@ export function App() {
         open={drawerOpen}
         onClose={closeMenu}
         // Le retour de Google fait partie de la page d'état.
-        current={route.page === 'status' || route.page === 'authorization' ? 'status' : 'calendar'}
+        current={
+          route.page === 'status' || route.page === 'authorization' ? 'status' : route.page === 'sources' ? 'sources' : 'calendar'
+        }
         calendarHref={routePath(TODAY)}
         onCalendar={() => go(TODAY)}
         statusHref={routePath(STATUS)}
         onStatus={() => go(STATUS)}
+        sourcesHref={routePath(SOURCES)}
+        onSources={() => go(SOURCES)}
         attention={attention}
         onLogout={async () => {
           await logout().catch(() => undefined)

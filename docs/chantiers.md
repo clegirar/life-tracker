@@ -8,6 +8,7 @@ Le [POC](poc.md) est validé depuis le 4 nov. 2026. Chaque chantier a sa section
 | --- | --- |
 | Garmin Connect | Fait le 5 nov. 2026 (v0.4.0) |
 | Page d'état des trackers | Construite le 5 nov. 2026 (PR #13), mise en service à vérifier |
+| Page Sources | Construite le 6 nov. 2026 (PR #20), sans action sur le NAS |
 | YouTube | En cours depuis le 5 nov. 2026 : backend construit, web app en cours |
 | Twitch | En cours depuis le 6 nov. 2026 : backend en production (#17), extension Firefox et web app construites, essai sur le vrai Twitch concluant ; restent la fusion, la signature et l'installation |
 | Twitch : import de l'historique (export RGPD) | À faire, quand je le demanderai (l'export est demandé à Twitch) |
@@ -103,6 +104,10 @@ Ouvert le 5 nov. 2026, à ma demande, avant YouTube : une page de la web app qui
 
 **Construit le 5 nov. 2026, web app** : rubrique « État » (`/etat`) dans le menu, une carte par source avec son état en un mot (Fonctionne, À faire, En panne, Silencieux), ses dernières données, l'échéance de la clé et, au besoin, « Que faire ». Un point dans le menu pour À faire et En panne, pas pour Silencieux. Une erreur rapportée avant un contact réussi plus récent est ignorée. Écart : un connecteur Last.fm silencieux veut dire que le collecteur n'atteint plus Last.fm, pas que le scrobbler s'est arrêté ; ce dernier cas est une simple note sur la carte Musique quand la dernière écoute dépasse 3 jours. Captures Playwright à 390 et 1280 px, en clair et en sombre. Reste la mise en service (`docs/deploiement.md`, « Mise à jour : page d'état des trackers »).
 
+## Page Sources
+
+Construite le 6 nov. 2026, à ma demande (PR #20 ; choix au journal des décisions de [l'architecture](architecture.md)). Rubrique « Sources » (`/sources`) : une fiche par tracker (comment ses données arrivent, ses clés, l'état de sa source) et « Autres clés à gérer » (MCP, web app, base, ghcr.io, déploiement, AMO). Pour chaque clé : son nom et son échéance (vivante quand le serveur la connaît, pour la clé Garmin et l'accès Google, en orange 14 jours avant, 2 jours pour Google, en rouge une fois passée) ; ni où elle vit ni comment la remplacer, à ma demande. Aucune valeur secrète. Testée par `web/src/sources.test.ts` (variables vérifiées contre le dépôt) et `web/e2e/sources.spec.ts` (aucun token de l'environnement de test dans la page). Rien à faire sur le NAS : aucun changement du backend. Désormais, tout nouveau tracker et toute nouvelle clé y ont leur fiche.
+
 ## YouTube
 
 Ouvert le 5 nov. 2026, à ma demande. Ce que je regarde sur YouTube : les vidéos classiques vues, sans les Shorts, par chaîne et par vidéo (tops et découvertes, comme la musique), et le temps de visionnage.
@@ -154,7 +159,7 @@ Ouvert le 5 nov. 2026, à ma demande. Ce que je regarde sur YouTube : les vidéo
 
 ## Twitch
 
-Ouvert le 6 nov. 2026, à ma demande. Voir dans le calendrier, dès le lendemain matin, ma journée Twitch : le temps total, le temps par chaîne et les nouvelles chaînes ; et pouvoir demander à Claude « combien d'heures sur X ce mois-ci ». Les choix sont au journal des décisions de [l'architecture](architecture.md), 6 nov. 2026.
+Ouvert le 6 nov. 2026, à ma demande. Voir dans le calendrier, dès le lendemain matin, ma journée Twitch : le temps total et le temps par chaîne (les nouvelles chaînes, d'abord prévues, retirées de la carte : sans intérêt pour Twitch) ; et pouvoir demander à Claude « combien d'heures sur X ce mois-ci ». Les choix sont au journal des décisions de [l'architecture](architecture.md), 6 nov. 2026.
 
 **Accès.** L'API Twitch (Helix) ne donne pas l'historique de visionnage d'un spectateur. Je regarde uniquement dans Firefox sur le Mac : une extension Firefox personnelle mesure la lecture en direct et l'envoie à l'API d'ingestion, avec le token de sa source `twitch`. Le téléphone et la TV sont hors champ.
 
@@ -166,7 +171,7 @@ Ouvert le 6 nov. 2026, à ma demande. Voir dans le calendrier, dès le lendemain
 
 1. **Backend** (fusionné le 6 nov. 2026, #17) : migration `20261106120000_twitch.sql` (type `twitch.watch`, métrique `stream.watch`, première de forme `duration`), interprète `twitch_watch`, sens générique de la forme `duration` (union des intervalles par jour de Paris) dans `/v1/durations`, `/v1/top` (classé par minutes) et le calendrier, `GET /v1/days/{date}/stream`, textes des outils MCP.
 2. **Extension Firefox** (construite le 6 nov. 2026, `extension/`, sans release) : segments de 60 s au plus, file dans `storage.local`, heartbeat et état, page d'options ; signée par `web-ext sign` sur le Mac seulement (`extension/sign.sh`). Testée par `extension/test.sh` (page, segmenteur, file avec un faux `fetch`, lot validé contre le contrat, `web-ext lint`), puis essayée sur le vrai Twitch (ci-dessous) sans correction des sélecteurs du DOM (`SELECTORS` de `extension/src/lib/page.ts`).
-3. **Web app** (construite le 6 nov. 2026) : carte Twitch du jour (temps total et temps à deux streams, chaînes par temps avec leurs contenus et leurs heures, chaîne inconnue, nouvelles chaînes, texte d'une journée vide), couleur fuchsia du calendrier, carte de la page d'état (dernier signal de Firefox, dernier envoi, dernier visionnage, consignes de silence et d'échec d'envoi propres à l'extension). Testée par `web/e2e/twitch.spec.ts` sur des chaînes fictives.
+3. **Web app** (construite le 6 nov. 2026) : carte Twitch du jour (temps total et temps à deux streams, chaînes par temps avec leurs contenus et leurs heures, chaîne inconnue, texte d'une journée vide), couleur fuchsia du calendrier, carte de la page d'état (dernier signal de Firefox, dernier envoi, dernier visionnage, consignes de silence et d'échec d'envoi propres à l'extension). Testée par `web/e2e/twitch.spec.ts` sur des chaînes fictives.
 
 **Essai sur le vrai Twitch** (étape 0, fait le 6 nov. 2026 avec moi, extension temporaire chargée par about:debugging contre le NAS, source `twitch` créée après la v0.8.0). Sans aucune correction de `SELECTORS` :
 

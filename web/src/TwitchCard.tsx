@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import type { MonthDay, SourcesHealth } from './api'
 import { MoreButton } from './MusicCard'
 import { visibleRows } from './music'
-import { channelRows, newStreamChannels, overlapText, streamMinutesText, twitchEmptyText, twitchSilent, watchedTwitch, type ChannelRow } from './twitch'
+import { channelRows, overlapText, streamMinutesText, twitchEmptyText, twitchSilent, watchedTwitch, type ChannelRow } from './twitch'
 import type { useTwitch } from './useTwitch'
 import { OutIcon } from './VideoCard'
 
@@ -47,19 +47,15 @@ function ChannelLine({ row }: { row: ChannelRow }) {
 
 export function TwitchCard({ date, today, state, health, calendarDay }: Props) {
   // Déplié pour un jour : changer de jour replie, même en revenant.
-  const [unfolded, setUnfolded] = useState({ date: '', discoveries: false, channels: false })
-  const discoveriesSection = useRef<HTMLElement>(null)
+  const [unfoldedOn, setUnfoldedOn] = useState<string | null>(null)
   const channelsSection = useRef<HTMLElement>(null)
   const { stream, loadFailed } = state
-  const open = unfolded.date === date ? unfolded : { date, discoveries: false, channels: false }
-  const toggle = (part: 'discoveries' | 'channels') => setUnfolded({ ...open, [part]: !open[part] })
+  const unfolded = unfoldedOn === date
 
   const watched = stream !== null && watchedTwitch(stream)
   const rows = watched ? channelRows(stream) : []
-  const discoveries = watched ? newStreamChannels(stream) : []
   const overlap = watched ? overlapText(stream) : null
-  const shownRows = visibleRows(rows, open.channels).shown
-  const shownDiscoveries = visibleRows(discoveries, open.discoveries).shown
+  const shownRows = visibleRows(rows, unfolded).shown
 
   return (
     <section className="card card-twitch" aria-labelledby="titre-twitch" data-testid="twitch">
@@ -106,27 +102,6 @@ export function TwitchCard({ date, today, state, health, calendarDay }: Props) {
             </div>
           </dl>
 
-          <section ref={discoveriesSection} className="music-section" aria-labelledby="titre-nouvelles-chaines-twitch" data-testid="twitch-new-channels">
-            <h3 id="titre-nouvelles-chaines-twitch" className="subsection-title">
-              Nouvelles chaînes
-              {discoveries.length > 0 && <span className="subsection-count subsection-count-twitch">{discoveries.length}</span>}
-            </h3>
-            {discoveries.length === 0 ? (
-              <p className="empty">Aucune nouvelle chaîne ce jour-là.</p>
-            ) : (
-              <ul className="rows">
-                {shownDiscoveries.map((channel) => (
-                  <li key={channel.key} className="row">
-                    <div className="row-text">
-                      <p className="row-name">{channel.name}</p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <MoreButton total={discoveries.length} expanded={open.discoveries} onToggle={() => toggle('discoveries')} section={discoveriesSection} />
-          </section>
-
           <section ref={channelsSection} className="music-section" aria-labelledby="titre-chaines-twitch" data-testid="twitch-channels">
             <h3 id="titre-chaines-twitch" className="subsection-title">
               Chaînes regardées
@@ -136,7 +111,7 @@ export function TwitchCard({ date, today, state, health, calendarDay }: Props) {
                 <ChannelLine key={row.key} row={row} />
               ))}
             </ul>
-            <MoreButton total={rows.length} expanded={open.channels} onToggle={() => toggle('channels')} section={channelsSection} />
+            <MoreButton total={rows.length} expanded={unfolded} onToggle={() => setUnfoldedOn(unfolded ? null : date)} section={channelsSection} />
           </section>
         </>
       )}

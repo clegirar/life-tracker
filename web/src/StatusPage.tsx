@@ -15,7 +15,7 @@ interface Props {
 }
 
 /** Une étape : du texte, et les fichiers ou commandes en police fixe. */
-function Rich({ text }: { text: string }) {
+export function Rich({ text }: { text: string }) {
   return codeParts(text).map((part, index) => (part.code ? <code key={index}>{part.text}</code> : <span key={index}>{part.text}</span>))
 }
 
@@ -67,7 +67,7 @@ function SourceCard({ card }: { card: Card }) {
       </header>
       <dl className="status-lines">
         {card.lines.map((line) => (
-          <div key={line.label} className="status-line" data-warn={line.warn ? '' : undefined}>
+          <div key={line.label} className="status-line" data-warn={line.warn}>
             <dt>{line.label}</dt>
             <dd>{line.value}</dd>
           </div>
