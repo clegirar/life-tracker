@@ -9,6 +9,8 @@ Le [POC](poc.md) est validé depuis le 4 nov. 2026. Chaque chantier a sa section
 | Garmin Connect | Fait le 5 nov. 2026 (v0.4.0) |
 | Page d'état des trackers | Construite le 5 nov. 2026 (PR #13), mise en service à vérifier |
 | YouTube | En cours depuis le 5 nov. 2026 : backend construit, web app en cours |
+| Twitch | En cours depuis le 6 nov. 2026 : backend construit, extension Firefox et web app à venir |
+| Twitch : import de l'historique (export RGPD) | À faire, quand je le demanderai (l'export est demandé à Twitch) |
 | Ouvrir la web app sur Internet | À faire, quand je le demanderai |
 
 ## Garmin Connect
@@ -149,6 +151,40 @@ Ouvert le 5 nov. 2026, à ma demande. Ce que je regarde sur YouTube : les vidéo
 **Corrigé le 5 nov. 2026** : l'export de production contient aussi les réactions (« Disliked https://… », environ 90 entrées), en `/watch?v=` comme une vue ; elles étaient entrées comme vidéos vues. Une vue exige désormais un préfixe de vue connu, une réaction est écartée et la fausse vue d'avant annulée par `record.cancel` ; un export sans aucune vue reconnue n'est pas lu (voir le journal des décisions de [l'architecture](architecture.md), 5 nov. 2026, et `docs/deploiement.md`, « Correctif : les réactions YouTube »).
 
 **Corrigé le 5 nov. 2026** : seules les vidéos classiques entrent. Le premier export a fait entrer 24 555 vues, dont ≈85 % de Shorts d'après un échantillon. Data v3 classe chaque vidéo : un Short dure 3 min au plus et son lecteur est au moins aussi haut que large ; une vidéo absente de la réponse est supprimée ou privée, écartée aussi. Les vues en attente de classement restent dans l'état du connecteur ; celles d'avant sont annulées une fois par `record.cancel` (voir le journal des décisions de [l'architecture](architecture.md), 5 nov. 2026, « vidéos classiques seulement », et `docs/deploiement.md`, même section).
+
+## Twitch
+
+Ouvert le 6 nov. 2026, à ma demande. Voir dans le calendrier, dès le lendemain matin, ma journée Twitch : le temps total, le temps par chaîne et les nouvelles chaînes ; et pouvoir demander à Claude « combien d'heures sur X ce mois-ci ». Les choix sont au journal des décisions de [l'architecture](architecture.md), 6 nov. 2026.
+
+**Accès.** L'API Twitch (Helix) ne donne pas l'historique de visionnage d'un spectateur. Je regarde uniquement dans Firefox sur le Mac : une extension Firefox personnelle mesure la lecture en direct et l'envoie à l'API d'ingestion, avec le token de sa source `twitch`. Le téléphone et la TV sont hors champ.
+
+**Ce qui compte.** Un live, une rediffusion ou un clip, pendant qu'il est en lecture, dans un onglet visible ou en arrière-plan, avec ou sans le son ; les publicités aussi. Une vidéo en pause ou en chargement ne compte pas. Deux streams en même temps : chaque chaîne reçoit son temps, et le total du jour est l'union des intervalles, pas leur somme.
+
+**Mes choix** (à corriger si besoin) : seuil de silence de 3 jours (un week-end sans Firefox affichera « en attente ») ; jusqu'à l'import RGPD, presque toutes les chaînes apparaîtront comme « nouvelles » les premières semaines, sans bouton dédié ; pas de popup dans la barre d'outils en v1 ni de mise à jour automatique de l'extension (chaque version est signée puis réinstallée) ; la catégorie reste dans les détails.
+
+**Étapes, une PR chacune :**
+
+1. **Backend** (construit le 6 nov. 2026) : migration `20261106120000_twitch.sql` (type `twitch.watch`, métrique `stream.watch`, première de forme `duration`), interprète `twitch_watch`, sens générique de la forme `duration` (union des intervalles par jour de Paris) dans `/v1/durations`, `/v1/top` (classé par minutes) et le calendrier, `GET /v1/days/{date}/stream`, textes des outils MCP.
+2. **Extension Firefox** (`extension/`, sans release) : segments de 60 s au plus, file dans `storage.local`, heartbeat et état, page d'options ; signée par `web-ext sign` sur le Mac seulement.
+3. **Web app** : carte Twitch du jour, couleur du calendrier, carte de la page d'état.
+
+Avant l'extension, un essai (sans PR) relève la structure du DOM de Twitch (live, rediffusion, clip, mini-lecteur, popout) et vérifie un envoi depuis l'arrière-plan de l'extension (Origin `moz-extension://`, en-tête `Cross-Origin-Resource-Policy` de `web`) : ses constats iront ici.
+
+**Terminé quand**
+
+- La source est créée sur le NAS, et l'extension est signée et installée dans Firefox.
+- Une vraie soirée correspond à ce que j'ai regardé, dans le calendrier comme par le MCP (`cumulative_duration` sur une chaîne).
+- Deux streams en même temps donnent l'union dans le total, et chacun son temps entier.
+- Une session à cheval sur minuit, et un Mac fermé en cours de stream, sont bien comptés.
+- Des envois faits hors ligne rattrapent sans doublon.
+- `admin rebuild` donne 0 différence.
+- La carte de la page d'état passe en « silence » quand l'extension est désactivée, et revient.
+- Ni token ni donnée personnelle dans le dépôt ou les logs.
+- L'affichage est vérifié à la largeur d'un iPhone et sur Mac, en clair et en sombre.
+
+## Twitch : import de l'historique (export RGPD)
+
+À faire, seulement quand je le demanderai. L'extension ne voit que ce que je regarde à partir de son installation ; l'export de mes données que j'ai demandé à Twitch (RGPD) devrait contenir mon historique de visionnage. Quand il arrivera : relever sa structure (jamais les valeurs), décider de ce qu'il donne vraiment (durées ou seulement des débuts de lecture), et l'importer par l'API d'ingestion comme l'import Apple, avec la réconciliation qu'il faudra (`admin set-precedence`) là où il recouvre l'extension. Les découvertes se recalculeront d'elles-mêmes.
 
 ## Ouvrir la web app sur Internet
 

@@ -14,6 +14,7 @@ const serviceToken = process.env.LT_MCP_TEST_SERVICE_TOKEN ?? '';
 const iosToken = process.env.LT_MCP_TEST_IOS_TOKEN ?? '';
 const lastfmToken = process.env.LT_MCP_TEST_LASTFM_TOKEN ?? '';
 const garminToken = process.env.LT_MCP_TEST_GARMIN_TOKEN ?? '';
+const twitchToken = process.env.LT_MCP_TEST_TWITCH_TOKEN ?? '';
 const skip = backendUrl === undefined ? 'sans backend : lancer mcp/test.sh' : false;
 
 const EXPECTED_TOOLS = [
@@ -65,6 +66,23 @@ const GARMIN = [
   }),
 ];
 
+// Twitch, tel que l'envoie l'extension : des segments de lecture. Le 16 oct. (UTC+2), alpha de 20:00
+// à 21:00 et beta de 20:30 à 21:30 : 90 min passées sur Twitch, 60 pour chaque chaîne.
+const segment = (key: string, at: string, channel: string, minutes: number) => ({
+  key,
+  kind: 'twitch.watch',
+  schema_version: 1,
+  occurred_at: at,
+  payload: { channel, channel_name: channel === 'alpha' ? 'Alpha' : 'Beta', content: 'live', duration_ms: minutes * 60_000, category: null },
+});
+const TWITCH = [
+  segment('t-a1', '2026-10-16T20:00:00+02:00', 'alpha', 20),
+  segment('t-a2', '2026-10-16T20:20:00+02:00', 'alpha', 20),
+  segment('t-a3', '2026-10-16T20:40:00+02:00', 'alpha', 20),
+  segment('t-b1', '2026-10-16T20:30:00+02:00', 'beta', 30),
+  segment('t-b2', '2026-10-16T21:00:00+02:00', 'beta', 30),
+];
+
 async function ingest(token: string, records: unknown[]): Promise<void> {
   const response = await fetch(`${backendUrl}/v1/records`, {
     method: 'POST',
@@ -90,7 +108,8 @@ async function settled(): Promise<void> {
       events('music.track_duration') === 1 &&
       events('workout') === 1 &&
       events('workout.track') === 1 &&
-      events('sleep') === 1
+      events('sleep') === 1 &&
+      events('stream.watch') === 5
     ) {
       return;
     }
@@ -137,6 +156,7 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
       },
     ]);
     await ingest(garminToken, GARMIN);
+    await ingest(twitchToken, TWITCH);
     await settled();
     h = await startServer({ backendUrl, serviceToken });
     const tokens = await login(h);
@@ -279,6 +299,45 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
     assert.equal((result.days as { first: string }[])[0]?.first, '08:10');
   });
 
+  test('Twitch : deux streams à la fois comptent une fois, chaque chaîne en entier, le classement par minutes', async () => {
+    const inventory = await call('inventory');
+    const stream = (inventory.metrics as { metric: string; shape: string; tools: string[]; events: number }[]).find(
+      (m) => m.metric === 'stream.watch',
+    );
+    assert.equal(stream?.shape, 'duration');
+    assert.equal(stream?.events, 5);
+    for (const tool of ['cumulative_duration', 'top', 'discoveries', 'search']) {
+      assert.ok(stream?.tools.includes(tool), tool);
+    }
+    const total = await call('cumulative_duration', { metric: 'stream.watch', from: '2026-10-16', to: '2026-10-16' });
+    assert.equal(total.total_minutes, 90, 'l’union, pas la somme');
+    const alpha = await call('cumulative_duration', {
+      metric: 'stream.watch',
+      from: '2026-10-01',
+      to: '2026-10-31',
+      group: 'month',
+      level: 'channel',
+      key: 'alpha',
+    });
+    assert.equal(alpha.total_minutes, 60);
+    assert.deepEqual((alpha.periods as { period: string }[]).map((p) => p.period), ['2026-10']);
+    const day = await call('day_summary', { date: '2026-10-16' });
+    type Ranked = { key: string; name: string; minutes: number; occurrences: number };
+    type Entry = { metric: string; value: number | null; minutes?: number; top?: Record<string, { items: Ranked[] }> };
+    const entry = (day.metrics as Entry[]).find((m) => m.metric === 'stream.watch');
+    assert.equal(entry?.value, 90);
+    assert.equal(entry?.minutes, 90);
+    assert.deepEqual(
+      entry?.top?.channel?.items.map((i) => [i.key, i.minutes, i.occurrences]),
+      [
+        ['alpha', 60, 3],
+        ['beta', 60, 2],
+      ],
+    );
+    const discoveries = await call('discoveries', { metric: 'stream.watch', level: 'channel', from: '2026-10-16', to: '2026-10-16' });
+    assert.deepEqual((discoveries.items as { name: string }[]).map((d) => d.name), ['Alpha', 'Beta']);
+  });
+
   test('Garmin : détails du jour, séances par lieu, parcours coupé à la zone de confidentialité', async () => {
     const outputs: string[] = [];
     const tool = async (name: string, args: Record<string, unknown>) => {
@@ -292,7 +351,7 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
     const metrics = day.metrics as Entry[];
     assert.deepEqual(
       metrics.map((m) => m.metric),
-      ['coffee', 'music.listen', 'steps', 'workout', 'sleep', 'calories.burned', 'video.watch'],
+      ['coffee', 'music.listen', 'steps', 'workout', 'sleep', 'calories.burned', 'video.watch', 'stream.watch'],
       'l’ordre d’affichage du registre',
     );
     const steps = metrics.find((m) => m.metric === 'steps');

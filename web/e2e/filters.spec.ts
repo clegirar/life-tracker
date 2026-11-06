@@ -146,7 +146,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
         // Le jour, trois métriques : le café, les pas et les calories.
         await page.goBack()
         await expect(page.getByTestId('music')).toBeVisible()
-        for (const name of ['Écoutes', 'Séances', 'Sommeil', 'Vidéos YouTube']) await chip(page, name).click()
+        for (const name of ['Écoutes', 'Séances', 'Sommeil', 'Vidéos YouTube', 'Twitch']) await chip(page, name).click()
         await expect(page.getByTestId('music')).toHaveCount(0)
         await expect(page.getByTestId('activity').getByTestId('workouts')).toHaveCount(0)
         await page.waitForTimeout(200) // la fin du filtre

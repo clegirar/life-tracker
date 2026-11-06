@@ -18,6 +18,8 @@ use chrono::{DateTime, Datelike, Days, Months, NaiveDate, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
 
+use crate::read;
+
 #[derive(Serialize)]
 pub struct MonthMetric {
     metric: String,
@@ -159,6 +161,7 @@ pub async fn range(pool: &PgPool, start: NaiveDate, end: NaiveDate) -> Result<Pe
     // Les déclarations et les références éclairent une autre métrique : jamais affichées seules.
     let metrics = sqlx::query!(
         r#"SELECT metric, label, unit, daily_aggregation::text AS "aggregation!",
+                  shape::text AS "shape!",
                   extract(epoch FROM freshness_threshold)::float8 AS freshness
            FROM core.metrics
            WHERE shape NOT IN ('declaration', 'reference') AND daily_aggregation <> 'none'
@@ -265,10 +268,14 @@ pub async fn range(pool: &PgPool, start: NaiveDate, end: NaiveDate) -> Result<Pe
 
     let mut by_day: HashMap<(NaiveDate, &str), f64> = HashMap::new();
     for row in &values {
-        let aggregation = metrics
-            .iter()
-            .find(|m| m.metric == row.metric)
-            .map_or("count", |m| m.aggregation.as_str());
+        let Some(metric) = metrics.iter().find(|m| m.metric == row.metric) else {
+            continue;
+        };
+        // Une métrique de forme `duration` a son propre calcul, ci-dessous.
+        if metric.shape == "duration" {
+            continue;
+        }
+        let aggregation = metric.aggregation.as_str();
         let value = match aggregation {
             "count" => Some(row.count),
             "sum" => row.sum,
@@ -279,6 +286,19 @@ pub async fn range(pool: &PgPool, start: NaiveDate, end: NaiveDate) -> Result<Pe
         };
         if let Some(value) = value {
             by_day.insert((row.day, row.metric.as_str()), value);
+        }
+    }
+    // Une métrique de forme `duration` : les minutes de l'union des intervalles du jour, où ce qui se
+    // chevauche compte une fois (voir `read::measured`), non arrondies.
+    if let Some(last) = end.pred_opt().filter(|last| *last >= start) {
+        for metric in metrics.iter().filter(|m| m.shape == "duration") {
+            let period = read::Period {
+                from: start,
+                to: last,
+            };
+            for day in read::measured(pool, &metric.metric, period, None, None, false).await? {
+                by_day.insert((day.day, metric.metric.as_str()), day.seconds / 60.0);
+            }
         }
     }
     let errors: HashMap<NaiveDate, i64> = errors.iter().map(|e| (e.day, e.errors)).collect();

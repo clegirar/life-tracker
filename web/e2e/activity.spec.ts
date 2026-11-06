@@ -129,14 +129,14 @@ test('un jour sans données Garmin le dit, sans zéro', async ({ page }) => {
   await expect(card.getByTestId('steps')).toHaveCount(0)
 })
 
-test('sept métriques : toutes choisies par défaut, et Pas seule montre ses chiffres', async ({ page, request }) => {
+test('huit métriques : toutes choisies par défaut, et Pas seule montre ses chiffres', async ({ page, request }) => {
   await seed(request, await apiSession(request))
   await login(page)
   await page.goto(`/mois/${DAY.slice(0, 7)}`)
   const filters = page.getByRole('group', { name: 'Métriques affichées' })
   // Dans l'ordre d'affichage du registre.
-  await expect(filters.locator('.chip')).toHaveText(['Cafés', 'Écoutes', 'Pas', 'Séances', 'Sommeil', 'Calories brûlées', 'Vidéos YouTube'])
-  for (const name of ['Cafés', 'Écoutes', 'Pas', 'Calories brûlées', 'Sommeil', 'Séances', 'Vidéos YouTube']) {
+  await expect(filters.locator('.chip')).toHaveText(['Cafés', 'Écoutes', 'Pas', 'Séances', 'Sommeil', 'Calories brûlées', 'Vidéos YouTube', 'Twitch'])
+  for (const name of ['Cafés', 'Écoutes', 'Pas', 'Calories brûlées', 'Sommeil', 'Séances', 'Vidéos YouTube', 'Twitch']) {
     await expect(filters.getByRole('button', { name })).toHaveAttribute('aria-pressed', 'true')
   }
   const cell = page.locator(`.cell[data-date="${DAY}"]`)
@@ -144,7 +144,7 @@ test('sept métriques : toutes choisies par défaut, et Pas seule montre ses chi
     await expect(cell.locator(`.day-dot[data-metric="${metric}"]`)).toHaveCount(1)
   }
   await expect(cell).toHaveAccessibleName(/8\s412 pas.*2 séances.*7 h 13.*2\s350 kcal/)
-  for (const name of ['Cafés', 'Écoutes', 'Calories brûlées', 'Sommeil', 'Séances', 'Vidéos YouTube']) await filters.getByRole('button', { name }).click()
+  for (const name of ['Cafés', 'Écoutes', 'Calories brûlées', 'Sommeil', 'Séances', 'Vidéos YouTube', 'Twitch']) await filters.getByRole('button', { name }).click()
   await expect(cell.locator('.cell-value[data-metric="steps"]')).toHaveText('8,4 k')
   await expect(page.locator(`.cell[data-date="${NO_DATA}"] .cell-value`)).toHaveText(' ')
   await filters.getByRole('button', { name: 'Sommeil' }).click()

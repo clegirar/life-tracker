@@ -7,7 +7,12 @@ use serde_json::{Value, json};
 use sqlx::Row;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-const ALL: &[&str] = &["coffee.cup", "lastfm.scrobble", "lastfm.track_info"];
+const ALL: &[&str] = &[
+    "coffee.cup",
+    "lastfm.scrobble",
+    "lastfm.track_info",
+    "twitch.watch",
+];
 const COFFEE: &[&str] = &["coffee.cup"];
 
 fn assert_rejected(result: &Value, reason: &str, field: &str) {

@@ -1,0 +1,59 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH spans AS (\n             SELECT i.item_key, e.details->>'content' AS content, e.occurred_at,\n                    e.occurred_at + (e.details->>'played_ms')::bigint * interval '1 millisecond' AS ended_at\n             FROM derived.live_events e\n             LEFT JOIN derived.event_items i\n               ON i.generation = e.generation AND i.seq = e.seq AND i.ordinal = e.ordinal\n              AND i.level = $2\n             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n               AND e.metric = $3\n               AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n                                    - $4::bigint * interval '1 millisecond'\n               AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n               AND (e.details->>'played_ms')::bigint > 0\n           )\n           SELECT item_key AS \"item_key?\", count(*) AS \"segments!\",\n                  array_agg(DISTINCT content) FILTER (WHERE content IS NOT NULL) AS contents,\n                  to_char(min(occurred_at) AT TIME ZONE (SELECT timezone FROM core.settings), 'HH24:MI') AS \"first_time!\",\n                  to_char(max(ended_at) AT TIME ZONE (SELECT timezone FROM core.settings), 'HH24:MI') AS \"last_time!\"\n           FROM spans\n           WHERE ended_at > ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n           GROUP BY item_key",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "item_key?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.event_items",
+            "name": "item_key"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "segments!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "contents",
+        "type_info": "TextArray",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "first_time!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "last_time!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date",
+        "Text",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "6224708f8b038ffbc48ae030c00874a7f10224482f6d63959416f2965ce95674"
+}

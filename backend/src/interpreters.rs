@@ -175,6 +175,12 @@ pub static INTERPRETERS: &[Interpreter] = &[
         schema_version: 1,
         interpret: youtube_video_info,
     },
+    Interpreter {
+        kind: "twitch.watch",
+        version: 1,
+        schema_version: 1,
+        interpret: twitch_watch,
+    },
 ];
 
 /// Un café : un événement à l'heure de l'enveloppe. La charge utile, attendue vide, est ignorée.
@@ -758,6 +764,86 @@ fn youtube_video_info(record: &Record) -> Result<Vec<Output>, InterpretError> {
             title.unwrap_or(video),
         )],
         ..Event::at_envelope(record, "video.duration")
+    })])
+}
+
+// ─── Twitch ──────────────────────────────────────────────────────────────────
+//
+// Un segment de lecture mesuré par l'extension Firefox : le temps de l'horloge pendant que la vidéo
+// avance, coupé à la pause, au saut, au changement de chaîne, à la page masquée, ou au bout de 60 s.
+
+/// La durée maximale d'un événement de forme `duration` : 1 h. Au-delà, l'événement est refusé ; les
+/// lectures de cette forme cherchent donc les intervalles commencés au plus 1 h avant leur période.
+pub const MAX_MEASURED_MS: i64 = 3_600_000;
+
+/// Les noms de Twitch (affiché, catégorie) : 25 caractères et un nom de jeu, largement.
+const MAX_TWITCH_NAME_BYTES: usize = 200;
+
+/// Un login Twitch : minuscules, chiffres et `_`, 25 caractères au plus.
+fn twitch_login(value: &str) -> bool {
+    (1..=25).contains(&value.len())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
+
+/// Un nom facultatif : absent, `null` ou vide, rien ; autre chose qu'un texte, ou trop long, une erreur.
+fn twitch_name<'a>(
+    payload: &'a Value,
+    field: &str,
+    error: &'static str,
+) -> Result<Option<&'a str>, InterpretError> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) if text.trim().len() <= MAX_TWITCH_NAME_BYTES => {
+            Ok(Some(text.trim()).filter(|t| !t.is_empty()))
+        }
+        Some(_) => Err(InterpretError(error)),
+    }
+}
+
+/// `{channel, channel_name, content, duration_ms, category}` : un segment de lecture, à l'heure de son
+/// début. La durée jouée devient `details.played_ms`, comme pour une écoute d'Apple ; c'est elle que
+/// lisent les minutes de la forme `duration`. Élément : la chaîne sous son login, avec son nom affiché
+/// (le login s'il manque) ; une chaîne inconnue (`null`) n'a pas d'élément, son temps compte quand même.
+fn twitch_watch(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    let payload = &record.payload;
+    let channel = match payload.get("channel") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(login)) if twitch_login(login) => Some(login.as_str()),
+        Some(_) => return Err(InterpretError("twitch.watch: invalid channel")),
+    };
+    let channel_name = twitch_name(
+        payload,
+        "channel_name",
+        "twitch.watch: invalid channel_name",
+    )?
+    .filter(|_| channel.is_some());
+    let content = payload
+        .get("content")
+        .and_then(Value::as_str)
+        .filter(|c| matches!(*c, "live" | "vod" | "clip"))
+        .ok_or(InterpretError("twitch.watch: invalid content"))?;
+    let played = payload
+        .get("duration_ms")
+        .and_then(Value::as_i64)
+        .filter(|ms| (1..=MAX_MEASURED_MS).contains(ms))
+        .ok_or(InterpretError("twitch.watch: invalid duration_ms"))?;
+    let category = twitch_name(payload, "category", "twitch.watch: invalid category")?;
+    let items = channel
+        .map(|login| Item::single("channel", login.to_owned(), channel_name.unwrap_or(login)))
+        .into_iter()
+        .collect();
+    Ok(vec![Output::Event(Event {
+        details: json!({
+            "channel": channel,
+            "channel_name": channel_name,
+            "content": content,
+            "category": category,
+            "played_ms": played,
+        }),
+        items,
+        ..Event::at_envelope(record, "stream.watch")
     })])
 }
 
@@ -1480,6 +1566,87 @@ mod tests {
             json!({"video_id": "abcdefghijk", "duration_s": "3"}),
         ] {
             assert!(youtube_video_info(&record(payload)).is_err());
+        }
+    }
+
+    #[test]
+    fn a_twitch_segment_has_its_channel_and_its_played_time() {
+        let record = record(
+            json!({"channel": "streamer_1", "channel_name": " Streamer_1 ",
+            "content": "live", "duration_ms": 60_000, "category": "Just Chatting", "extra": 1}),
+        );
+        let event = single_event(twitch_watch(&record).unwrap());
+        assert_eq!(event.metric, "stream.watch");
+        assert_eq!(event.value, None);
+        assert_eq!(event.occurred_at, record.occurred_at);
+        assert_eq!(
+            event.items,
+            vec![Item::single(
+                "channel",
+                "streamer_1".to_owned(),
+                "Streamer_1"
+            )]
+        );
+        assert_eq!(
+            event.details,
+            json!({"channel": "streamer_1", "channel_name": "Streamer_1", "content": "live",
+                   "category": "Just Chatting", "played_ms": 60_000})
+        );
+        // Sans nom, le login ; à la limite d'une heure, accepté.
+        let event = single_event(
+            twitch_watch(&self::record(json!({"channel": "abc", "content": "clip",
+                "duration_ms": MAX_MEASURED_MS})))
+            .unwrap(),
+        );
+        assert_eq!(
+            event.items,
+            vec![Item::single("channel", "abc".to_owned(), "abc")]
+        );
+        assert_eq!(event.details["category"], Value::Null);
+    }
+
+    #[test]
+    fn an_unknown_twitch_channel_has_no_item_but_keeps_its_time() {
+        let event = single_event(
+            twitch_watch(&record(json!({"channel": null, "channel_name": "Nom seul",
+                "content": "vod", "duration_ms": 1, "category": null})))
+            .unwrap(),
+        );
+        assert_eq!(event.items, vec![]);
+        assert_eq!(event.details["channel_name"], Value::Null);
+        assert_eq!(event.details["played_ms"], 1);
+    }
+
+    #[test]
+    fn an_unusable_twitch_segment_is_an_error_that_cites_nothing() {
+        let ok = json!({"channel": "abc", "content": "live", "duration_ms": 1000});
+        let with = |field: &str, value: Value| {
+            let mut payload = ok.clone();
+            payload[field] = value;
+            payload
+        };
+        for payload in [
+            json!({}),
+            json!(null),
+            with("channel", json!("Majuscules")),
+            with("channel", json!("a-b")),
+            with("channel", json!("")),
+            with("channel", json!("a".repeat(26))),
+            with("channel", json!(3)),
+            with("channel_name", json!(3)),
+            with("channel_name", json!("x".repeat(201))),
+            with("content", json!("short")),
+            with("content", Value::Null),
+            with("duration_ms", json!(0)),
+            with("duration_ms", json!(-5)),
+            with("duration_ms", json!(MAX_MEASURED_MS + 1)),
+            with("duration_ms", json!(1.5)),
+            with("duration_ms", json!("1000")),
+            with("duration_ms", Value::Null),
+            with("category", json!(["x"])),
+        ] {
+            let err = twitch_watch(&record(payload.clone())).unwrap_err();
+            assert!(err.0.starts_with("twitch.watch: invalid"), "{payload}");
         }
     }
 }
