@@ -1,10 +1,12 @@
 import { useRef, useState, type ReactNode } from 'react'
-import type { MonthDay } from './api'
-import { ActivityCard } from './ActivityCard'
+import type { MonthDay, MonthMetric } from './api'
+import { ACTIVITY_METRICS, ActivityCard } from './ActivityCard'
 import type { useActivity } from './useActivity'
 import { monthName, monthOf } from './calendar'
 import type { Op } from './reconcile'
 import { isAdd } from './reconcile'
+import { MetricFilters, NO_METRIC } from './MetricFilters'
+import { effectiveSelection } from './metrics'
 import { musicAlert } from './music'
 import { MusicCard } from './MusicCard'
 import type { useMusic } from './useMusic'
@@ -22,6 +24,12 @@ interface Props {
   onShowMonth: () => void
   /** La journée vue par le mois : ses erreurs. `null` tant que le mois n'est pas lu. */
   calendarDay: MonthDay | null
+  /** Les métriques du registre, lues avec le mois ; vide tant qu'il n'est pas lu. */
+  metrics: MonthMetric[]
+  /** Le choix gardé, commun au mois, à l'année et au jour. */
+  storedMetrics: string[] | null
+  onToggleMetric: (metric: string, available: string[]) => void
+  onSetAllMetrics: (available: string[], on: boolean) => void
   coffee: ReturnType<typeof useCoffee>
   music: ReturnType<typeof useMusic>
   activity: ReturnType<typeof useActivity>
@@ -46,14 +54,35 @@ function failureText(op: Op, date: string, today: string): string {
     : `${what} de ${when} n'a pas été enregistré${e}.`
 }
 
-export function DayPage({ menu, date, today, onSelect, onShowMonth, calendarDay, coffee, music, activity, video }: Props) {
+export function DayPage({
+  menu,
+  date,
+  today,
+  onSelect,
+  onShowMonth,
+  calendarDay,
+  metrics,
+  storedMetrics,
+  onToggleMetric,
+  onSetAllMetrics,
+  coffee,
+  music,
+  activity,
+  video,
+}: Props) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [picked, setPicked] = useState('12:00')
   const [pickError, setPickError] = useState<string | null>(null)
   const timeInput = useRef<HTMLInputElement>(null)
   const isToday = date === today
   const { cups } = coffee
-  const alert = musicAlert(music.health)
+  const available = metrics.map((m) => m.metric)
+  const selected = effectiveSelection(storedMetrics, available)
+  // Une métrique que les filtres ne connaissent pas (le mois n'est pas encore lu) reste affichée.
+  const shows = (metric: string) => !available.includes(metric) || selected.includes(metric)
+  const none = available.length > 0 && selected.length === 0
+  const activityShown = ACTIVITY_METRICS.filter(shows)
+  const alert = shows('music.listen') ? musicAlert(music.health) : null
 
   function select(next: string) {
     setPickerOpen(false)
@@ -112,6 +141,13 @@ export function DayPage({ menu, date, today, onSelect, onShowMonth, calendarDay,
         </nav>
       </header>
 
+      <MetricFilters
+        metrics={metrics}
+        selected={selected}
+        onToggle={(metric) => onToggleMetric(metric, available)}
+        onSetAll={(on) => onSetAllMetrics(available, on)}
+      />
+
       {coffee.loadFailed && (
         <div className="notice" role="alert">
           <span>Impossible d'actualiser cette journée.</span>
@@ -160,66 +196,74 @@ export function DayPage({ menu, date, today, onSelect, onShowMonth, calendarDay,
         </p>
       )}
 
+      {none && (
+        <p className="no-metric" data-testid="no-metric">
+          {NO_METRIC}
+        </p>
+      )}
+
       <div className="cards">
-      <section className="card card-coffee" aria-labelledby="titre-cafe">
-        <h2 id="titre-cafe" className="card-title">
-          Café
-        </h2>
-        <div className="count-row">
-          <p className="count" data-testid="count">
-            <span className="count-value">{cups ? cups.length : '–'}</span>
-            <span className="count-label">{cups && cups.length > 1 ? 'cafés' : 'café'}</span>
-          </p>
-          <button
-            type="button"
-            className="add"
-            aria-label={isToday ? 'Ajouter un café maintenant' : 'Ajouter un café à une autre heure'}
-            onClick={() => (isToday ? coffee.addCup(Date.now()) : openPicker())}
-          >
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-          </button>
-        </div>
-
-        {cups?.length === 0 && <p className="empty">{emptyLabel(date, today)}</p>}
-        <ul className="cups">
-          {cups?.map((cup) => (
-            <li key={`${cup.source}/${cup.key}`} className={coffee.isLocal(cup.key) ? 'cup cup-new' : 'cup'}>
-              <span className="cup-time">{cup.time}</span>
-              <button type="button" className="cup-cancel" aria-label={`Annuler le café de ${cup.time}`} onClick={() => coffee.cancelCup(cup)}>
-                Annuler
-              </button>
-            </li>
-          ))}
-        </ul>
-
-        {pickerOpen && (
-          <div className="picker">
-            <div className="picker-row">
-              <label className="field">
-                Heure du café
-                <input ref={timeInput} type="time" value={picked} onChange={(e) => { setPicked(e.target.value); setPickError(null) }} />
-              </label>
-              <button type="button" className="primary" onClick={addPicked}>
-                Ajouter
+        {shows('coffee') && (
+          <section className="card card-coffee" aria-labelledby="titre-cafe">
+            <h2 id="titre-cafe" className="card-title">
+              Café
+            </h2>
+            <div className="count-row">
+              <p className="count" data-testid="count">
+                <span className="count-value">{cups ? cups.length : '–'}</span>
+                <span className="count-label">{cups && cups.length > 1 ? 'cafés' : 'café'}</span>
+              </p>
+              <button
+                type="button"
+                className="add"
+                aria-label={isToday ? 'Ajouter un café maintenant' : 'Ajouter un café à une autre heure'}
+                onClick={() => (isToday ? coffee.addCup(Date.now()) : openPicker())}
+              >
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
               </button>
             </div>
-            {pickError && (
-              <p className="field-error" role="alert">
-                {pickError}
-              </p>
-            )}
-          </div>
-        )}
-        <button type="button" className="link" onClick={() => (pickerOpen ? setPickerOpen(false) : openPicker())}>
-          {pickerOpen ? 'Fermer' : 'Noter à une autre heure'}
-        </button>
-      </section>
 
-      <ActivityCard date={date} today={today} state={activity} health={music.health} />
-      <MusicCard date={date} today={today} state={music} />
-      <VideoCard date={date} today={today} state={video} health={music.health} />
+            {cups?.length === 0 && <p className="empty">{emptyLabel(date, today)}</p>}
+            <ul className="cups">
+              {cups?.map((cup) => (
+                <li key={`${cup.source}/${cup.key}`} className={coffee.isLocal(cup.key) ? 'cup cup-new' : 'cup'}>
+                  <span className="cup-time">{cup.time}</span>
+                  <button type="button" className="cup-cancel" aria-label={`Annuler le café de ${cup.time}`} onClick={() => coffee.cancelCup(cup)}>
+                    Annuler
+                  </button>
+                </li>
+              ))}
+            </ul>
+
+            {pickerOpen && (
+              <div className="picker">
+                <div className="picker-row">
+                  <label className="field">
+                    Heure du café
+                    <input ref={timeInput} type="time" value={picked} onChange={(e) => { setPicked(e.target.value); setPickError(null) }} />
+                  </label>
+                  <button type="button" className="primary" onClick={addPicked}>
+                    Ajouter
+                  </button>
+                </div>
+                {pickError && (
+                  <p className="field-error" role="alert">
+                    {pickError}
+                  </p>
+                )}
+              </div>
+            )}
+            <button type="button" className="link" onClick={() => (pickerOpen ? setPickerOpen(false) : openPicker())}>
+              {pickerOpen ? 'Fermer' : 'Noter à une autre heure'}
+            </button>
+          </section>
+        )}
+
+        {activityShown.length > 0 && <ActivityCard date={date} today={today} state={activity} health={music.health} shown={activityShown} />}
+        {shows('music.listen') && <MusicCard date={date} today={today} state={music} />}
+        {shows('video.watch') && <VideoCard date={date} today={today} state={video} health={music.health} />}
       </div>
     </main>
   )

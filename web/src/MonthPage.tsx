@@ -20,9 +20,10 @@ interface Props {
   onMonth: (month: string) => void
   onOpenDay: (date: string) => void
   onReload: () => void
-  /** Le choix gardé, commun au mois et à l'année. */
+  /** Le choix gardé, commun au mois, à l'année et au jour. */
   storedMetrics: string[] | null
   onToggleMetric: (metric: string, available: string[]) => void
+  onSetAllMetrics: (available: string[], on: boolean) => void
 }
 
 function Chevron({ d }: { d: string }) {
@@ -42,7 +43,7 @@ function DayValue({ value, metric, info }: { value: number | null; metric: strin
   )
 }
 
-export function MonthPage({ menu, onShowYear, month, today, selected, data, loadFailed, health, onMonth, onOpenDay, onReload, storedMetrics, onToggleMetric }: Props) {
+export function MonthPage({ menu, onShowYear, month, today, selected, data, loadFailed, health, onMonth, onOpenDay, onReload, storedMetrics, onToggleMetric, onSetAllMetrics }: Props) {
   const isCurrent = month === monthOf(today)
   const days = new Map((data?.month === month ? data.days : []).map((day) => [day.date, day]))
   const metrics = data?.metrics ?? []
@@ -51,6 +52,8 @@ export function MonthPage({ menu, onShowYear, month, today, selected, data, load
   const chosen = metrics.filter((m) => shownMetrics.includes(m.metric))
   // Une métrique : son chiffre dans chaque case. Plusieurs : un point par métrique active.
   const single = chosen.length === 1 ? chosen[0].metric : null
+  // Tout décoché : ni chiffre ni point, et l'invitation à la place de la légende.
+  const none = available.length > 0 && shownMetrics.length === 0
   const present = new Set<Marker>()
   for (const day of days.values()) {
     const m = marker(day)
@@ -82,7 +85,7 @@ export function MonthPage({ menu, onShowYear, month, today, selected, data, load
         </nav>
       </header>
 
-      <MetricFilters metrics={metrics} selected={shownMetrics} onToggle={(metric) => onToggleMetric(metric, available)} />
+      <MetricFilters metrics={metrics} selected={shownMetrics} onToggle={(metric) => onToggleMetric(metric, available)} onSetAll={(on) => onSetAllMetrics(available, on)} />
 
       {loadFailed && (
         <div className="notice" role="alert">
@@ -122,7 +125,7 @@ export function MonthPage({ menu, onShowYear, month, today, selected, data, load
               const day = days.get(date)
               const future = date > today
               const mark = day ? marker(day) : null
-              const activity = day && !single && !future ? dayActivity(day, shownMetrics) : null
+              const activity = day && !single && !none && !future ? dayActivity(day, shownMetrics) : null
               return (
                 <li key={date}>
                   <button
@@ -148,7 +151,7 @@ export function MonthPage({ menu, onShowYear, month, today, selected, data, load
         </ol>
       </section>
 
-      <MetricsLegend metrics={chosen} mode={single ? 'values' : 'dots'}>
+      <MetricsLegend metrics={chosen} mode={none ? 'none' : single ? 'values' : 'dots'}>
         {(['incomplete', 'pending', 'check'] as const)
           .filter((m) => present.has(m))
           .map((m) => (

@@ -1,5 +1,5 @@
-import { useRef, useState, type RefObject } from 'react'
-import { discoveryDetail, markFailureText } from './discoveries'
+import { useEffect, useRef, useState, type RefObject } from 'react'
+import { discoveryDetail, itemId, markFailureText } from './discoveries'
 import {
   discoveriesOf,
   formatMinutes,
@@ -73,6 +73,18 @@ export function MusicCard({ date, today, state }: Props) {
   const discovered = finds.filter((row) => !row.known).length
   const shownFinds = visibleRows(finds, open.finds).shown
   const shownRows = visibleRows(rows, open.rows).shown
+  // « Déjà connu » ne s'affiche qu'à la demande : au survol sur Mac, au toucher de sa ligne sur iPhone.
+  // Une seule ligne révélée à la fois ; toucher ailleurs la referme.
+  const [revealed, setRevealed] = useState<string | null>(null)
+  useEffect(() => {
+    if (revealed === null) return
+    const close = (event: PointerEvent) => {
+      const row = event.target instanceof Element ? event.target.closest<HTMLElement>('.find') : null
+      if (row?.dataset.item !== revealed) setRevealed(null)
+    }
+    document.addEventListener('pointerdown', close)
+    return () => document.removeEventListener('pointerdown', close)
+  }, [revealed])
 
   return (
     <section className="card card-music" aria-labelledby="titre-musique" data-testid="music">
@@ -171,8 +183,18 @@ export function MusicCard({ date, today, state }: Props) {
               <ul className="rows finds">
                 {shownFinds.map((row) => {
                   const detail = discoveryDetail(row)
+                  const id = itemId(row)
+                  const failed = state.failedMarks.some((op) => op.id === id && op.date === date)
                   return (
-                    <li key={`${row.level}/${row.item_key}`} className="find">
+                    // Le toucher de la ligne révèle son bouton ; le bouton reste la seule commande.
+                    <li
+                      key={id}
+                      className="find"
+                      data-item={id}
+                      data-revealed={revealed === id ? '' : undefined}
+                      data-failed={failed ? '' : undefined}
+                      onClick={() => setRevealed(id)}
+                    >
                       <div className="row-text">
                         <p className="row-name">{row.name}</p>
                         {detail && <p className="row-detail">{detail}</p>}

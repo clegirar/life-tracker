@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import type { MonthDay } from './api'
-import { dayActivity, effectiveSelection, metricTone, toggleMetric, visibleDots } from './metrics'
+import { dayActivity, effectiveSelection, metricTone, setAll, toggleMetric, visibleDots } from './metrics'
 
 const ALL = ['coffee', 'music.listen']
 
 describe('le choix des métriques', () => {
-  it('jamais choisi, vide ou inconnu : toutes les métriques', () => {
+  it('jamais choisi ou disparu du registre : toutes les métriques', () => {
     expect(effectiveSelection(null, ALL)).toEqual(ALL)
-    expect(effectiveSelection([], ALL)).toEqual(ALL)
     expect(effectiveSelection(['the'], ALL)).toEqual(ALL)
+  })
+
+  it('vide : aucune métrique', () => {
+    expect(effectiveSelection([], ALL)).toEqual([])
+    expect(effectiveSelection([], [])).toEqual([])
   })
 
   it("garde l'ordre du registre et oublie une métrique disparue", () => {
@@ -16,10 +20,17 @@ describe('le choix des métriques', () => {
     expect(effectiveSelection(['the', 'music.listen'], ALL)).toEqual(['music.listen'])
   })
 
-  it('ajoute et retire, mais garde toujours la dernière', () => {
+  it('ajoute et retire, la dernière comprise', () => {
     expect(toggleMetric(ALL, 'coffee', ALL)).toEqual(['music.listen'])
-    expect(toggleMetric(['music.listen'], 'music.listen', ALL)).toEqual(['music.listen'])
+    expect(toggleMetric(['music.listen'], 'music.listen', ALL)).toEqual([])
+    expect(toggleMetric([], 'music.listen', ALL)).toEqual(['music.listen'])
     expect(toggleMetric(['music.listen'], 'coffee', ALL)).toEqual(ALL)
+  })
+
+  it('tout cocher, tout décocher', () => {
+    expect(setAll(ALL, true)).toEqual(ALL)
+    expect(setAll(ALL, true)).not.toBe(ALL)
+    expect(setAll(ALL, false)).toEqual([])
   })
 })
 

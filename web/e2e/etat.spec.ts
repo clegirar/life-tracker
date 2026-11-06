@@ -79,7 +79,9 @@ test('une carte par tracker : fonctionne, à faire, en panne, silencieux, et le 
   await expect(page.getByTestId('menu-dot')).toHaveCount(0)
   await openStatus(page)
   await expect(page.getByTestId('status-dot')).toHaveCount(0)
-  await expect(page.getByTestId('status-summary')).toHaveText('Tout fonctionne')
+  // Pas de ligne de résumé : le titre est seul, les pastilles des cartes disent l'état.
+  await expect(page.locator('.status-page .subtitle')).toHaveCount(0)
+  await expect(page.getByTestId('status-word')).toHaveText(['Fonctionne', 'Fonctionne', 'Fonctionne', 'Fonctionne'])
 
   const garmin = card(page, 'Garmin Connect')
   await expect(garmin.getByTestId('status-word')).toHaveText('Fonctionne')
@@ -104,7 +106,7 @@ test('une carte par tracker : fonctionne, à faire, en panne, silencieux, et le 
   await expect(garmin.getByRole('heading', { name: 'Que faire' })).toBeVisible()
   await expect(garmin).toContainText('Garmin refuse la clé : elle a expiré ou a été révoquée.')
   await expect(garmin).toContainText('GARMIN_KEY_EXPIRES_ON')
-  await expect(page.getByTestId('status-summary')).toHaveText('Un tracker attend quelque chose de toi')
+  await expect(page.getByTestId('status-word').filter({ hasText: 'À faire' })).toHaveCount(1)
   await expect(page.getByTestId('menu-dot')).toBeVisible()
   await openMenu(page)
   await expect(page.getByTestId('status-dot')).toBeVisible()
@@ -134,7 +136,7 @@ test('une carte par tracker : fonctionne, à faire, en panne, silencieux, et le 
   const music = card(page, 'Musique')
   await expect(music.getByTestId('status-word')).toHaveText('Silencieux')
   await expect(music).toContainText('Aucun contact réussi avec Last.fm depuis plus de 6 h')
-  await expect(page.getByTestId('status-summary')).toHaveText('Un tracker silencieux')
+  await expect(page.getByTestId('status-word').filter({ hasText: 'Silencieux' })).toHaveCount(1)
   await expect(page.getByTestId('menu-dot')).toHaveCount(0)
 })
 

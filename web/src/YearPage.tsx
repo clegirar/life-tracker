@@ -16,9 +16,10 @@ interface Props {
   onYear: (year: string) => void
   onOpenMonth: (month: string) => void
   onReload: () => void
-  /** Le choix gardé, commun au mois et à l'année. */
+  /** Le choix gardé, commun au mois, à l'année et au jour. */
   storedMetrics: string[] | null
   onToggleMetric: (metric: string, available: string[]) => void
+  onSetAllMetrics: (available: string[], on: boolean) => void
 }
 
 function Chevron({ d }: { d: string }) {
@@ -35,12 +36,14 @@ function sixWeeks(month: string): (string | null)[] {
   return [...cells, ...Array.from({ length: 42 - cells.length }, () => null)]
 }
 
-export function YearPage({ menu, year, today, data, loadFailed, onYear, onOpenMonth, onReload, storedMetrics, onToggleMetric }: Props) {
+export function YearPage({ menu, year, today, data, loadFailed, onYear, onOpenMonth, onReload, storedMetrics, onToggleMetric, onSetAllMetrics }: Props) {
   const metrics = data?.metrics ?? []
   const available = metrics.map((m) => m.metric)
   const selected = effectiveSelection(storedMetrics, available)
   const chosen = metrics.filter((m) => selected.includes(m.metric))
   const single = chosen.length === 1 ? chosen[0].metric : null
+  // Tout décoché : ni intensité ni point, et l'invitation à la place de la légende.
+  const none = available.length > 0 && selected.length === 0
   const shown = data && String(data.year) === year ? data : null
   const days = new Map((shown?.days ?? []).map((day) => [day.date, day]))
   // Une métrique : l'intensité, par quartiles de l'année. Plusieurs : des points, comme dans le mois.
@@ -74,12 +77,12 @@ export function YearPage({ menu, year, today, data, loadFailed, onYear, onOpenMo
         </div>
       )}
 
-      <MetricFilters metrics={metrics} selected={selected} onToggle={(metric) => onToggleMetric(metric, available)} />
+      <MetricFilters metrics={metrics} selected={selected} onToggle={(metric) => onToggleMetric(metric, available)} onSetAll={(on) => onSetAllMetrics(available, on)} />
 
       <ol
         className={`year-grid ${single ? metricTone(single) : 'is-dots'}`}
         data-testid="year-grid"
-        data-mode={single ? 'une' : 'plusieurs'}
+        data-mode={none ? 'aucune' : single ? 'une' : 'plusieurs'}
         data-metrics={selected.join(' ')}
       >
         {yearMonths(year).map((month) => {
@@ -104,7 +107,7 @@ export function YearPage({ menu, year, today, data, loadFailed, onYear, onOpenMo
                     if (!date || date > today) return <span key={`vide-${index}`} className="dot-slot" />
                     const day = days.get(date)
                     if (!single) {
-                      const activity = shown ? dayActivity(day, selected) : null
+                      const activity = shown && !none ? dayActivity(day, selected) : null
                       return (
                         <span
                           key={date}
@@ -140,7 +143,7 @@ export function YearPage({ menu, year, today, data, loadFailed, onYear, onOpenMo
         })}
       </ol>
 
-      {single ? <HeatLegend metric={single} /> : chosen.length > 0 && <MetricsLegend metrics={chosen} mode="dots" />}
+      {none ? <MetricsLegend metrics={[]} mode="none" /> : single ? <HeatLegend metric={single} /> : chosen.length > 0 && <MetricsLegend metrics={chosen} mode="dots" />}
     </main>
   )
 }

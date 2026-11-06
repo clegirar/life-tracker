@@ -1,5 +1,5 @@
-// Les métriques affichées par le calendrier : un seul choix pour le mois et l'année, gardé d'une visite
-// à l'autre. Une seule : ses chiffres dans le mois, son intensité dans l'année. Plusieurs : des points
+// Les métriques affichées : un seul choix pour le mois, l'année et le jour, gardé d'une visite à
+// l'autre. Une seule : ses chiffres dans le mois, son intensité dans l'année. Plusieurs : des points
 // façon Calendrier d'Apple dans les deux vues, un par métrique active ce jour-là.
 
 import { useCallback, useState } from 'react'
@@ -42,18 +42,26 @@ export function visibleDots(active: string[], max: number): { dots: string[]; mo
   return { dots: active.slice(0, max), more: Math.max(0, active.length - max) }
 }
 
-/** Le choix gardé, réduit aux métriques connues et dans leur ordre ; vide ou inconnu : toutes. */
+/**
+ * Le choix gardé, réduit aux métriques connues et dans leur ordre. Jamais choisi (`null`) : toutes.
+ * Vide : aucune, la vue invite à en choisir une. Des métriques toutes disparues du registre : toutes.
+ */
 export function effectiveSelection(stored: string[] | null, available: string[]): string[] {
-  const kept = available.filter((metric) => stored?.includes(metric))
+  if (stored === null) return available
+  if (stored.length === 0) return []
+  const kept = available.filter((metric) => stored.includes(metric))
   return kept.length > 0 ? kept : available
 }
 
-/** Ajoute ou retire une métrique ; la dernière choisie reste : le calendrier montre toujours quelque chose. */
+/** Ajoute ou retire une métrique, la dernière comprise. */
 export function toggleMetric(current: string[], metric: string, available: string[]): string[] {
-  if (current.includes(metric)) {
-    return current.length === 1 ? current : current.filter((m) => m !== metric)
-  }
+  if (current.includes(metric)) return current.filter((m) => m !== metric)
   return available.filter((m) => m === metric || current.includes(m))
+}
+
+/** « Tout cocher » ou « Tout décocher ». */
+export function setAll(available: string[], on: boolean): string[] {
+  return on ? [...available] : []
 }
 
 function readStored(): string[] | null {
@@ -65,21 +73,33 @@ function readStored(): string[] | null {
   }
 }
 
-/** Le choix commun au mois et à l'année. `null` : jamais choisi, donc toutes les métriques. */
+function store(next: string[]) {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+  } catch {
+    // Navigation privée : le choix vaut pour cette visite.
+  }
+}
+
+/** Le choix commun au mois, à l'année et au jour. `null` : jamais choisi, donc toutes les métriques. */
 export function useMetricSelection() {
   const [stored, setStored] = useState<string[] | null>(readStored)
 
   const toggle = useCallback((metric: string, available: string[]) => {
     setStored((current) => {
       const next = toggleMetric(effectiveSelection(current, available), metric, available)
-      try {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-      } catch {
-        // Navigation privée : le choix vaut pour cette visite.
-      }
+      store(next)
       return next
     })
   }, [])
 
-  return { stored, toggle }
+  const all = useCallback((available: string[], on: boolean) => {
+    const next = setAll(available, on)
+    store(next)
+    setStored(next)
+  }, [])
+
+  return { stored, toggle, setAll: all }
 }
+
+export type MetricSelection = ReturnType<typeof useMetricSelection>

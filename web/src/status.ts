@@ -383,15 +383,6 @@ export function sourceCard(source: SourceStatus, now: number): Card {
   }
 }
 
-/** Le sous-titre de la page. */
-export function summary(cards: Card[]): string {
-  const waiting = cards.filter((card) => needsAction(card.state)).length
-  if (waiting > 0) return waiting === 1 ? 'Un tracker attend quelque chose de toi' : `${waiting} trackers attendent quelque chose de toi`
-  const silent = cards.filter((card) => card.state === 'silent').length
-  if (silent > 0) return silent === 1 ? 'Un tracker silencieux' : `${silent} trackers silencieux`
-  return 'Tout fonctionne'
-}
-
 /** Découpe une étape en texte et en code (entre accents graves). */
 export function codeParts(text: string): { code: boolean; text: string }[] {
   return text

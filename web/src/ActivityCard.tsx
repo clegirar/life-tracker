@@ -6,11 +6,16 @@ import type { useActivity } from './useActivity'
 // Leaflet et ses tuiles ne se chargent qu'à l'approche d'une carte : le reste de l'app n'en paie rien.
 const RouteMap = lazy(() => import('./RouteMap'))
 
+/** Les métriques de la carte, chacune un bloc qu'un filtre peut masquer. */
+export const ACTIVITY_METRICS = ['steps', 'calories.burned', 'sleep', 'workout']
+
 interface Props {
   date: string
   today: string
   state: ReturnType<typeof useActivity>
   health: SourcesHealth | null
+  /** Les métriques cochées parmi `ACTIVITY_METRICS` : la page ne monte pas la carte sans aucune. */
+  shown: string[]
 }
 
 /** La carte d'une séance, montée quand elle approche de l'écran ; d'ici là, un cadre de même taille. */
@@ -74,7 +79,7 @@ function WorkoutRow({ workout }: { workout: Workout }) {
 
 const noData = <dd className="stat-note">Pas de données</dd>
 
-export function ActivityCard({ date, today, state, health }: Props) {
+export function ActivityCard({ date, today, state, health, shown }: Props) {
   const { activity, loadFailed } = state
   const silent = health?.sources.find((source) => /^garmin\b/.test(source.name) && source.silent)
   const stages = activity?.sleep ? sleepStages(activity.sleep.details) : []
@@ -109,81 +114,91 @@ export function ActivityCard({ date, today, state, health }: Props) {
 
       {activity && !isEmpty(activity) && (
         <>
-          <dl className="stats">
-            <div>
-              <dt>Pas</dt>
-              <dd className="stat-value" data-testid="steps">
-                {activity.steps?.value != null ? integerText(activity.steps.value) : '–'}
-              </dd>
-              {activity.steps === null
-                ? noData
-                : activity.steps.details.distance_m !== null && <dd className="stat-note">{kmText(activity.steps.details.distance_m)}</dd>}
-            </div>
-            <div>
-              <dt>Calories</dt>
-              <dd className="stat-value" data-testid="calories">
-                {activity.calories?.value != null ? integerText(activity.calories.value) : '–'}
-                {activity.calories?.value != null && <span className="stat-unit"> kcal</span>}
-              </dd>
-              {activity.calories === null ? (
-                noData
-              ) : (
-                <dd className="stat-note">
-                  {[
-                    activity.calories.details.active !== null && `${integerText(activity.calories.details.active)} actives`,
-                    activity.calories.details.resting !== null && `${integerText(activity.calories.details.resting)} au repos`,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </dd>
+          {shown.some((metric) => metric !== 'workout') && (
+            <dl className="stats">
+              {shown.includes('steps') && (
+                <div>
+                  <dt>Pas</dt>
+                  <dd className="stat-value" data-testid="steps">
+                    {activity.steps?.value != null ? integerText(activity.steps.value) : '–'}
+                  </dd>
+                  {activity.steps === null
+                    ? noData
+                    : activity.steps.details.distance_m !== null && <dd className="stat-note">{kmText(activity.steps.details.distance_m)}</dd>}
+                </div>
               )}
-            </div>
-            <div className="stat-wide">
-              <dt>Sommeil</dt>
-              <dd className="stat-value" data-testid="sleep">
-                {activity.sleep?.value != null ? sleepText(activity.sleep.value) : '–'}
-              </dd>
-              {activity.sleep === null ? noData : span && <dd className="stat-note">{span}</dd>}
-              {heartRate && (
-                <dd className="stat-note" data-testid="sleep-heart-rate">
-                  {heartRate}
-                </dd>
+              {shown.includes('calories.burned') && (
+                <div>
+                  <dt>Calories</dt>
+                  <dd className="stat-value" data-testid="calories">
+                    {activity.calories?.value != null ? integerText(activity.calories.value) : '–'}
+                    {activity.calories?.value != null && <span className="stat-unit"> kcal</span>}
+                  </dd>
+                  {activity.calories === null ? (
+                    noData
+                  ) : (
+                    <dd className="stat-note">
+                      {[
+                        activity.calories.details.active !== null && `${integerText(activity.calories.details.active)} actives`,
+                        activity.calories.details.resting !== null && `${integerText(activity.calories.details.resting)} au repos`,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </dd>
+                  )}
+                </div>
               )}
-              {stageTotal > 0 && (
-                <dd className="sleep-stages">
-                  <span className="sleep-bar" aria-hidden="true">
-                    {stages.map((stage) => (
-                      <span key={stage.key} className={`sleep-part sleep-${stage.key}`} style={{ flexGrow: stage.minutes }} />
-                    ))}
-                  </span>
-                  <ul className="sleep-legend">
-                    {stages.map((stage) => (
-                      <li key={stage.key}>
-                        <span className={`sleep-swatch sleep-${stage.key}`} aria-hidden="true" />
-                        {stage.label} <span className="sleep-minutes">{sleepText(stage.minutes)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </dd>
+              {shown.includes('sleep') && (
+                <div className="stat-wide">
+                  <dt>Sommeil</dt>
+                  <dd className="stat-value" data-testid="sleep">
+                    {activity.sleep?.value != null ? sleepText(activity.sleep.value) : '–'}
+                  </dd>
+                  {activity.sleep === null ? noData : span && <dd className="stat-note">{span}</dd>}
+                  {heartRate && (
+                    <dd className="stat-note" data-testid="sleep-heart-rate">
+                      {heartRate}
+                    </dd>
+                  )}
+                  {stageTotal > 0 && (
+                    <dd className="sleep-stages">
+                      <span className="sleep-bar" aria-hidden="true">
+                        {stages.map((stage) => (
+                          <span key={stage.key} className={`sleep-part sleep-${stage.key}`} style={{ flexGrow: stage.minutes }} />
+                        ))}
+                      </span>
+                      <ul className="sleep-legend">
+                        {stages.map((stage) => (
+                          <li key={stage.key}>
+                            <span className={`sleep-swatch sleep-${stage.key}`} aria-hidden="true" />
+                            {stage.label} <span className="sleep-minutes">{sleepText(stage.minutes)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </dd>
+                  )}
+                </div>
               )}
-            </div>
-          </dl>
+            </dl>
+          )}
 
-          <section className="music-section" aria-labelledby="titre-seances" data-testid="workouts">
-            <h3 id="titre-seances" className="subsection-title">
-              Séances
-              {activity.workouts.length > 0 && <span className="subsection-count subsection-count-activity">{activity.workouts.length}</span>}
-            </h3>
-            {activity.workouts.length === 0 ? (
-              <p className="empty">Aucune séance ce jour-là.</p>
-            ) : (
-              <ul className="rows">
-                {activity.workouts.map((workout) => (
-                  <WorkoutRow key={workout.details.activity_id} workout={workout} />
-                ))}
-              </ul>
-            )}
-          </section>
+          {shown.includes('workout') && (
+            <section className="music-section" aria-labelledby="titre-seances" data-testid="workouts">
+              <h3 id="titre-seances" className="subsection-title">
+                Séances
+                {activity.workouts.length > 0 && <span className="subsection-count subsection-count-activity">{activity.workouts.length}</span>}
+              </h3>
+              {activity.workouts.length === 0 ? (
+                <p className="empty">Aucune séance ce jour-là.</p>
+              ) : (
+                <ul className="rows">
+                  {activity.workouts.map((workout) => (
+                    <WorkoutRow key={workout.details.activity_id} workout={workout} />
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
         </>
       )}
     </section>
