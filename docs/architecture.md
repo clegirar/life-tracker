@@ -271,7 +271,7 @@ En cours depuis le 6 nov. 2026 (voir [les chantiers](chantiers.md) et le journal
 
 **Métrique.** `stream.watch` (« Twitch »), de forme `duration`, en minutes, agrégat `sum`, niveau `channel` (clé : le login), découverte, sans seuil de fraîcheur, ordre 80, détails partagés `channel_name`, `content`, `category`, `played_ms`. Le temps d'un jour est l'union des segments, coupée au minuit de Paris ; celui d'une chaîne, l'union de ses seuls segments.
 
-**Dans la web app** : la carte Twitch du jour sur `GET /v1/days/{date}/stream` (temps total, temps à deux streams, chaînes par temps avec contenus et heures, chaîne inconnue, nouvelles chaînes) et sa carte dans la page d'état (dernier signal de Firefox, dernier envoi, dernier visionnage).
+**Dans la web app** : la carte Twitch du jour sur `GET /v1/days/{date}/stream` (temps total, temps à deux streams, chaînes par temps avec contenus et heures, chaîne inconnue ; pas de « nouvelles chaînes », sans intérêt pour Twitch, retirées à ma demande le 6 nov. 2026, même si la route les renvoie toujours et que `discoveries` les donne au MCP) et sa carte dans la page d'état (dernier signal de Firefox, dernier envoi, dernier visionnage).
 
 **Pour Claude.** Les outils génériques : `cumulative_duration` (en tout, ou `level=channel` et `key=<login>`), `top` classé par minutes, `discoveries`, `day_summary` (les minutes du jour).
 

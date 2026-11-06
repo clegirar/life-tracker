@@ -154,7 +154,7 @@ Ouvert le 5 nov. 2026, à ma demande. Ce que je regarde sur YouTube : les vidéo
 
 ## Twitch
 
-Ouvert le 6 nov. 2026, à ma demande. Voir dans le calendrier, dès le lendemain matin, ma journée Twitch : le temps total, le temps par chaîne et les nouvelles chaînes ; et pouvoir demander à Claude « combien d'heures sur X ce mois-ci ». Les choix sont au journal des décisions de [l'architecture](architecture.md), 6 nov. 2026.
+Ouvert le 6 nov. 2026, à ma demande. Voir dans le calendrier, dès le lendemain matin, ma journée Twitch : le temps total et le temps par chaîne (les nouvelles chaînes, d'abord prévues, retirées de la carte : sans intérêt pour Twitch) ; et pouvoir demander à Claude « combien d'heures sur X ce mois-ci ». Les choix sont au journal des décisions de [l'architecture](architecture.md), 6 nov. 2026.
 
 **Accès.** L'API Twitch (Helix) ne donne pas l'historique de visionnage d'un spectateur. Je regarde uniquement dans Firefox sur le Mac : une extension Firefox personnelle mesure la lecture en direct et l'envoie à l'API d'ingestion, avec le token de sa source `twitch`. Le téléphone et la TV sont hors champ.
 
@@ -166,7 +166,7 @@ Ouvert le 6 nov. 2026, à ma demande. Voir dans le calendrier, dès le lendemain
 
 1. **Backend** (fusionné le 6 nov. 2026, #17) : migration `20261106120000_twitch.sql` (type `twitch.watch`, métrique `stream.watch`, première de forme `duration`), interprète `twitch_watch`, sens générique de la forme `duration` (union des intervalles par jour de Paris) dans `/v1/durations`, `/v1/top` (classé par minutes) et le calendrier, `GET /v1/days/{date}/stream`, textes des outils MCP.
 2. **Extension Firefox** (construite le 6 nov. 2026, `extension/`, sans release) : segments de 60 s au plus, file dans `storage.local`, heartbeat et état, page d'options ; signée par `web-ext sign` sur le Mac seulement (`extension/sign.sh`). Testée par `extension/test.sh` (page, segmenteur, file avec un faux `fetch`, lot validé contre le contrat, `web-ext lint`), puis essayée sur le vrai Twitch (ci-dessous) sans correction des sélecteurs du DOM (`SELECTORS` de `extension/src/lib/page.ts`).
-3. **Web app** (construite le 6 nov. 2026) : carte Twitch du jour (temps total et temps à deux streams, chaînes par temps avec leurs contenus et leurs heures, chaîne inconnue, nouvelles chaînes, texte d'une journée vide), couleur fuchsia du calendrier, carte de la page d'état (dernier signal de Firefox, dernier envoi, dernier visionnage, consignes de silence et d'échec d'envoi propres à l'extension). Testée par `web/e2e/twitch.spec.ts` sur des chaînes fictives.
+3. **Web app** (construite le 6 nov. 2026) : carte Twitch du jour (temps total et temps à deux streams, chaînes par temps avec leurs contenus et leurs heures, chaîne inconnue, texte d'une journée vide), couleur fuchsia du calendrier, carte de la page d'état (dernier signal de Firefox, dernier envoi, dernier visionnage, consignes de silence et d'échec d'envoi propres à l'extension). Testée par `web/e2e/twitch.spec.ts` sur des chaînes fictives.
 
 **Essai sur le vrai Twitch** (étape 0, fait le 6 nov. 2026 avec moi, extension temporaire chargée par about:debugging contre le NAS, source `twitch` créée après la v0.8.0). Sans aucune correction de `SELECTORS` :
 

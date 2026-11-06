@@ -143,17 +143,14 @@ test('la carte du jour : union, temps par chaîne, minuit, chaîne inconnue et d
   // Aucune image : ni avatar, ni miniature.
   await expect(twitch.locator('img')).toHaveCount(0)
 
-  // B est nouvelle ; A, vue vingt jours avant, et C, vue la veille, ne le sont pas.
-  const discoveries = twitch.getByTestId('twitch-new-channels')
-  await expect(discoveries.locator('.row')).toHaveCount(1)
-  await expect(discoveries).toContainText('StreamFictifB')
+  // Pas de « Nouvelles chaînes » : sans intérêt pour Twitch.
+  await expect(twitch.getByTestId('twitch-new-channels')).toHaveCount(0)
   await checkLayout(page)
 
-  // La veille : la demi-heure d'avant minuit, et C y est nouvelle.
+  // La veille : la demi-heure d'avant minuit.
   await page.goto(`/jour/${EVE}`)
   await expect(page.getByTestId('twitch-minutes')).toHaveText('30 min')
   await expect(page.getByTestId('twitch-overlap')).toHaveCount(0)
-  await expect(page.getByTestId('twitch-new-channels')).toContainText('StreamFictifC')
 
   // Avant le premier segment : pas de données, pas « pas de Twitch ».
   await page.goto(`/jour/${addDays(BEFORE, -1)}`)

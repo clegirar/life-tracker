@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DayStream, SourcesHealth } from './api'
-import { channelRows, channelUrl, newStreamChannels, overlapText, streamMinutesText, twitchEmptyText, twitchSilent, watchedTwitch } from './twitch'
+import { channelRows, channelUrl, overlapText, streamMinutesText, twitchEmptyText, twitchSilent, watchedTwitch } from './twitch'
 
 const DAY: DayStream = {
   date: '2026-10-14',
@@ -55,12 +55,6 @@ describe('channelRows', () => {
   it('ne fait un lien que d’un login valide', () => {
     expect(channelUrl('abc_123')).toBe('https://www.twitch.tv/abc_123')
     for (const login of ['', 'Majuscule', 'a/b', '../x', 'a b', 'x'.repeat(26), 'a?b=c']) expect(channelUrl(login)).toBeNull()
-  })
-})
-
-describe('newStreamChannels', () => {
-  it('donne les chaînes découvertes ce jour-là', () => {
-    expect(newStreamChannels(DAY).map((d) => d.name)).toEqual(['ChaineFictiveB'])
   })
 })
 

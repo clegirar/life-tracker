@@ -2059,7 +2059,6 @@ button:disabled {
 
 /* Les lignes des chaînes reprennent celles des vidéos (lien pleine largeur, flèche), dans sa couleur. */
 .card-title-twitch,
-.subsection-count-twitch,
 .card-twitch .more {
   color: var(--twitch);
 }
