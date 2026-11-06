@@ -32,6 +32,7 @@ jobs:
             backend
             web
             mcp
+            extension
             db
             deploy
             ci
