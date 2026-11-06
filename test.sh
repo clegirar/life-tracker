@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tout le dépôt, en conteneurs jetables : script de déploiement, base, qualité et tests du backend,
-# web app de bout en bout, serveur MCP (OAuth et outils contre le vrai backend). En série ; la CI
-# (.github/workflows/ci.yml) lance les mêmes scripts en parallèle.
+# web app de bout en bout, serveur MCP (OAuth et outils contre le vrai backend), extension Firefox
+# (sans Docker). En série ; la CI (.github/workflows/ci.yml) lance les mêmes scripts en parallèle.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -11,3 +11,4 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 "$ROOT/backend/test.sh"
 "$ROOT/web/test.sh"
 "$ROOT/mcp/test.sh"
+"$ROOT/extension/test.sh"

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
-import { API_URL, checkLayout, DESKTOP, fullShot, GARMIN_TOKEN, LASTFM_TOKEN, login, openMenu, PASSWORD, USER } from './helpers'
+import { API_URL, checkLayout, DESKTOP, fullShot, GARMIN_TOKEN, LASTFM_TOKEN, login, openMenu, PASSWORD, TWITCH_TOKEN, USER } from './helpers'
 
 // La page d'état des trackers. Les états entrent comme ceux des connecteurs, par la vraie route
 // `PUT /v1/sources/me/status` et le token de la source ; seul le silence se simule dans la base jetable.
@@ -40,9 +40,10 @@ const inMinutes = (minutes: number) => new Date(Date.now() + minutes * 60_000).t
 
 /** Les autres fichiers retrouvent des sources sans état ni silence. */
 async function restore(request: APIRequestContext) {
-  sql("UPDATE core.sources SET status = NULL, status_reported_at = NULL WHERE name IN ('garmin', 'lastfm', 'youtube')")
+  sql("UPDATE core.sources SET status = NULL, status_reported_at = NULL WHERE name IN ('garmin', 'lastfm', 'youtube', 'twitch')")
   await heartbeat(request, LASTFM_TOKEN)
   await heartbeat(request, GARMIN_TOKEN)
+  await heartbeat(request, TWITCH_TOKEN)
 }
 
 const card = (page: Page, title: string) => page.getByRole('article', { name: title })
@@ -75,13 +76,14 @@ test('une carte par tracker : fonctionne, à faire, en panne, silencieux, et le 
   await report(request, GARMIN_TOKEN, { state: 'ok', expires_at: inDays(300), next_run_at: inMinutes(12), last_collected_at: inMinutes(-20) })
   await heartbeat(request, GARMIN_TOKEN)
   await heartbeat(request, LASTFM_TOKEN)
+  await heartbeat(request, TWITCH_TOKEN)
   await login(page)
   await expect(page.getByTestId('menu-dot')).toHaveCount(0)
   await openStatus(page)
   await expect(page.getByTestId('status-dot')).toHaveCount(0)
   // Pas de ligne de résumé : le titre est seul, les pastilles des cartes disent l'état.
   await expect(page.locator('.status-page .subtitle')).toHaveCount(0)
-  await expect(page.getByTestId('status-word')).toHaveText(['Fonctionne', 'Fonctionne', 'Fonctionne', 'Fonctionne'])
+  await expect(page.getByTestId('status-word')).toHaveText(['Fonctionne', 'Fonctionne', 'Fonctionne', 'Fonctionne', 'Fonctionne'])
 
   const garmin = card(page, 'Garmin Connect')
   await expect(garmin.getByTestId('status-word')).toHaveText('Fonctionne')
@@ -95,8 +97,13 @@ test('une carte par tracker : fonctionne, à faire, en panne, silencieux, et le 
   await expect(coffee.getByTestId('status-word')).toHaveText('Fonctionne')
   await expect(coffee).toContainText('Dernier contact')
   await expect(card(page, 'YouTube').getByTestId('status-word')).toHaveText('Fonctionne')
+  // L'extension Firefox : son signal, pas une passe de collecteur.
+  const twitch = card(page, 'Twitch')
+  await expect(twitch.getByTestId('status-word')).toHaveText('Fonctionne')
+  await expect(twitch).toContainText("Dernier signal de Firefoxà l'instant")
+  await expect(twitch).not.toContainText('Dernière passe')
   // Ni l'import Apple ni la web app n'ont de carte.
-  await expect(page.getByRole('article')).toHaveCount(4)
+  await expect(page.getByRole('article')).toHaveCount(5)
   await checkLayout(page)
 
   // Clé refusée : à faire, avec la marche à suivre, et le point du menu.

@@ -24,6 +24,8 @@
   --workout: #0071a4;
   /* YouTube : un violet, loin du rouge des écoutes. */
   --video: #8944ab;
+  /* Twitch : un fuchsia, entre le violet de YouTube et le rouge des écoutes, loin des deux. */
+  --twitch: #b4198f;
   --segment-on: #ffffff;
   --check: #c98500;
   /* La barre latérale : un cran sous le fond de page, comme la barre de Réglages sur Mac. */
@@ -77,6 +79,7 @@
     --sleep: #7d7aff;
     --workout: #64d2ff;
     --video: #da8fff;
+    --twitch: #ff6fd8;
     --segment-on: #636366;
     --check: #ffcc4d;
     --sidebar-bg: #121214;
@@ -384,6 +387,11 @@ button:disabled {
 }
 
 .card-video {
+  flex: 2 1 420px;
+  min-width: 0;
+}
+
+.card-twitch {
   flex: 2 1 420px;
   min-width: 0;
 }
@@ -1178,6 +1186,10 @@ button:disabled {
 
 .heat-video {
   --heat: var(--video);
+}
+
+.heat-twitch {
+  --heat: var(--twitch);
 }
 
 .heat-neutral {
@@ -2041,6 +2053,19 @@ button:disabled {
 /* Une vidéo supprimée ou privée : il ne reste que l'heure. */
 .row-name-muted {
   color: var(--muted);
+}
+
+/* ─── La carte Twitch ────────────────────────────────────────────────────── */
+
+/* Les lignes des chaînes reprennent celles des vidéos (lien pleine largeur, flèche), dans sa couleur. */
+.card-title-twitch,
+.subsection-count-twitch,
+.card-twitch .more {
+  color: var(--twitch);
+}
+
+.card-twitch .video-link:focus-visible {
+  outline-color: var(--twitch);
 }
 
 /* ─── Le retour de Google (/autorisation) ────────────────────────────────── */

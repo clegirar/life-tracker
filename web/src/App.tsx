@@ -17,6 +17,7 @@ import { useMonth } from './useMonth'
 import { useActivity } from './useActivity'
 import { useMusic } from './useMusic'
 import { useSourcesStatus } from './useSourcesStatus'
+import { useTwitch } from './useTwitch'
 import { useVideo } from './useVideo'
 import { useYear } from './useYear'
 import { YearPage } from './YearPage'
@@ -56,6 +57,7 @@ export function App() {
   const music = useMusic(date, onSessionLost, auth === 'in')
   const activity = useActivity(date, onSessionLost, auth === 'in')
   const video = useVideo(date, onSessionLost, auth === 'in')
+  const twitch = useTwitch(date, onSessionLost, auth === 'in')
   // Le mois affiché, ou celui du jour : la page du jour y lit si sa journée est incomplète.
   const calendar = useMonth(shownMonth ?? monthOf(date), onSessionLost, auth === 'in', shownMonth)
   // L'année n'est lue que vue ouverte : la rouvrir la relit.
@@ -159,6 +161,7 @@ export function App() {
         music={music}
         activity={activity}
         video={video}
+        twitch={twitch}
       />
     )
   }
@@ -182,6 +185,7 @@ export function App() {
           music.reset()
           activity.reset()
           video.reset()
+          twitch.reset()
           calendar.reset()
           year.reset()
           sources.reset()

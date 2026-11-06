@@ -366,3 +366,42 @@ export async function sendAuthorizationCallback(callback: AuthorizationCallback)
   if (response.status === 404) return 'expired'
   return 'invalid'
 }
+
+/** Une chaîne Twitch regardée ce jour-là. */
+export interface StreamChannel {
+  /** Le login, pour le lien `https://www.twitch.tv/<login>`. */
+  key: string
+  name: string
+  /** L'union de ses segments ce jour-là. */
+  minutes: number
+  /** `live`, `vod`, `clip`, dans cet ordre. */
+  contents: string[]
+  /** Heure de Paris du premier début, qui peut tomber la veille. */
+  first_time: string
+  /** Heure de Paris de la dernière fin, qui peut tomber le lendemain. */
+  last_time: string
+}
+
+/** Une chaîne regardée pour la première fois ce jour-là. */
+export interface StreamDiscovery {
+  level: 'channel'
+  key: string
+  name: string
+}
+
+export interface DayStream {
+  date: string
+  /** L'union de tous les segments : deux streams à la fois comptent une fois. */
+  minutes: number
+  /** La somme des temps par chaîne : `summed_minutes - minutes`, le temps à deux streams. */
+  summed_minutes: number
+  /** Les segments qui touchent ce jour-là ; 0 : rien de reçu. */
+  segments: number
+  /** Par temps décroissant, puis par nom. */
+  channels: StreamChannel[]
+  /** Le temps des segments dont l'extension n'a pas su la chaîne. */
+  unknown_minutes: number
+  discoveries: StreamDiscovery[]
+}
+
+export const fetchDayStream = (date: string) => read<DayStream>(`/v1/days/${date}/stream`)

@@ -8,6 +8,7 @@ export const LASTFM_TOKEN = process.env.E2E_LASTFM_TOKEN!
 export const APPLE_TOKEN = process.env.E2E_APPLE_TOKEN!
 export const GARMIN_TOKEN = process.env.E2E_GARMIN_TOKEN!
 export const YOUTUBE_TOKEN = process.env.E2E_YOUTUBE_TOKEN!
+export const TWITCH_TOKEN = process.env.E2E_TWITCH_TOKEN!
 
 export function parisToday(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date())

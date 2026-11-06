@@ -1,5 +1,6 @@
-# Tests de chaque PR et de chaque push sur main, en quatre jobs parallèles (plus les scripts de
-# déploiement). Verte sur main, elle lance .github/workflows/release.yml : version, images, NAS.
+# Tests de chaque PR et de chaque push sur main, en jobs parallèles : base, backend, web, MCP,
+# extension Firefox et scripts de déploiement. Verte sur main, elle lance
+# .github/workflows/release.yml : version, images, NAS (l'extension n'a pas de release).
 name: CI
 
 on:
@@ -112,6 +113,24 @@ jobs:
         working-directory: mcp
         run: npm ci
       - run: mcp/test.sh
+
+  extension:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.16.0
+          cache: npm
+          cache-dependency-path: extension/package-lock.json
+      # Ni signature ni clé AMO ici : l'extension se signe sur le Mac (extension/sign.sh).
+      - name: Dépendances de l'extension
+        working-directory: extension
+        run: npm ci
+      - run: extension/test.sh
 
   deploy-script:
     runs-on: ubuntu-24.04

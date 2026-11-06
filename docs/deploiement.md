@@ -917,7 +917,21 @@ Puis, par le MCP, `inventory` : le nombre de « Vidéos YouTube » tombe à ≈1
 
    Le token ne s'affiche qu'une fois : le copier dans le gestionnaire de mots de passe (pour la page d'options de l'extension), puis `unset TOKEN`. Seulement `twitch.watch` : l'extension n'annule rien, et ce token n'écrit rien d'autre.
 
-2. **L'extension Firefox** arrive dans une PR suivante (`extension/`) : signée sur le Mac par `web-ext sign` (canal non listé, clés AMO lues dans l'environnement, jamais dans le dépôt), installée par about:addons, « Installer depuis un fichier ». Sa page d'options demande l'adresse `https://<nas>.<tailnet>.ts.net:8443` (Firefox demande alors la permission pour cette seule origine) et le token, puis « Tester ». Le détail viendra avec elle.
+2. **L'extension Firefox**, sur le Mac (`extension/`, sans release : elle ne part pas avec les images).
+   - **Signer** (une fois par version ; AMO refuse de signer deux fois la même) : augmenter `version` dans `extension/package.json`, puis, avec les clés d'API d'AMO (addons.mozilla.org, « Outils » → « Gérer les clés d'API »), lues depuis le gestionnaire de mots de passe :
+
+     ```sh
+     read -rs WEB_EXT_API_KEY && read -rs WEB_EXT_API_SECRET   # collés, sans écho ni historique
+     export WEB_EXT_API_KEY WEB_EXT_API_SECRET
+     extension/sign.sh
+     unset WEB_EXT_API_KEY WEB_EXT_API_SECRET
+     ```
+
+     Le script lance `extension/test.sh`, puis `web-ext sign --channel=unlisted` : AMO signe sans rien publier. Le `.xpi` signé arrive dans `extension/web-ext-artifacts/` (ignoré par git). Les clés ne vont ni dans le dépôt, ni dans un fichier, ni en CI.
+   - **Installer** : about:addons, roue dentée, « Installer un module depuis un fichier… », le `.xpi`. Firefox demande l'accès à www.twitch.tv et clips.twitch.tv. Pas de mise à jour automatique : chaque nouvelle version se signe puis se réinstalle par-dessus (même identifiant, les réglages et la file restent).
+   - **Régler** : le bouton de l'extension (ou about:addons → Préférences) ouvre sa page d'options. Adresse `https://<nas>.<tailnet>.ts.net:8443`, token de la source `twitch`, « Enregistrer » : Firefox demande alors la permission pour ce seul hôte (`https://<nas>.<tailnet>.ts.net/*`, un motif ne porte pas de port). Puis « Tester » : un battement, la file, l'état. Le token n'est jamais réaffiché ; un champ vide garde celui enregistré.
+   - **Suivre** : la page d'options montre les segments en attente, le dernier envoi, les segments rejetés et la dernière erreur. Un « ! » rouge sur le bouton : le token est refusé (401) et l'envoi est arrêté ; recréer la source (`admin revoke-source twitch`, puis l'étape 1), enregistrer le nouveau token, « Tester ».
+   - **Essai sans signature** (développement) : `cd extension && npm ci && npm run build`, puis about:debugging → « Ce Firefox » → « Charger un module complémentaire temporaire… » → `extension/dist/manifest.json`. Il disparaît à la fermeture de Firefox. Jamais le token de production contre un backend de développement, ni l'inverse.
 
 3. Vérifier les critères du chantier Twitch dans [les chantiers](chantiers.md) : une vraie soirée sur la page du jour et par le MCP (`cumulative_duration` sur une chaîne, `level=channel`, `key=<login>`) ; puis le rejeu :
 

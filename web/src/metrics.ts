@@ -16,6 +16,7 @@ const TONES: Record<string, string> = {
   sleep: 'heat-sleep',
   workout: 'heat-workout',
   'video.watch': 'heat-video',
+  'stream.watch': 'heat-twitch',
 }
 
 /** La classe qui pose `--heat`, la couleur de la métrique : chiffres, points, pastilles, filtres et rampes. */
