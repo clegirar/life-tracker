@@ -10,11 +10,14 @@ export type Route =
   | { page: 'month'; month: string }
   | { page: 'year'; year: string }
   | { page: 'status' }
+  /** Les fiches des trackers et des clés : comment les données arrivent, ce qu'il faut garder en vie. */
+  | { page: 'sources' }
   /** Le retour de Google après un accord ; sa requête (`state`, `code` ou `error`) reste dans l'adresse. */
   | { page: 'authorization' }
 
 export const TODAY: Route = { page: 'day', date: null }
 export const STATUS: Route = { page: 'status' }
+export const SOURCES: Route = { page: 'sources' }
 
 /** Une vraie date du calendrier, au format strict. */
 function isDate(value: string): boolean {
@@ -29,6 +32,7 @@ export function parseRoute(path: string, today: string): Route | null {
   const clean = path.length > 1 ? path.replace(/\/+$/, '') : path
   if (clean === '/') return TODAY
   if (clean === '/etat') return STATUS
+  if (clean === '/sources') return SOURCES
   if (clean === '/autorisation') return { page: 'authorization' }
   let match = /^\/jour\/([^/]+)$/.exec(clean)
   if (match) {
@@ -61,6 +65,8 @@ export function routePath(route: Route): string {
       return `/annee/${route.year}`
     case 'status':
       return '/etat'
+    case 'sources':
+      return '/sources'
     case 'authorization':
       return '/autorisation'
   }

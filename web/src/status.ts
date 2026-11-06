@@ -93,12 +93,15 @@ export function until(instant: number, now: number): string {
   return `le ${shortDate(date, today)} à ${clock(instant)}`
 }
 
+/** Une échéance proche (orange), ou passée (rouge). */
+export type Urgency = 'soon' | 'past'
+
 /** Une ligne de la carte : ce qu'elle dit, et sa valeur. */
 export interface Line {
   label: string
   value: string
-  /** Une valeur qui demande de l'attention (une échéance proche). */
-  warn?: boolean
+  /** Une valeur qui demande de l'attention : une échéance proche, ou passée. */
+  warn?: Urgency
 }
 
 /** Le bouton de la marche à suivre : une page à ouvrir dans l'onglet même (Google revient sur l'app). */
@@ -350,22 +353,27 @@ export function metricLine(metric: SourceStatus['metrics'][number], now: number)
   return { label: LAST_OF[metric.metric] ?? `Dernière donnée, ${metric.label.toLowerCase()}`, value: since(at, now) }
 }
 
-function expiryLine(source: SourceStatus, status: ReportedStatus | null, now: number): Line | null {
-  const expires = time(status?.expires_at ?? null)
+/**
+ * L'échéance que rapporte une source (la clé Garmin, l'accès Google), dite comme sur la carte d'état :
+ * proche dans la fenêtre de sa politique (14 jours pour une clé, 2 jours pour le jeton Google de 7 jours).
+ * La page Sources la reprend telle quelle, pour que les deux pages disent la même chose.
+ */
+export function expiryLine(source: SourceStatus, now: number): Line | null {
+  const expires = time(currentStatus(source)?.expires_at ?? null)
   if (expires === null) return null
   const { label, warnDays, precise } = expiryPolicy(source.name)
   if (precise) {
     // Un jeton échoit à une heure précise : « expire demain à 14 h 32 ».
-    if (expires <= now) return { label, value: `expiré ${dayWord(parisDate(expires), parisDate(now))} à ${clock(expires)}`, warn: true }
-    if (expires - now <= warnDays * DAY_MS) return { label, value: `expire ${until(expires, now)}`, warn: true }
+    if (expires <= now) return { label, value: `expiré ${dayWord(parisDate(expires), parisDate(now))} à ${clock(expires)}`, warn: 'past' }
+    if (expires - now <= warnDays * DAY_MS) return { label, value: `expire ${until(expires, now)}`, warn: 'soon' }
     return { label, value: `valable jusqu'au ${shortDate(parisDate(expires), parisDate(now))} à ${clock(expires)}` }
   }
   const date = shortDate(expiryDate(expires), parisDate(now))
   const left = daysLeft(expires, now)
-  if (expires <= now) return { label, value: `expirée le ${date}`, warn: true }
+  if (expires <= now) return { label, value: `expirée le ${date}`, warn: 'past' }
   if (left <= warnDays) {
     const when = left === 0 ? 'ce soir' : left === 1 ? 'demain' : `dans ${plural(left, 'jour')}`
-    return { label, value: `expire le ${date}, ${when}`, warn: true }
+    return { label, value: `expire le ${date}, ${when}`, warn: 'soon' }
   }
   return { label, value: `valable jusqu'au ${date}` }
 }
@@ -395,7 +403,7 @@ export function sourceCard(source: SourceStatus, now: number): Card {
   const next = time(status?.next_run_at ?? null)
   // YouTube : la prochaine passe est le prochain export que Google permet.
   if (next !== null && next > now) lines.push({ label: isYoutube(source.name) ? 'Prochain export' : 'Prochaine passe', value: until(next, now) })
-  const expiry = expiryLine(source, status, now)
+  const expiry = expiryLine(source, now)
   if (expiry) lines.push(expiry)
   lines.push(...source.metrics.map((metric) => metricLine(metric, now)))
 

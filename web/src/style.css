@@ -1844,6 +1844,11 @@ button:disabled {
   font-weight: 600;
 }
 
+/* Une échéance passée : le rouge des pannes, et non plus l'orange d'une échéance proche. */
+.status-line[data-warn='past'] dd {
+  color: var(--state-error);
+}
+
 .status-hint {
   margin-top: 8px;
   font-size: 15px;
@@ -1917,6 +1922,171 @@ button:disabled {
   border-radius: 5px;
   /* Sur le fond de l'encart : la carte, plus claire en clair, plus sombre en sombre. */
   background: var(--card);
+  font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* ─── La page Sources ────────────────────────────────────────────────────── */
+
+/* Les fiches reprennent les cartes de la page État ; une section par partie, sous un titre. */
+.sources-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sources-heading {
+  padding: 0 4px;
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.sources-lead,
+.sources-note {
+  padding: 0 4px;
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--muted);
+}
+
+.sources-note {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.source-arrival {
+  margin-top: 8px;
+  font-size: 15px;
+  line-height: 21px;
+}
+
+/* Une clé : son nom, son rôle, puis trois faits, séparée de la précédente par un filet. */
+.source-key {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 0.5px solid var(--separator);
+}
+
+.source-card .status-head + .source-keys > .source-key:first-child {
+  margin-top: 8px;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.source-key-name {
+  margin: 0;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.source-key-role {
+  margin-top: 2px;
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--muted);
+}
+
+.source-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* L'intitulé dans une colonne étroite, le texte qui passe à la ligne à côté. */
+.source-fact {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 12px;
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.source-fact dt {
+  color: var(--muted);
+}
+
+.source-fact dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.source-fact[data-warn] dd {
+  color: var(--state-todo);
+  font-weight: 600;
+}
+
+.source-fact[data-warn='past'] dd {
+  color: var(--state-error);
+}
+
+/* Le repli d'une clé : un lien discret, dans la couleur d'action, avec un chevron qui tourne. */
+.source-more {
+  margin-top: 6px;
+}
+
+.source-more-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  margin: -12px 0;
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--accent);
+  cursor: pointer;
+  list-style: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.source-more-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.source-more-toggle::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.source-more[open] > .source-more-toggle::after {
+  transform: translateY(2px) rotate(-135deg);
+}
+
+.source-more-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.source-more[open] > .source-key-role {
+  margin-top: 10px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .source-more-toggle::after {
+    transition: none;
+  }
+}
+
+.source-doc {
+  color: var(--muted);
+}
+
+.sources-page code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--field);
   font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
   font-size: 13px;
   overflow-wrap: anywhere;

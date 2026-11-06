@@ -107,7 +107,7 @@ describe("l'état d'une carte", () => {
     const soon = source({ status: { state: 'ok', reason: null, expires_at: '2026-11-12T23:00:00Z', next_run_at: null } })
     const card = sourceCard(soon, NOW)
     expect(card.state).toBe('todo')
-    expect(card.lines).toContainEqual({ label: 'Clé', value: `expire le 12${NBSP}nov., dans 7 jours`, warn: true })
+    expect(card.lines).toContainEqual({ label: 'Clé', value: `expire le 12${NBSP}nov., dans 7 jours`, warn: 'soon' })
     expect(card.guidance?.title).toBe(`La clé expire le 12${NBSP}nov. : remplace-la avant.`)
 
     const far = sourceCard(source({ status: { state: 'ok', reason: null, expires_at: '2027-11-04T23:00:00Z', next_run_at: null } }), NOW)
@@ -117,7 +117,7 @@ describe("l'état d'une carte", () => {
 
     const past = sourceCard(source({ status: { state: 'ok', reason: null, expires_at: '2026-11-03T23:00:00Z', next_run_at: null } }), NOW)
     expect(past.state).toBe('todo')
-    expect(past.lines).toContainEqual({ label: 'Clé', value: `expirée le 3${NBSP}nov.`, warn: true })
+    expect(past.lines).toContainEqual({ label: 'Clé', value: `expirée le 3${NBSP}nov.`, warn: 'past' })
     expect(past.guidance?.title).toBe(`La clé a expiré le 3${NBSP}nov. : remplace-la.`)
   })
 
@@ -156,9 +156,9 @@ describe("l'accord à donner (YouTube)", () => {
   it("colore l'échéance deux jours avant, sans changer l'état", () => {
     const card = sourceCard(youtube({ status: { state: 'ok', reason: null, expires_at: iso(30 * HOUR), next_run_at: null } }), NOW)
     expect(card.state).toBe('ok')
-    expect(card.lines).toContainEqual({ label: 'Accès Google', value: `expire demain à 20${NBSP}h${NBSP}00`, warn: true })
+    expect(card.lines).toContainEqual({ label: 'Accès Google', value: `expire demain à 20${NBSP}h${NBSP}00`, warn: 'soon' })
     const past = sourceCard(youtube({ status: { state: 'ok', reason: null, expires_at: iso(-2 * HOUR), next_run_at: null } }), NOW)
-    expect(past.lines).toContainEqual({ label: 'Accès Google', value: `expiré aujourd'hui à 12${NBSP}h${NBSP}00`, warn: true })
+    expect(past.lines).toContainEqual({ label: 'Accès Google', value: `expiré aujourd'hui à 12${NBSP}h${NBSP}00`, warn: 'past' })
   })
 
   it('propose de renouveler, par l’URL de la demande', () => {

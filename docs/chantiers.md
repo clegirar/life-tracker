@@ -8,6 +8,7 @@ Le [POC](poc.md) est validé depuis le 4 nov. 2026. Chaque chantier a sa section
 | --- | --- |
 | Garmin Connect | Fait le 5 nov. 2026 (v0.4.0) |
 | Page d'état des trackers | Construite le 5 nov. 2026 (PR #13), mise en service à vérifier |
+| Page Sources | Construite le 6 nov. 2026 (PR #20), sans action sur le NAS |
 | YouTube | En cours depuis le 5 nov. 2026 : backend construit, web app en cours |
 | Twitch | En cours depuis le 6 nov. 2026 : backend en production (#17), extension Firefox et web app construites, essai sur le vrai Twitch concluant ; restent la fusion, la signature et l'installation |
 | Twitch : import de l'historique (export RGPD) | À faire, quand je le demanderai (l'export est demandé à Twitch) |
@@ -102,6 +103,10 @@ Ouvert le 5 nov. 2026, à ma demande, avant YouTube : une page de la web app qui
 **Construit le 5 nov. 2026, backend** : migration `20261105120000_source_status.sql`, `PUT /v1/sources/me/status`, `GET /v1/sources/status`, `admin create-source --label` et `admin set-label`, rapports d'état de Last.fm et de Garmin, `GARMIN_KEY_EXPIRES_ON` (voir le journal des décisions de [l'architecture](architecture.md), 5 nov. 2026). Écart : un libellé suffit aussi à faire paraître une source, pour le raccourci café, sans seuil de silence.
 
 **Construit le 5 nov. 2026, web app** : rubrique « État » (`/etat`) dans le menu, une carte par source avec son état en un mot (Fonctionne, À faire, En panne, Silencieux), ses dernières données, l'échéance de la clé et, au besoin, « Que faire ». Un point dans le menu pour À faire et En panne, pas pour Silencieux. Une erreur rapportée avant un contact réussi plus récent est ignorée. Écart : un connecteur Last.fm silencieux veut dire que le collecteur n'atteint plus Last.fm, pas que le scrobbler s'est arrêté ; ce dernier cas est une simple note sur la carte Musique quand la dernière écoute dépasse 3 jours. Captures Playwright à 390 et 1280 px, en clair et en sombre. Reste la mise en service (`docs/deploiement.md`, « Mise à jour : page d'état des trackers »).
+
+## Page Sources
+
+Construite le 6 nov. 2026, à ma demande (PR #20 ; choix au journal des décisions de [l'architecture](architecture.md)). Rubrique « Sources » (`/sources`) : une fiche par tracker (comment ses données arrivent, ses clés, l'état de sa source) et « Autres clés à gérer » (MCP, web app, base, ghcr.io, déploiement, AMO). Pour chaque clé : son rôle, où elle vit, son échéance (vivante pour la clé Garmin et l'accès Google, en orange 14 jours avant, 2 jours pour Google, en rouge une fois passée) et comment la remplacer, avec la section de `docs/deploiement.md`. Aucune valeur secrète. Testée par `web/src/sources.test.ts` (renvois au runbook et variables vérifiés contre le dépôt) et `web/e2e/sources.spec.ts` (aucun token de l'environnement de test dans la page). Rien à faire sur le NAS : aucun changement du backend. Désormais, tout nouveau tracker et toute nouvelle clé y ont leur fiche.
 
 ## YouTube
 

@@ -58,6 +58,7 @@ Le cookie de session est toujours `Secure`. Seule exception, pour le développem
 - Tout est stocké en UTC ; le jour de Paris se calcule à la lecture.
 - Un nouveau tracker se déclare dans les registres. Pas de table, d'index ni d'outil MCP propre à un domaine sans vraie nécessité.
 - Tout nouveau tracker a sa carte dans la page d'état des trackers (s'il fonctionne, ce qu'il attend de moi) ; un chantier de tracker n'est pas fini sans elle.
+- Tout nouveau tracker et toute nouvelle clé ont leur fiche dans la page Sources (`web/src/sources.ts` : comment les données arrivent, où vit la clé, son échéance, comment la remplacer), jamais avec une valeur secrète ni un nom d'hôte du NAS.
 - Une journée sans données ne se confond jamais avec une journée sans activité.
 
 ## Sécurité
