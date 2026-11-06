@@ -33,7 +33,7 @@ export function App() {
   const [lastDay, setLastDay] = useState<string | null>(null)
   const date = (route.page === 'day' ? route.date : lastDay) ?? today
   const wide = useWide()
-  // Les métriques affichées : un seul choix pour le mois et l'année.
+  // Les métriques affichées : un seul choix pour le mois, l'année et le jour.
   const metricSelection = useMetricSelection()
   const [menuOpen, setMenuOpen] = useState(false)
   const menuButton = useRef<HTMLButtonElement>(null)
@@ -120,6 +120,7 @@ export function App() {
         onReload={() => void year.reload()}
         storedMetrics={metricSelection.stored}
         onToggleMetric={metricSelection.toggle}
+        onSetAllMetrics={metricSelection.setAll}
       />
     )
   } else if (route.page === 'month') {
@@ -138,6 +139,7 @@ export function App() {
         onOpenDay={openDay}
         storedMetrics={metricSelection.stored}
         onToggleMetric={metricSelection.toggle}
+        onSetAllMetrics={metricSelection.setAll}
       />
     )
   } else {
@@ -149,6 +151,10 @@ export function App() {
         onSelect={openDay}
         onShowMonth={() => go({ page: 'month', month: monthOf(date) })}
         calendarDay={calendar.month?.days.find((day) => day.date === date) ?? null}
+        metrics={calendar.month?.metrics ?? []}
+        storedMetrics={metricSelection.stored}
+        onToggleMetric={metricSelection.toggle}
+        onSetAllMetrics={metricSelection.setAll}
         coffee={coffee}
         music={music}
         activity={activity}

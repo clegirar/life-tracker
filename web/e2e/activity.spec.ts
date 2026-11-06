@@ -112,6 +112,8 @@ test('la carte Activité : pas, calories, sommeil et séances, avec le parcours'
   await expect(workouts.nth(1)).toContainText('4,5 km/h')
   // Une carte pour la séance avec GPS seulement, tracé, départ et arrivée.
   await expect(card.getByTestId('route-map')).toHaveCount(1)
+  // La carte ne se monte qu'à l'approche : les filtres du jour la poussent sous l'écran d'un iPhone.
+  await card.getByTestId('route-map').scrollIntoViewIfNeeded()
   const map = card.locator('.route-map')
   await expect(map).toHaveAttribute('data-state', 'ready')
   await expect(map).toHaveAccessibleName('Parcours : course de 07:30')
@@ -133,7 +135,7 @@ test('sept métriques : toutes choisies par défaut, et Pas seule montre ses chi
   await page.goto(`/mois/${DAY.slice(0, 7)}`)
   const filters = page.getByRole('group', { name: 'Métriques affichées' })
   // Dans l'ordre d'affichage du registre.
-  await expect(filters.getByRole('button')).toHaveText(['Cafés', 'Écoutes', 'Pas', 'Séances', 'Sommeil', 'Calories brûlées', 'Vidéos YouTube'])
+  await expect(filters.locator('.chip')).toHaveText(['Cafés', 'Écoutes', 'Pas', 'Séances', 'Sommeil', 'Calories brûlées', 'Vidéos YouTube'])
   for (const name of ['Cafés', 'Écoutes', 'Pas', 'Calories brûlées', 'Sommeil', 'Séances', 'Vidéos YouTube']) {
     await expect(filters.getByRole('button', { name })).toHaveAttribute('aria-pressed', 'true')
   }
@@ -146,7 +148,7 @@ test('sept métriques : toutes choisies par défaut, et Pas seule montre ses chi
   await expect(cell.locator('.cell-value[data-metric="steps"]')).toHaveText('8,4 k')
   await expect(page.locator(`.cell[data-date="${NO_DATA}"] .cell-value`)).toHaveText(' ')
   await filters.getByRole('button', { name: 'Sommeil' }).click()
-  await filters.getByRole('button', { name: 'Pas' }).click()
+  await filters.getByRole('button', { name: 'Pas', exact: true }).click()
   await expect(cell.locator('.cell-value[data-metric="sleep"]')).toHaveText('7,2 h')
 })
 
@@ -161,6 +163,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
         await page.setViewportSize(viewport)
         const shot = (name: string) => fullShot(page, `${SHOTS}/${width}-${colorScheme}-${name}.png`)
         await openDay(page, DAY)
+        await page.getByTestId('route-map').scrollIntoViewIfNeeded()
         await expect(page.locator('.route-map')).toHaveAttribute('data-state', 'ready')
         await page.waitForTimeout(300) // la fin du fondu de la carte
         await checkLayout(page)

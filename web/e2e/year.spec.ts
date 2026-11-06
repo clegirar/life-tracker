@@ -136,9 +136,13 @@ test('une métrique : chiffres du mois et intensité de l’année ; plusieurs :
   await expect(page.getByRole('region', { name: 'Légende' })).toContainText('Pâle : rien ce jour-là')
   // Le résumé du mois se lit, les pastilles sont décoratives.
   await expect(page.getByRole('button', { name: monthLabel(monthOf(FIRST_CUP)), exact: true })).toHaveAccessibleDescription(/cafés?/)
-  // La dernière métrique choisie ne se retire pas.
+  // La dernière métrique se retire aussi : ni intensité ni point, et l'invitation à la place de la légende.
   await chip(page, 'Cafés').click()
-  await expect(chip(page, 'Cafés')).toHaveAttribute('aria-pressed', 'true')
+  await expect(chip(page, 'Cafés')).toHaveAttribute('aria-pressed', 'false')
+  await expect(grid).toHaveAttribute('data-mode', 'aucune')
+  await expect(grid.locator('.dot, .day-dot, [data-nodata]')).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Légende' })).toHaveText('Choisis au moins une métrique.')
+  await chip(page, 'Cafés').click()
   await expect(grid).toHaveAttribute('data-mode', 'une')
 
   // Le même choix vaut pour le mois : une métrique, ses chiffres.

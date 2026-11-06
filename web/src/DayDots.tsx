@@ -5,6 +5,7 @@
 
 import type { ReactNode } from 'react'
 import type { MonthMetric } from './api'
+import { NO_METRIC } from './MetricFilters'
 import { metricTone, visibleDots } from './metrics'
 
 const LIMITS = { year: 3, month: 8 } as const
@@ -23,8 +24,11 @@ export function DayDots({ active, size }: { active: string[]; size: 'year' | 'mo
 
 interface LegendProps {
   metrics: MonthMetric[]
-  /** `values` : les chiffres d'une seule métrique (le mois) ; `dots` : les points de plusieurs. */
-  mode: 'values' | 'dots'
+  /**
+   * `values` : les chiffres d'une seule métrique (le mois) ; `dots` : les points de plusieurs ;
+   * `none` : rien de coché, l'invitation à choisir.
+   */
+  mode: 'values' | 'dots' | 'none'
   /** Ce que la page ajoute : les marques du mois. */
   children?: ReactNode
 }
@@ -32,10 +36,22 @@ interface LegendProps {
 const NOTES = {
   values: 'Sans chiffre : pas de données. 0 : rien ce jour-là.',
   dots: 'Un point par activité du jour. Numéro grisé : pas de données.',
+  none: NO_METRIC,
 }
 
 /** La légende des chiffres et des points : la couleur de chaque métrique, puis ce que dit l'absence. */
 export function MetricsLegend({ metrics, mode, children }: LegendProps) {
+  if (mode === 'none') {
+    // L'invitation d'abord ; les marques du mois restent expliquées dessous.
+    return (
+      <section className="legend" aria-label="Légende">
+        <p className="legend-empty" data-testid="no-metric">
+          {NOTES.none}
+        </p>
+        <ul className="legend-list">{children}</ul>
+      </section>
+    )
+  }
   return (
     <section className="legend" aria-label="Légende">
       <ul className="legend-list">

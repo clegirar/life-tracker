@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SourceStatus } from './api'
-import { cardState, codeParts, currentStatus, metricLine, since, sourceCard, summary, until } from './status'
+import { cardState, codeParts, currentStatus, metricLine, since, sourceCard, until } from './status'
 
 // Le 5 nov. 2026, 14 h 00 à Paris (heure d'hiver, UTC+1).
 const NOW = Date.parse('2026-11-05T13:00:00Z')
@@ -293,16 +293,6 @@ describe('les lignes', () => {
 })
 
 describe('la page', () => {
-  it('résume', () => {
-    const ok = sourceCard(source(), NOW)
-    const silent = sourceCard(source({ silent: true }), NOW)
-    const todo = sourceCard(source({ status: { state: 'action_required', reason: 'key_rejected', expires_at: null, next_run_at: null } }), NOW)
-    expect(summary([ok])).toBe('Tout fonctionne')
-    expect(summary([ok, silent])).toBe('Un tracker silencieux')
-    expect(summary([ok, silent, todo])).toBe('Un tracker attend quelque chose de toi')
-    expect(summary([todo, todo])).toBe('2 trackers attendent quelque chose de toi')
-  })
-
   it('sépare le code du texte', () => {
     expect(codeParts('Relance : `sudo docker compose up -d collector`.')).toEqual([
       { code: false, text: 'Relance : ' },

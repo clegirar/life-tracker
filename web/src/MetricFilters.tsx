@@ -1,17 +1,22 @@
-// Les filtres du calendrier : une pastille par métrique du registre, communes au mois et à l'année.
-// Un nouveau tracker y apparaît de lui-même ; la page du jour pourra les reprendre.
+// Les filtres : une pastille par métrique du registre, un seul choix pour le mois, l'année et le jour.
+// Un nouveau tracker y apparaît de lui-même. Au bout, « Tout cocher » ou « Tout décocher ».
 
 import type { MonthMetric } from './api'
 import { metricTone } from './metrics'
+
+/** L'invitation d'une vue dont toutes les métriques sont décochées. */
+export const NO_METRIC = 'Choisis au moins une métrique.'
 
 interface Props {
   metrics: MonthMetric[]
   selected: string[]
   onToggle: (metric: string) => void
+  onSetAll: (on: boolean) => void
 }
 
-export function MetricFilters({ metrics, selected, onToggle }: Props) {
+export function MetricFilters({ metrics, selected, onToggle, onSetAll }: Props) {
   if (metrics.length === 0) return null
+  const allOn = metrics.every((metric) => selected.includes(metric.metric))
   return (
     <div className="filters" role="group" aria-label="Métriques affichées">
       {metrics.map((metric) => {
@@ -29,6 +34,9 @@ export function MetricFilters({ metrics, selected, onToggle }: Props) {
           </button>
         )
       })}
+      <button type="button" className="filters-all" onClick={() => onSetAll(!allOn)}>
+        {allOn ? 'Tout décocher' : 'Tout cocher'}
+      </button>
     </div>
   )
 }

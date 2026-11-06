@@ -3,7 +3,7 @@
 
 import type { ReactNode } from 'react'
 import type { SourcesStatus } from './api'
-import { codeParts, sourceCard, STATE_WORD, summary, type Card, type Guidance } from './status'
+import { codeParts, sourceCard, STATE_WORD, type Card, type Guidance } from './status'
 
 interface Props {
   /** Le bouton du tiroir, sur iPhone. */
@@ -87,10 +87,6 @@ export function StatusPage({ menu, now, data, loadFailed, onReload }: Props) {
       {menu && <div className="topbar">{menu}</div>}
       <header className="header">
         <div className="header-text">
-          {/* La ligne garde sa place pendant la lecture : le titre ne saute pas. */}
-          <p className="subtitle" data-testid="status-summary">
-            {cards ? summary(cards) : ' '}
-          </p>
           <h1 className="title">État</h1>
         </div>
       </header>

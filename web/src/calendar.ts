@@ -123,8 +123,10 @@ export function dayNotes(day: MonthDay, metrics: MonthMetric[]): string[] {
 export function cellLabel(day: MonthDay, metrics: MonthMetric[], today: string): string {
   const known = metrics.some((metric) => (day.values[metric.metric] ?? null) !== null)
   const parts =
-    metrics.length > 1 && !known ? ['pas de données'] : metrics.map((metric) => valueText(metric, day.values[metric.metric] ?? null))
-  return [longDate(day.date, today), [...parts, ...dayNotes(day, metrics)].join(', ')].join(' : ')
+    metrics.length === 0 ? [] : metrics.length > 1 && !known ? ['pas de données'] : metrics.map((metric) => valueText(metric, day.values[metric.metric] ?? null))
+  const said = [...parts, ...dayNotes(day, metrics)].join(', ')
+  // Aucune métrique choisie et rien à signaler : la date seule.
+  return said ? `${longDate(day.date, today)} : ${said}` : longDate(day.date, today)
 }
 
 /** Le chiffre d'une case : 1 234 devient « 1,2 k » pour tenir dans la largeur d'un jour. */

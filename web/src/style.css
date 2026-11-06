@@ -594,6 +594,29 @@ button:disabled {
   color: var(--on-music);
 }
 
+/* « Déjà connu » à la demande : une découverte se lit d'abord, se marque ensuite. Caché, le bouton garde
+   sa place (la ligne ne saute pas) et son rang dans le focus. « Marqué connu », un envoi et un échec
+   restent toujours visibles. */
+.known {
+  transition: opacity 150ms var(--ease-out);
+}
+
+/* Mac : au survol de la ligne ou au focus clavier. */
+@media (hover: hover) and (pointer: fine) {
+  .find:not(:hover, :focus-within, [data-failed]) .known[aria-pressed='false']:not([aria-busy='true']) {
+    opacity: 0;
+  }
+}
+
+/* iPhone : un toucher sur la ligne révèle son bouton. Tant qu'il ne l'est pas, le bouton laisse passer
+   les touchers à la ligne : pas de marquage par accident. */
+@media (hover: none), (pointer: coarse) {
+  .find:not([data-revealed], [data-failed], :has(.known:focus-visible)) .known[aria-pressed='false']:not([aria-busy='true']) {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
 .inline-failure {
   display: flex;
   flex-wrap: wrap;
@@ -1080,6 +1103,17 @@ button:disabled {
   margin-top: 6px;
 }
 
+/* L'invitation tient lieu de légende : elle se lit comme du texte, pas comme une note. */
+.legend-empty {
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--fg);
+}
+
+.legend-empty + .legend-list:not(:empty) {
+  margin-top: 8px;
+}
+
 /* La vue de l'année : douze mini-mois, deux colonnes sur iPhone, trois puis quatre sur un écran large. */
 .year-grid {
   display: grid;
@@ -1198,6 +1232,32 @@ button:disabled {
 
 .chip[aria-pressed='true'] .chip-dot {
   background: var(--heat);
+}
+
+/* « Tout cocher » : un lien, pas une pastille ; il agit sur toutes à la fois. */
+/* La marge négative aligne le texte sur les pastilles quand il passe seul à la ligne. */
+.filters-all {
+  min-height: 44px;
+  margin-left: -8px;
+  padding: 0 8px;
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--accent);
+  white-space: nowrap;
+  transition: opacity 120ms var(--ease-out);
+}
+
+.filters-all:active {
+  opacity: 0.5;
+}
+
+/* Tout décoché : la vue le dit, au lieu de se taire. */
+.no-metric {
+  padding: 48px 16px;
+  font-size: 17px;
+  line-height: 22px;
+  text-align: center;
+  color: var(--muted);
 }
 
 .ramp {
@@ -1392,6 +1452,7 @@ button:disabled {
   }
   .link:hover,
   .more:hover,
+  .filters-all:hover,
   .cup-cancel:hover,
   .sidebar-logout:hover {
     text-decoration: underline;
@@ -1441,6 +1502,9 @@ button:disabled {
   .known:active .known-pill {
     transform: none;
     transition: background-color 120ms linear, color 120ms linear;
+  }
+  .known {
+    transition: none;
   }
   .cup-new {
     animation: cup-fade 150ms linear;
