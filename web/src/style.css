@@ -2070,7 +2070,6 @@ button:disabled {
 /* ─── La carte YouTube ───────────────────────────────────────────────────── */
 
 .card-title-video,
-.subsection-count-video,
 .card-video .more {
   color: var(--video);
 }
