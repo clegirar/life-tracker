@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Life tracker : Twitch</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Life tracker : Twitch</h1>
+      <p class="hint">
+        Mesure le temps passé à regarder Twitch dans Firefox et l'envoie au NAS. Seuls partent la
+        chaîne, le type de contenu, la catégorie et la durée : ni adresse, ni titre, ni chat.
+      </p>
+
+      <form id="settings" autocomplete="off">
+        <label for="origin">Adresse du NAS</label>
+        <input id="origin" type="url" inputmode="url" spellcheck="false" placeholder="https://nas.exemple.ts.net:8443" required />
+
+        <label for="token">Token de la source twitch</label>
+        <input id="token" type="password" spellcheck="false" placeholder="Collé depuis le gestionnaire de mots de passe" />
+
+        <div class="actions">
+          <button type="submit">Enregistrer</button>
+          <button type="button" id="test">Tester</button>
+        </div>
+        <p id="message" role="status" aria-live="polite"></p>
+      </form>
+
+      <h2>État</h2>
+      <dl>
+        <dt>Accès à Twitch et au NAS</dt>
+        <dd id="access">…</dd>
+        <dt>Segments en attente</dt>
+        <dd id="queue">…</dd>
+        <dt>Dernier envoi</dt>
+        <dd id="last-sent">…</dd>
+        <dt>Segments rejetés</dt>
+        <dd id="rejected">…</dd>
+        <dt>Dernière erreur</dt>
+        <dd id="last-error">…</dd>
+      </dl>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

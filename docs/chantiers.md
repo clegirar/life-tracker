@@ -9,7 +9,7 @@ Le [POC](poc.md) est validé depuis le 4 nov. 2026. Chaque chantier a sa section
 | Garmin Connect | Fait le 5 nov. 2026 (v0.4.0) |
 | Page d'état des trackers | Construite le 5 nov. 2026 (PR #13), mise en service à vérifier |
 | YouTube | En cours depuis le 5 nov. 2026 : backend construit, web app en cours |
-| Twitch | En cours depuis le 6 nov. 2026 : backend construit, extension Firefox et web app à venir |
+| Twitch | En cours depuis le 6 nov. 2026 : backend et extension Firefox construits, essai du DOM réel et web app à venir |
 | Twitch : import de l'historique (export RGPD) | À faire, quand je le demanderai (l'export est demandé à Twitch) |
 | Ouvrir la web app sur Internet | À faire, quand je le demanderai |
 
@@ -165,10 +165,18 @@ Ouvert le 6 nov. 2026, à ma demande. Voir dans le calendrier, dès le lendemain
 **Étapes, une PR chacune :**
 
 1. **Backend** (construit le 6 nov. 2026) : migration `20261106120000_twitch.sql` (type `twitch.watch`, métrique `stream.watch`, première de forme `duration`), interprète `twitch_watch`, sens générique de la forme `duration` (union des intervalles par jour de Paris) dans `/v1/durations`, `/v1/top` (classé par minutes) et le calendrier, `GET /v1/days/{date}/stream`, textes des outils MCP.
-2. **Extension Firefox** (`extension/`, sans release) : segments de 60 s au plus, file dans `storage.local`, heartbeat et état, page d'options ; signée par `web-ext sign` sur le Mac seulement.
+2. **Extension Firefox** (construite le 6 nov. 2026, `extension/`, sans release) : segments de 60 s au plus, file dans `storage.local`, heartbeat et état, page d'options ; signée par `web-ext sign` sur le Mac seulement (`extension/sign.sh`). Testée par `extension/test.sh` (page, segmenteur, file avec un faux `fetch`, lot validé contre le contrat, `web-ext lint`), **mais pas encore sur le vrai Twitch** : les sélecteurs du DOM (`SELECTORS` de `extension/src/lib/page.ts`) sont des hypothèses, que l'essai de l'étape 0 doit confirmer ou corriger.
 3. **Web app** : carte Twitch du jour, couleur du calendrier, carte de la page d'état.
 
-Avant l'extension, un essai (sans PR) relève la structure du DOM de Twitch (live, rediffusion, clip, mini-lecteur, popout) et vérifie un envoi depuis l'arrière-plan de l'extension (Origin `moz-extension://`, en-tête `Cross-Origin-Resource-Policy` de `web`) : ses constats iront ici.
+**Reste à faire : l'essai du DOM réel** (étape 0, sans PR, avec moi). L'extension a été écrite avant lui ; il se fait désormais avec elle, chargée par about:debugging (« Charger un module complémentaire temporaire », `extension/dist/manifest.json` après `npm run build`), contre les conteneurs locaux `web` et `backend`. À relever, la structure seulement et jamais les valeurs : live, rediffusion, clip (www et clips.twitch.tv), mini-lecteur, popout ; et à vérifier :
+
+- la chaîne d'une rediffusion et d'un clip de clips.twitch.tv (liens `/<login>` de `SELECTORS.channelLink`), le nom affiché (`SELECTORS.channelName`, retenu seulement s'il est le login à la casse près), la catégorie (`a[data-a-target='stream-game-link']`, un lien vers `/directory/`) ;
+- le mini-lecteur : le même `<video>` garde-t-il sa chaîne en passant à l'annuaire, et `.persistent-player` le contient-il ;
+- qu'aucune vidéo d'aperçu (accueil, survol de l'annuaire, page d'une chaîne hors ligne) ne compte ; qu'une chaîne hors ligne qui lit une rediffusion n'est pas comptée comme live ;
+- les événements média d'un live (pause, chargement, publicité) et l'avance de `currentTime` ;
+- un envoi depuis l'arrière-plan : Origin `moz-extension://`, en-tête `Cross-Origin-Resource-Policy` de `web`, permission d'hôte sans port pour `https://<nas>.ts.net:8443`.
+
+Les constats iront ici, et les corrections dans `SELECTORS` seulement, si possible.
 
 **Terminé quand**
 
