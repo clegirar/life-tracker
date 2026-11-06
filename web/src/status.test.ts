@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SourceStatus } from './api'
-import { cardState, codeParts, currentStatus, metricLine, since, sourceCard, until } from './status'
+import { cardState, codeParts, currentStatus, metricLine, since, sourceCard, thresholdText, until } from './status'
 
 // Le 5 nov. 2026, 14 h 00 à Paris (heure d'hiver, UTC+1).
 const NOW = Date.parse('2026-11-05T13:00:00Z')
@@ -236,6 +236,63 @@ describe("l'accord à donner (YouTube)", () => {
     const card = sourceCard(source({ authorization_url: URL }), NOW)
     expect(card.state).toBe('todo')
     expect(card.guidance?.action?.href).toBe(URL)
+  })
+})
+
+describe("l'extension Twitch", () => {
+  const twitch = (overrides: Partial<SourceStatus> = {}) =>
+    source({
+      name: 'twitch',
+      label: 'Twitch',
+      silence_threshold_seconds: 259_200,
+      status: { state: 'ok', reason: null, expires_at: null, next_run_at: null, last_collected_at: iso(-40 * MIN) },
+      metrics: [{ metric: 'stream.watch', label: 'Twitch', last_at: iso(-2 * HOUR) }],
+      ...overrides,
+    })
+
+  it('dit le dernier signal de Firefox, le dernier envoi et le dernier visionnage', () => {
+    const card = sourceCard(twitch(), NOW)
+    expect(card.state).toBe('ok')
+    expect(card.lines).toEqual([
+      { label: 'Dernier signal de Firefox', value: `il y a 10${NBSP}min` },
+      { label: 'Dernier envoi', value: `il y a 40${NBSP}min` },
+      { label: 'Dernier visionnage', value: `il y a 2${NBSP}h` },
+    ])
+    expect(sourceCard(twitch({ last_seen_at: null, status: null, metrics: [] }), NOW).lines).toEqual([
+      { label: 'Dernier signal de Firefox', value: "aucun pour l'instant" },
+    ])
+  })
+
+  it('silencieuse, dit le seuil en jours et renvoie vers Firefox, pas vers le NAS', () => {
+    const card = sourceCard(twitch({ silent: true, last_seen_at: iso(-4 * DAY) }), NOW)
+    expect(card.state).toBe('silent')
+    expect(card.guidance?.title).toBe(`Aucun signal de Firefox depuis plus de 3${NBSP}jours : des streams peuvent manquer.`)
+    const steps = card.guidance?.steps.join(' ') ?? ''
+    expect(steps).toContain('Ouvre Firefox sur le Mac')
+    expect(steps).toContain('`about:addons`')
+    expect(steps).toContain("page d'options")
+    expect(steps).toContain('token est refusé')
+    expect(steps).not.toContain('collector')
+  })
+
+  it("en panne quand l'envoi échoue, avec la marche de l'extension", () => {
+    const card = sourceCard(
+      twitch({ status: { state: 'error', reason: 'ingest_failed', expires_at: null, next_run_at: null }, status_reported_at: iso(-5 * MIN) }),
+      NOW,
+    )
+    expect(card.state).toBe('broken')
+    expect(card.guidance?.title).toBe("L'extension n'arrive pas à remettre ses segments au serveur.")
+    expect(card.guidance?.steps.join(' ')).toContain('sudo docker compose ps backend')
+    expect(card.guidance?.note).toContain("Rien n'est perdu")
+  })
+
+  it('dit un seuil de 48 h ou plus en jours', () => {
+    expect(thresholdText(21_600)).toBe(`6${NBSP}h`)
+    expect(thresholdText(43_200)).toBe(`12${NBSP}h`)
+    expect(thresholdText(86_400)).toBe(`24${NBSP}h`)
+    expect(thresholdText(172_800)).toBe(`2${NBSP}jours`)
+    expect(thresholdText(259_200)).toBe(`3${NBSP}jours`)
+    expect(thresholdText(270_000)).toBe(`75${NBSP}h`)
   })
 })
 

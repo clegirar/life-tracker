@@ -12,7 +12,7 @@ App auto-hébergée sur un NAS Synology qui retrace ma vie jour par jour, avec u
 
 ## Périmètre
 
-Chantier en cours (voir `docs/chantiers.md`) : Twitch, par une extension Firefox (backend et extension construits ; l'essai sur le vrai DOM de Twitch et la web app suivent). YouTube, par l'API Google Data Portability, est construit. La page d'état des trackers est construite (PR #13), sa mise en service sur le NAS reste à vérifier. Garmin Connect est fait. Hors champ tant que je ne les demande pas : l'import de l'historique Twitch (export RGPD), les messages et l'agent Mac, l'annuaire côté interface, les autres trackers, les « fonctionnalités futures » de l'architecture, les sauvegardes, l'ouverture de la web app sur Internet, le contenu de `TODO.md`. Ne rien construire pour eux par anticipation ; le design des messages reste dans l'architecture pour plus tard.
+Chantier en cours (voir `docs/chantiers.md`) : Twitch, par une extension Firefox (backend en production ; extension et web app construites, à essayer sur le vrai Twitch avant leur fusion). YouTube, par l'API Google Data Portability, est construit. La page d'état des trackers est construite (PR #13), sa mise en service sur le NAS reste à vérifier. Garmin Connect est fait. Hors champ tant que je ne les demande pas : l'import de l'historique Twitch (export RGPD), les messages et l'agent Mac, l'annuaire côté interface, les autres trackers, les « fonctionnalités futures » de l'architecture, les sauvegardes, l'ouverture de la web app sur Internet, le contenu de `TODO.md`. Ne rien construire pour eux par anticipation ; le design des messages reste dans l'architecture pour plus tard.
 
 ## Commandes
 

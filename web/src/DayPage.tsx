@@ -12,7 +12,9 @@ import { MusicCard } from './MusicCard'
 import type { useMusic } from './useMusic'
 import { addDays, dayTitle, emptyLabel, longDate, parisInstant, parisTime } from './time'
 import type { useCoffee } from './useCoffee'
+import type { useTwitch } from './useTwitch'
 import type { useVideo } from './useVideo'
+import { TwitchCard } from './TwitchCard'
 import { VideoCard } from './VideoCard'
 
 interface Props {
@@ -34,6 +36,7 @@ interface Props {
   music: ReturnType<typeof useMusic>
   activity: ReturnType<typeof useActivity>
   video: ReturnType<typeof useVideo>
+  twitch: ReturnType<typeof useTwitch>
 }
 
 function Chevron({ d }: { d: string }) {
@@ -69,6 +72,7 @@ export function DayPage({
   music,
   activity,
   video,
+  twitch,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [picked, setPicked] = useState('12:00')
@@ -264,6 +268,7 @@ export function DayPage({
         {activityShown.length > 0 && <ActivityCard date={date} today={today} state={activity} health={music.health} shown={activityShown} />}
         {shows('music.listen') && <MusicCard date={date} today={today} state={music} />}
         {shows('video.watch') && <VideoCard date={date} today={today} state={video} health={music.health} />}
+        {shows('stream.watch') && <TwitchCard date={date} today={today} state={twitch} health={music.health} calendarDay={calendarDay} />}
       </div>
     </main>
   )

@@ -29,6 +29,7 @@ const NBSP = ' '
 const isGarmin = (name: string) => /^garmin\b/.test(name)
 const isLastfm = (name: string) => /^lastfm\b/.test(name)
 const isYoutube = (name: string) => /^youtube\b/.test(name)
+const isTwitch = (name: string) => /^twitch\b/.test(name)
 
 /** Comment une source dit son échéance. */
 interface ExpiryPolicy {
@@ -243,7 +244,20 @@ function exportsStale(source: SourceStatus, status: ReportedStatus | null, now: 
   return collected === null || now - collected > EXPORT_STALE_MS
 }
 
+/** Les deux réglages de l'extension Twitch, sur le Mac : son module et sa page d'options. */
+const TWITCH_ADDON = "Dans Firefox, sur le Mac, ouvre `about:addons` : le module « Life tracker : Twitch » doit être activé."
+const TWITCH_OPTIONS = "Ouvre sa page d'options (le bouton de l'extension, ou Préférences dans `about:addons`) : elle montre la dernière erreur ; « Tester » envoie un signal."
+const TWITCH_TOKEN =
+  "Un « ! » sur le bouton : le token est refusé. Recrée la source `twitch` sur le NAS (`docs/deploiement.md`, « Mise à jour : Twitch »), colle le nouveau token dans la page d'options, puis « Tester »."
+
 function byReason(source: SourceStatus, reason: ReportedStatus['reason'], now: number): Guidance | null {
+  if (isTwitch(source.name) && reason === 'ingest_failed') {
+    return {
+      title: "L'extension n'arrive pas à remettre ses segments au serveur.",
+      steps: [TWITCH_OPTIONS, 'Si cela dure, vérifie que le backend tourne sur le NAS : `sudo docker compose ps backend`.'],
+      note: "Rien n'est perdu : l'extension garde les segments dans Firefox et les renvoie seule.",
+    }
+  }
   if (exportsStale(source, currentStatus(source), now)) {
     return {
       title: "Google répond, mais aucun export n'a abouti depuis 2 jours.",
@@ -280,11 +294,24 @@ function byReason(source: SourceStatus, reason: ReportedStatus['reason'], now: n
   }
 }
 
+/** « 6 h », « 3 jours » : un seuil de 48 h ou plus se dit en jours. */
+export function thresholdText(seconds: number): string {
+  const hours = Math.round(seconds / 3600)
+  return hours >= 48 && hours % 24 === 0 ? plural(hours / 24, 'jour').replace(' ', NBSP) : `${hours}${NBSP}h`
+}
+
 function silence(source: SourceStatus): Guidance {
-  const hours = Math.round((source.silence_threshold_seconds ?? 0) / 3600)
+  const threshold = thresholdText(source.silence_threshold_seconds ?? 0)
+  if (isTwitch(source.name)) {
+    return {
+      title: `Aucun signal de Firefox depuis plus de ${threshold} : des streams peuvent manquer.`,
+      steps: ["Ouvre Firefox sur le Mac : l'extension envoie un signal toutes les 15 minutes tant qu'il est ouvert.", TWITCH_ADDON, TWITCH_OPTIONS, TWITCH_TOKEN],
+      note: "Firefox simplement fermé ? Rien n'est perdu : ce qu'il n'a pas pu envoyer part à sa réouverture.",
+    }
+  }
   const service = isLastfm(source.name) ? 'avec Last.fm ' : ''
   return {
-    title: `Aucun contact réussi ${service}depuis plus de ${hours}${NBSP}h : des données peuvent manquer.`,
+    title: `Aucun contact réussi ${service}depuis plus de ${threshold} : des données peuvent manquer.`,
     steps: [
       'Vérifie que le collecteur tourne sur le NAS : `sudo docker compose ps collector`.',
       'Puis lis ses dernières lignes : `sudo docker compose logs collector`.',
@@ -314,6 +341,7 @@ const LAST_OF: Record<string, string> = {
   'music.listen': 'Dernière écoute',
   workout: 'Dernière séance',
   'video.watch': 'Dernière vidéo',
+  'stream.watch': 'Dernier visionnage',
 }
 
 export function metricLine(metric: SourceStatus['metrics'][number], now: number): Line {
@@ -349,16 +377,20 @@ export function sourceCard(source: SourceStatus, now: number): Card {
   const collected = source.status !== null || source.silence_threshold_seconds !== null
   const seen = time(source.last_seen_at)
   const lines: Line[] = [
-    collected
-      ? { label: 'Dernière passe', value: seen === null ? "aucune pour l'instant" : since(seen, now) }
-      : { label: 'Dernier contact', value: seen === null ? "aucun pour l'instant" : since(seen, now) },
+    // L'extension Twitch n'a pas de passe : un battement toutes les 15 min, tant que Firefox est ouvert.
+    isTwitch(source.name)
+      ? { label: 'Dernier signal de Firefox', value: seen === null ? "aucun pour l'instant" : since(seen, now) }
+      : collected
+        ? { label: 'Dernière passe', value: seen === null ? "aucune pour l'instant" : since(seen, now) }
+        : { label: 'Dernier contact', value: seen === null ? "aucun pour l'instant" : since(seen, now) },
   ]
   // La dernière collecte réussie : pour YouTube, le dernier export, attendu même avant le premier.
   const lastCollected = time(status?.last_collected_at ?? null)
   if (isYoutube(source.name) && status) {
     lines.push({ label: 'Dernier export', value: lastCollected === null ? "aucun pour l'instant" : since(lastCollected, now) })
   } else if (lastCollected !== null) {
-    lines.push({ label: 'Dernière collecte', value: since(lastCollected, now) })
+    // Twitch : le dernier lot de segments reçu par le serveur.
+    lines.push({ label: isTwitch(source.name) ? 'Dernier envoi' : 'Dernière collecte', value: since(lastCollected, now) })
   }
   const next = time(status?.next_run_at ?? null)
   // YouTube : la prochaine passe est le prochain export que Google permet.

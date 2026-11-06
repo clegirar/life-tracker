@@ -9,7 +9,7 @@ Le [POC](poc.md) est validé depuis le 4 nov. 2026. Chaque chantier a sa section
 | Garmin Connect | Fait le 5 nov. 2026 (v0.4.0) |
 | Page d'état des trackers | Construite le 5 nov. 2026 (PR #13), mise en service à vérifier |
 | YouTube | En cours depuis le 5 nov. 2026 : backend construit, web app en cours |
-| Twitch | En cours depuis le 6 nov. 2026 : backend et extension Firefox construits, essai du DOM réel et web app à venir |
+| Twitch | En cours depuis le 6 nov. 2026 : backend en production (#17), extension Firefox et web app construites, essai sur le vrai Twitch à faire avant leur fusion |
 | Twitch : import de l'historique (export RGPD) | À faire, quand je le demanderai (l'export est demandé à Twitch) |
 | Ouvrir la web app sur Internet | À faire, quand je le demanderai |
 
@@ -162,13 +162,13 @@ Ouvert le 6 nov. 2026, à ma demande. Voir dans le calendrier, dès le lendemain
 
 **Mes choix** (à corriger si besoin) : seuil de silence de 3 jours (un week-end sans Firefox affichera « en attente ») ; jusqu'à l'import RGPD, presque toutes les chaînes apparaîtront comme « nouvelles » les premières semaines, sans bouton dédié ; pas de popup dans la barre d'outils en v1 ni de mise à jour automatique de l'extension (chaque version est signée puis réinstallée) ; la catégorie reste dans les détails.
 
-**Étapes, une PR chacune :**
+**Étapes** (le backend dans sa propre PR, fusionné d'abord pour essayer l'extension contre le NAS ; l'extension et la web app ensemble, un commit chacune) :
 
-1. **Backend** (construit le 6 nov. 2026) : migration `20261106120000_twitch.sql` (type `twitch.watch`, métrique `stream.watch`, première de forme `duration`), interprète `twitch_watch`, sens générique de la forme `duration` (union des intervalles par jour de Paris) dans `/v1/durations`, `/v1/top` (classé par minutes) et le calendrier, `GET /v1/days/{date}/stream`, textes des outils MCP.
+1. **Backend** (fusionné le 6 nov. 2026, #17) : migration `20261106120000_twitch.sql` (type `twitch.watch`, métrique `stream.watch`, première de forme `duration`), interprète `twitch_watch`, sens générique de la forme `duration` (union des intervalles par jour de Paris) dans `/v1/durations`, `/v1/top` (classé par minutes) et le calendrier, `GET /v1/days/{date}/stream`, textes des outils MCP.
 2. **Extension Firefox** (construite le 6 nov. 2026, `extension/`, sans release) : segments de 60 s au plus, file dans `storage.local`, heartbeat et état, page d'options ; signée par `web-ext sign` sur le Mac seulement (`extension/sign.sh`). Testée par `extension/test.sh` (page, segmenteur, file avec un faux `fetch`, lot validé contre le contrat, `web-ext lint`), **mais pas encore sur le vrai Twitch** : les sélecteurs du DOM (`SELECTORS` de `extension/src/lib/page.ts`) sont des hypothèses, que l'essai de l'étape 0 doit confirmer ou corriger.
-3. **Web app** : carte Twitch du jour, couleur du calendrier, carte de la page d'état.
+3. **Web app** (construite le 6 nov. 2026) : carte Twitch du jour (temps total et temps à deux streams, chaînes par temps avec leurs contenus et leurs heures, chaîne inconnue, nouvelles chaînes, texte d'une journée vide), couleur fuchsia du calendrier, carte de la page d'état (dernier signal de Firefox, dernier envoi, dernier visionnage, consignes de silence et d'échec d'envoi propres à l'extension). Testée par `web/e2e/twitch.spec.ts` sur des chaînes fictives.
 
-**Reste à faire : l'essai du DOM réel** (étape 0, sans PR, avec moi). L'extension a été écrite avant lui ; il se fait désormais avec elle, chargée par about:debugging (« Charger un module complémentaire temporaire », `extension/dist/manifest.json` après `npm run build`), contre les conteneurs locaux `web` et `backend`. À relever, la structure seulement et jamais les valeurs : live, rediffusion, clip (www et clips.twitch.tv), mini-lecteur, popout ; et à vérifier :
+**Reste à faire : l'essai du DOM réel** (étape 0, sans PR, avec moi). L'extension a été écrite avant lui ; il se fait désormais avec elle, chargée par about:debugging (« Charger un module complémentaire temporaire », `extension/dist/manifest.json` après `npm run build`), contre le NAS (source `twitch` créée après la mise en production du backend). À relever, la structure seulement et jamais les valeurs : live, rediffusion, clip (www et clips.twitch.tv), mini-lecteur, popout ; et à vérifier :
 
 - la chaîne d'une rediffusion et d'un clip de clips.twitch.tv (liens `/<login>` de `SELECTORS.channelLink`), le nom affiché (`SELECTORS.channelName`, retenu seulement s'il est le login à la casse près), la catégorie (`a[data-a-target='stream-game-link']`, un lien vers `/directory/`) ;
 - le mini-lecteur : le même `<video>` garde-t-il sa chaîne en passant à l'annuaire, et `.persistent-player` le contient-il ;
