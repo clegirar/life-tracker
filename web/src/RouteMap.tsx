@@ -251,9 +251,11 @@ export default function RouteMap({ activityId, label, onPace }: { activityId: nu
 
 /**
  * Un lieu de la journée : une pastille numérotée, le numéro de sa ligne dans la liste (« 1 · 4 » pour
- * deux lieux au même endroit). Sans taille : la pastille, centrée sur le point par CSS, s'élargit.
+ * deux lieux au même endroit). Sans taille : la pastille, centrée sur le point par CSS, s'élargit. Le
+ * lieu où je suis encore porte un halo fixe, le même que sa pastille en haut de la carte.
  */
-const pinIcon = (label: string) => L.divIcon({ className: 'visit-pin', html: `<span>${label}</span>`, iconSize: [0, 0] })
+const pinIcon = (label: string, current: boolean) =>
+  L.divIcon({ className: current ? 'visit-pin visit-pin-current' : 'visit-pin', html: `<span>${label}</span>`, iconSize: [0, 0] })
 
 /**
  * Les déplacements d'un jour, déjà lus : la page les relit toutes les 5 min, mais un dessin identique
@@ -275,7 +277,10 @@ export function LocationMap({ drawing, label }: { drawing: MapDrawing; label: st
     for (const dot of drawing.dots) {
       L.circleMarker(dot as L.LatLngTuple, { radius: 4, color: '#ffffff', weight: 1.5, fillColor: tone, fillOpacity: 1, interactive: false }).addTo(map)
     }
-    for (const pin of drawing.pins) L.marker(pin.at as L.LatLngTuple, { icon: pinIcon(pin.label), interactive: false, keyboard: false }).addTo(map)
+    for (const pin of drawing.pins) {
+      // Le lieu en cours passe devant les autres épingles.
+      L.marker(pin.at as L.LatLngTuple, { icon: pinIcon(pin.label, pin.current), zIndexOffset: pin.current ? 1000 : 0, interactive: false, keyboard: false }).addTo(map)
+    }
     // Un seul endroit (un lieu, un point) : un zoom de quartier, pas le plus fort.
     const bounds = L.latLngBounds(drawingPoints(drawing).map((point: LatLng) => point as L.LatLngTuple))
     setControls(trackView(map, () => map.fitBounds(bounds, { padding: [28, 28], maxZoom: 16 }), setView))

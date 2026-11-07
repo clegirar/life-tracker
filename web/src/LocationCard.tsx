@@ -4,20 +4,22 @@ import { MapFigure } from './ActivityCard'
 import {
   distanceText,
   hasTrace,
+  hereText,
   iphoneSilent,
   locationKind,
   mapDrawing,
   mapLabel,
+  placeRows,
   placesCount,
   stillText,
   traceLengthM,
   uncoveredText,
-  visitRows,
-  type VisitRow,
+  type PlaceRow,
 } from './location'
 import { MoreButton } from './MusicCard'
 import { visibleRows } from './music'
 import type { useLocations } from './useLocations'
+import { useMinute } from './useMinute'
 
 // Leaflet et ses tuiles ne se chargent qu'à l'approche de la carte, comme pour les séances.
 const LocationMap = lazy(() => import('./RouteMap').then((module) => ({ default: module.LocationMap })))
@@ -30,10 +32,10 @@ interface Props {
 }
 
 /** Un lieu : son numéro (celui de l'épingle), ses heures, et sa durée à droite. */
-function VisitLine({ row }: { row: VisitRow }) {
+function PlaceLine({ row }: { row: PlaceRow }) {
   return (
-    <li className="row visit" data-testid="visit">
-      <span className="visit-number" aria-hidden="true">
+    <li className="row visit" data-testid="visit" data-ongoing={row.ongoing || undefined}>
+      <span className={row.ongoing ? 'visit-number visit-number-current' : 'visit-number'} aria-hidden="true">
         {row.number}
       </span>
       <div className="row-text visit-text">
@@ -48,15 +50,37 @@ function VisitLine({ row }: { row: VisitRow }) {
   )
 }
 
+/**
+ * Le lieu où je suis encore, en haut de la carte : « Ici depuis 17 h 14 · 1 h 12 », avec la pastille de
+ * son épingle. Le temps passé avance à chaque minute, sans animation. Un composant à part : seul lui se
+ * redessine chaque minute, pas la carte.
+ */
+function HereLine({ row }: { row: PlaceRow }) {
+  const now = useMinute()
+  const { since, elapsed } = hereText(row.arrival, now)
+  return (
+    <p className="location-here" data-testid="location-here">
+      <span className="visit-number visit-number-current" aria-hidden="true">
+        {row.number}
+      </span>
+      <span className="location-here-text">
+        <span className="location-here-since">{since}</span>
+        <span className="location-here-elapsed"> · {elapsed}</span>
+      </span>
+    </p>
+  )
+}
+
 export function LocationCard({ date, today, state, health }: Props) {
   // Déplié pour un jour : changer de jour replie, même en revenant.
   const [unfoldedOn, setUnfoldedOn] = useState<string | null>(null)
-  const visitsSection = useRef<HTMLElement>(null)
+  const placesSection = useRef<HTMLElement>(null)
   const { locations, loadFailed } = state
   const unfolded = unfoldedOn === date
 
   const kind = locations ? locationKind(locations) : null
-  const rows = useMemo(() => (locations ? visitRows(locations, today) : []), [locations, today])
+  const rows = useMemo(() => (locations ? placeRows(locations, today) : []), [locations, today])
+  const here = rows.find((row) => row.ongoing) ?? null
   // Le même objet tant que les données ne changent pas : la carte ne se redessine pas à chaque relecture.
   const drawing = useMemo(() => (locations ? mapDrawing(locations, today) : null), [locations, today])
   const shownRows = visibleRows(rows, unfolded).shown
@@ -96,6 +120,7 @@ export function LocationCard({ date, today, state, health }: Props) {
 
       {locations && places && kind === 'moved' && (
         <>
+          {here && <HereLine row={here} />}
           <dl className="stats">
             <div>
               <dt>Lieux</dt>
@@ -119,7 +144,7 @@ export function LocationCard({ date, today, state, health }: Props) {
             </MapFigure>
           )}
 
-          <section ref={visitsSection} className="music-section" aria-labelledby="titre-lieux" data-testid="visits">
+          <section ref={placesSection} className="music-section" aria-labelledby="titre-lieux" data-testid="visits">
             <h3 id="titre-lieux" className="subsection-title">
               Lieux
             </h3>
@@ -129,10 +154,10 @@ export function LocationCard({ date, today, state, health }: Props) {
               <>
                 <ol className="rows visit-rows">
                   {shownRows.map((row) => (
-                    <VisitLine key={row.key} row={row} />
+                    <PlaceLine key={row.key} row={row} />
                   ))}
                 </ol>
-                <MoreButton total={rows.length} expanded={unfolded} onToggle={() => setUnfoldedOn(unfolded ? null : date)} section={visitsSection} />
+                <MoreButton total={rows.length} expanded={unfolded} onToggle={() => setUnfoldedOn(unfolded ? null : date)} section={placesSection} />
               </>
             )}
           </section>

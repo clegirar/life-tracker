@@ -1,10 +1,11 @@
 // Ce que la carte Déplacements dit d'un jour : la trace de l'iPhone (Overland) et les lieux où je suis
-// resté, sans nom de lieu (le géocodage inverse est un chantier à venir). Un jour hors de la période
+// resté, visites iOS et séjours détectés dans les points, avec leur durée, et celui où je suis encore ;
+// sans nom de lieu (le géocodage inverse est un chantier à venir). Un jour hors de la période
 // suivie (`covered` faux) est un jour sans données, jamais un jour sans déplacement.
 
-import type { DayLocations, LocationVisit, SourcesHealth } from './api'
+import type { DayLocations, LocationPlace, SourcesHealth } from './api'
 import { formatMinutes } from './music'
-import { shortDate } from './status'
+import { clock, dayWord, shortDate } from './status'
 import { addDays, parisDate } from './time'
 
 // Un remplacement de token crée une nouvelle source : `iphone-2`.
@@ -17,7 +18,7 @@ export type LocationKind = 'uncovered' | 'still' | 'moved'
 
 export function locationKind(day: DayLocations): LocationKind {
   if (!day.covered) return 'uncovered'
-  return day.segments.length === 0 && day.visits.length === 0 ? 'still' : 'moved'
+  return day.segments.length === 0 && day.places.length === 0 ? 'still' : 'moved'
 }
 
 /** « 36 min », « 2 h 05 » ; moins d'une minute : « moins d'1 min ». */
@@ -57,55 +58,76 @@ export function distanceText(meters: number): string {
  * la maison) est dans la liste et sur la carte, et se dit à part : « et 1 depuis la veille ».
  */
 export function placesCount(day: DayLocations): { arrived: number; earlier: string | null } {
-  const earlier = day.visits.filter((visit) => visit.arrived_before).length
-  return { arrived: day.visits.length - earlier, earlier: earlier === 0 ? null : `et ${earlier} depuis la veille` }
+  const earlier = day.places.filter((place) => place.arrived_before).length
+  return { arrived: day.places.length - earlier, earlier: earlier === 0 ? null : `et ${earlier} depuis la veille` }
 }
 
 /** La trace a au moins un morceau de deux points : il y a une longueur à dire. */
 export const hasTrace = (day: DayLocations) => day.segments.some((segment) => segment.points.length > 1)
 
 /** Une ligne de la liste des lieux, dans l'ordre d'arrivée ; `number` est celui de l'épingle. */
-export interface VisitRow {
+export interface PlaceRow {
   key: string
   number: number
-  /** « 10:12 – 10:48 ». */
+  /** « 10:12 – 10:48 », ou « depuis 17:14 » pour le lieu où je suis encore. */
   range: string
   /** « Depuis la veille », « Jusqu'au lendemain » ; `null` pour un lieu tenu dans le jour. */
   note: string | null
-  /** La durée entière du lieu, veille et lendemain compris. */
+  /** La durée entière du lieu, veille et lendemain compris ; « en cours » si j'y suis encore. */
   duration: string
   at: LatLng
+  ongoing: boolean
+  /** L'instant d'arrivée, en millisecondes. */
+  arrival: number
 }
 
 /** « Depuis la veille », « Jusqu'au lendemain », « Depuis le 3 nov., jusqu'au lendemain ». */
-function visitNote(visit: LocationVisit, date: string, today: string): string | null {
+function placeNote(place: LocationPlace, date: string, today: string): string | null {
   const dayOf = (instant: string) => parisDate(Date.parse(instant))
-  const from = dayOf(visit.arrival) === addDays(date, -1) ? 'la veille' : `le ${shortDate(dayOf(visit.arrival), today)}`
-  const to = dayOf(visit.departure) === addDays(date, 1) ? 'lendemain' : shortDate(dayOf(visit.departure), today)
-  if (visit.arrived_before && visit.departed_after) return `Depuis ${from}, jusqu'au ${to}`
-  if (visit.arrived_before) return `Depuis ${from}`
-  if (visit.departed_after) return `Jusqu'au ${to}`
+  const from = dayOf(place.arrival) === addDays(date, -1) ? 'la veille' : `le ${shortDate(dayOf(place.arrival), today)}`
+  const departed = place.departed_after && place.departure !== null ? dayOf(place.departure) : null
+  const to = departed === null ? null : departed === addDays(date, 1) ? 'lendemain' : shortDate(departed, today)
+  if (place.arrived_before && to) return `Depuis ${from}, jusqu'au ${to}`
+  if (place.arrived_before) return `Depuis ${from}`
+  if (to) return `Jusqu'au ${to}`
   return null
 }
 
-const byArrival = (a: LocationVisit, b: LocationVisit) => Date.parse(a.arrival) - Date.parse(b.arrival)
+const byArrival = (a: LocationPlace, b: LocationPlace) => Date.parse(a.arrival) - Date.parse(b.arrival)
 
-export function visitRows(day: DayLocations, today: string): VisitRow[] {
-  return [...day.visits].sort(byArrival).map((visit, index) => ({
-    key: visit.arrival,
+/** Visites iOS et séjours détectés pareils : l'origine ne change ni la ligne ni l'épingle. */
+export function placeRows(day: DayLocations, today: string): PlaceRow[] {
+  return [...day.places].sort(byArrival).map((place, index) => ({
+    key: `${place.origin}-${place.arrival}`,
     number: index + 1,
-    range: `${visit.arrival_time} – ${visit.departure_time}`,
-    note: visitNote(visit, day.date, today),
-    duration: durationText(visit.duration_s),
-    at: [visit.lat, visit.lon],
+    range: place.ongoing || place.departure_time === null ? `depuis ${place.arrival_time}` : `${place.arrival_time} – ${place.departure_time}`,
+    note: placeNote(place, day.date, today),
+    duration: place.ongoing ? 'en cours' : durationText(place.duration_s),
+    at: [place.lat, place.lon],
+    ongoing: place.ongoing,
+    arrival: Date.parse(place.arrival),
   }))
+}
+
+/**
+ * Le haut de la carte quand j'y suis encore : « Ici depuis 17 h 14 », « depuis hier à 22 h 10 », et
+ * le temps passé, « 1 h 12 ». Compté de minute d'horloge à minute d'horloge, comme on lit l'heure :
+ * arrivé à 17 h 14, il est 18 h 26, cela fait 1 h 12.
+ */
+export function hereText(arrival: number, now: number): { since: string; elapsed: string } {
+  const date = parisDate(arrival)
+  const today = parisDate(now)
+  const when = date === today ? clock(arrival) : `${dayWord(date, today)} à ${clock(arrival)}`
+  const minutes = Math.max(0, Math.floor(now / 60_000) - Math.floor(arrival / 60_000))
+  return { since: `Ici depuis ${when}`, elapsed: minutes === 0 ? "moins d'1 min" : formatMinutes(minutes) }
 }
 
 /** Ce que la carte dessine : les morceaux de trace, les points isolés et les épingles numérotées. */
 export interface MapDrawing {
   lines: LatLng[][]
   dots: LatLng[]
-  pins: { at: LatLng; label: string }[]
+  /** `current` : le lieu où je suis encore, mis en évidence. */
+  pins: { at: LatLng; label: string; current: boolean }[]
 }
 
 /** En deçà, deux lieux sont le même sur la carte : la précision d'une visite iOS est de cet ordre. */
@@ -116,10 +138,12 @@ export function mapDrawing(day: DayLocations, today: string): MapDrawing | null 
   const dots = day.segments.filter((segment) => segment.points.length === 1).map((segment) => segment.points[0])
   // Deux lieux au même endroit (la maison, le soir et la nuit d'avant) : une seule épingle, « 1 · 4 ».
   const pins: MapDrawing['pins'] = []
-  for (const row of visitRows(day, today)) {
+  for (const row of placeRows(day, today)) {
     const same = pins.find((pin) => distanceM(pin.at, row.at) <= SAME_PLACE_M)
-    if (same) same.label += ` · ${row.number}`
-    else pins.push({ at: row.at, label: String(row.number) })
+    if (same) {
+      same.label += ` · ${row.number}`
+      same.current ||= row.ongoing
+    } else pins.push({ at: row.at, label: String(row.number), current: row.ongoing })
   }
   return lines.length + dots.length + pins.length === 0 ? null : { lines, dots, pins }
 }
@@ -131,9 +155,11 @@ export function drawingPoints(drawing: MapDrawing): LatLng[] {
 
 /** Le texte de la carte pour un lecteur d'écran : la liste dessous en dit le détail. */
 export function mapLabel(day: DayLocations): string {
-  const places = day.visits.length
+  const places = day.places.length
   const parts = [places === 0 ? 'aucun lieu' : places === 1 ? '1 lieu' : `${places} lieux`]
   if (hasTrace(day)) parts.push(`${distanceText(traceLengthM(day))} de trace`)
+  const current = placeRows(day, day.date).find((row) => row.ongoing)
+  if (current) parts.push(`lieu ${current.number} en cours`)
   return `Carte des déplacements : ${parts.join(', ')}`
 }
 

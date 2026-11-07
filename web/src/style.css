@@ -2517,6 +2517,48 @@ button:disabled {
   box-shadow: 0 0 0 2px #ffffff, 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
+/*
+ * Le lieu où je suis encore : un halo fixe de sa couleur, sur la carte comme en haut de la carte et dans
+ * la liste. Fixe et non pulsant : la page se relit souvent, et une boucle sans fin distrait de la lecture.
+ */
+.visit-pin-current span {
+  box-shadow:
+    0 0 0 2px #ffffff,
+    0 0 0 8px color-mix(in srgb, var(--location) 32%, transparent),
+    0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.visit-number-current {
+  box-shadow:
+    0 0 0 2px var(--card),
+    0 0 0 6px color-mix(in srgb, var(--location) 28%, transparent);
+}
+
+/* « Ici depuis 17 h 14 · 1 h 12 », en tête de la carte. */
+.location-here {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+  padding-left: 4px;
+}
+
+.location-here-text {
+  min-width: 0;
+  font-size: 17px;
+  line-height: 22px;
+}
+
+.location-here-since {
+  font-weight: 600;
+}
+
+.location-here-elapsed {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 @media (prefers-color-scheme: dark) {
   /* Le vert d'eau clair du sombre porte un chiffre sombre, lisible. */
   .visit-number,

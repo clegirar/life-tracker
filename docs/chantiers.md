@@ -277,6 +277,8 @@ Ouvert le 7 nov. 2026, à ma demande (l'idée « Déplacements via géolocalisat
 
 **7 nov. 2026, après la mise en service** (branche `feat/cartes-zoom-allure-sejours`), backend : les séjours détectés dans les points, calculés à la lecture par `location.rs` (150 m, 15 min ; une visite iOS l'emporte sur un séjour qu'elle recouvre), et le séjour en cours (aujourd'hui, iPhone entendu depuis moins de 70 min ; un point seul au bout de 10 min) ; la réponse de la route du jour passe de `visits` à `places` (`origin`, `ongoing`). Les traces des séances Garmin gardent aussi un point toutes les 15 s, pour l'allure (nouvelles séances seulement). Tests : `backend/tests/location.rs` (séjours horaires et nuit de la veille, visite qui l'emporte, séjour en cours, iPhone silencieux, autre jour, point isolé, point seul en cours), `geo.rs`, connecteur Garmin.
 
+**7 nov. 2026, web** (même branche) : la carte « Déplacements » lit `places`. Tous les lieux, visites iOS et séjours détectés sans distinction, avec leur durée (`HH:MM – HH:MM` et « 1 h 45 », ou « depuis 17:14 » et « en cours ») ; le chiffre « Lieux » compte cette liste, par arrivée, et peut dépasser la case du mois, qui ne compte que les visites iOS. Le lieu où je suis encore s'annonce en tête de carte, « Ici depuis 17 h 14 · 1 h 12 », le temps passé avançant à chaque minute d'horloge (`useMinute.ts`), et son épingle porte un halo fixe, comme sa pastille dans la liste. Tests : `location.test.ts`, `e2e/location.spec.ts` (séjours par points horaires, séjour recouvert par une visite iOS, séjour en cours aujourd'hui), captures `deplacements-sejours` et `deplacements-en-cours`.
+
 **Terminé quand**
 
 - Une journée réelle de déplacements apparaît sur la carte du jour, avec la trace et les visites.

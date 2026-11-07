@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { DayLocations, LocationVisit, SourcesHealth } from './api'
+import type { DayLocations, LocationPlace, SourcesHealth } from './api'
 import {
   distanceM,
   distanceText,
   drawingPoints,
   durationText,
   hasTrace,
+  hereText,
   iphoneSilent,
   locationKind,
   mapDrawing,
@@ -14,7 +15,7 @@ import {
   stillText,
   traceLengthM,
   uncoveredText,
-  visitRows,
+  placeRows,
 } from './location'
 
 // Des coordonnées fictives, en mer au large de Marseille.
@@ -22,8 +23,9 @@ const TODAY = '2026-11-05'
 const DATE = '2026-10-20'
 const NBSP = ' '
 
-function visit(overrides: Partial<LocationVisit> = {}): LocationVisit {
+function place(overrides: Partial<LocationPlace> = {}): LocationPlace {
   return {
+    origin: 'visit',
     lat: 43.201,
     lon: 5.285,
     arrival: '2026-10-20T08:12:00Z',
@@ -33,6 +35,7 @@ function visit(overrides: Partial<LocationVisit> = {}): LocationVisit {
     arrived_before: false,
     departed_after: false,
     duration_s: 2160,
+    ongoing: false,
     horizontal_accuracy: 35,
     ...overrides,
   }
@@ -55,7 +58,7 @@ function day(overrides: Partial<DayLocations> = {}): DayLocations {
         ],
       },
     ],
-    visits: [visit()],
+    places: [place()],
     ...overrides,
   }
 }
@@ -70,8 +73,8 @@ function health(sources: Partial<SourcesHealth['sources'][number]>[]): SourcesHe
 
 describe('le jour', () => {
   it('distingue un jour sans données, un jour sans déplacement et un jour avec', () => {
-    expect(locationKind(day({ covered: false, segments: [], visits: [] }))).toBe('uncovered')
-    expect(locationKind(day({ segments: [], visits: [], point_count: 0 }))).toBe('still')
+    expect(locationKind(day({ covered: false, segments: [], places: [] }))).toBe('uncovered')
+    expect(locationKind(day({ segments: [], places: [], point_count: 0 }))).toBe('still')
     expect(locationKind(day())).toBe('moved')
     expect(locationKind(day({ segments: [] }))).toBe('moved')
   })
@@ -134,8 +137,8 @@ describe('les durées et les distances', () => {
 
 describe('les lieux', () => {
   it('les classe par arrivée, numérotés comme les épingles', () => {
-    const later = visit({ arrival: '2026-10-20T12:00:00Z', arrival_time: '14:00', departure_time: '15:30', duration_s: 5400, lat: 43.21 })
-    const rows = visitRows(day({ visits: [later, visit()] }), TODAY)
+    const later = place({ arrival: '2026-10-20T12:00:00Z', arrival_time: '14:00', departure_time: '15:30', duration_s: 5400, lat: 43.21 })
+    const rows = placeRows(day({ places: [later, place()] }), TODAY)
     expect(rows.map((row) => [row.number, row.range, row.duration, row.note])).toEqual([
       [1, '10:12 – 10:48', '36 min', null],
       [2, '14:00 – 15:30', '1 h 30', null],
@@ -144,7 +147,7 @@ describe('les lieux', () => {
   })
 
   it('dit un lieu commencé la veille ou fini le lendemain, ou plus loin', () => {
-    const night = visit({
+    const night = place({
       arrival: '2026-10-19T20:10:00Z',
       departure: '2026-10-21T06:45:00Z',
       arrival_time: '22:10',
@@ -153,22 +156,53 @@ describe('les lieux', () => {
       departed_after: true,
       duration_s: 124_200,
     })
-    const note = (v: LocationVisit) => visitRows(day({ visits: [v] }), TODAY)[0].note
+    const note = (v: LocationPlace) => placeRows(day({ places: [v] }), TODAY)[0].note
     expect(note(night)).toBe("Depuis la veille, jusqu'au lendemain")
     expect(note({ ...night, departed_after: false })).toBe('Depuis la veille')
     expect(note({ ...night, arrived_before: false })).toBe("Jusqu'au lendemain")
     expect(note({ ...night, arrival: '2026-10-17T20:10:00Z', departed_after: false })).toBe(`Depuis le 17${NBSP}oct.`)
     expect(note({ ...night, arrived_before: false, departure: '2026-10-23T06:45:00Z' })).toBe(`Jusqu'au 23${NBSP}oct.`)
-    expect(visitRows(day({ visits: [night] }), TODAY)[0].duration).toBe('34 h 30')
+    expect(placeRows(day({ places: [night] }), TODAY)[0].duration).toBe('34 h 30')
+  })
+
+  it('dit un séjour détecté comme une visite, et le lieu où je suis encore', () => {
+    const stay = place({ origin: 'points', horizontal_accuracy: null, arrival: '2026-10-20T06:00:00Z', arrival_time: '08:00', departure_time: '10:05', duration_s: 7500 })
+    const here = place({
+      origin: 'points',
+      arrival: '2026-10-20T15:14:00Z',
+      arrival_time: '17:14',
+      departure: null,
+      departure_time: null,
+      duration_s: 4320,
+      ongoing: true,
+      horizontal_accuracy: null,
+    })
+    const rows = placeRows(day({ places: [here, stay] }), TODAY)
+    expect(rows.map((row) => [row.number, row.range, row.duration, row.note, row.ongoing])).toEqual([
+      [1, '08:00 – 10:05', '2 h 05', null, false],
+      [2, 'depuis 17:14', 'en cours', null, true],
+    ])
+    expect(rows[1].arrival).toBe(Date.parse('2026-10-20T15:14:00Z'))
+    // Arrivé la veille et encore là : la veille seulement, jamais de lendemain.
+    expect(placeRows(day({ places: [{ ...here, arrived_before: true, arrival: '2026-10-19T20:10:00Z' }] }), TODAY)[0].note).toBe('Depuis la veille')
+  })
+
+  it('dit depuis quand je suis ici, et combien de temps, de minute en minute', () => {
+    const arrival = Date.parse('2026-11-05T16:14:40Z') // 17 h 14 à Paris
+    expect(hereText(arrival, Date.parse('2026-11-05T17:26:10Z'))).toEqual({ since: `Ici depuis 17${NBSP}h${NBSP}14`, elapsed: '1 h 12' })
+    expect(hereText(arrival, Date.parse('2026-11-05T16:14:59Z')).elapsed).toBe("moins d'1 min")
+    expect(hereText(arrival, Date.parse('2026-11-05T16:52:00Z')).elapsed).toBe('38 min')
+    expect(hereText(arrival, Date.parse('2026-11-06T07:00:00Z'))).toEqual({ since: `Ici depuis hier à 17${NBSP}h${NBSP}14`, elapsed: '14 h 46' })
+    expect(hereText(arrival, Date.parse('2026-11-08T07:00:00Z')).since).toBe(`Ici depuis le 5${NBSP}nov. à 17${NBSP}h${NBSP}14`)
   })
 })
 
 describe('le nombre de lieux', () => {
   it('compte par arrivée, comme le calendrier, et dit à part ceux de la veille', () => {
     expect(placesCount(day())).toEqual({ arrived: 1, earlier: null })
-    const night = visit({ arrived_before: true })
-    expect(placesCount(day({ visits: [night, visit(), visit()] }))).toEqual({ arrived: 2, earlier: 'et 1 depuis la veille' })
-    expect(placesCount(day({ visits: [night] }))).toEqual({ arrived: 0, earlier: 'et 1 depuis la veille' })
+    const night = place({ arrived_before: true })
+    expect(placesCount(day({ places: [night, place(), place()] }))).toEqual({ arrived: 2, earlier: 'et 1 depuis la veille' })
+    expect(placesCount(day({ places: [night] }))).toEqual({ arrived: 0, earlier: 'et 1 depuis la veille' })
   })
 })
 
@@ -178,26 +212,37 @@ describe('la carte', () => {
     const drawing = mapDrawing(day({ segments: [day().segments[0], single] }), TODAY)!
     expect(drawing.lines).toEqual([[[43.2, 5.28], [43.2, 5.29]]])
     expect(drawing.dots).toEqual([[43.25, 5.3]])
-    expect(drawing.pins).toEqual([{ at: [43.201, 5.285], label: '1' }])
+    expect(drawing.pins).toEqual([{ at: [43.201, 5.285], label: '1', current: false }])
     expect(drawingPoints(drawing)).toHaveLength(4)
   })
 
   it('réunit deux lieux au même endroit dans une épingle', () => {
-    const evening = visit({ arrival: '2026-10-20T16:00:00Z', lat: 43.2012 })
-    const far = visit({ arrival: '2026-10-20T12:00:00Z', lat: 43.21 })
-    expect(mapDrawing(day({ visits: [evening, far, visit()] }), TODAY)!.pins).toEqual([
-      { at: [43.201, 5.285], label: '1 · 3' },
-      { at: [43.21, 5.285], label: '2' },
+    const evening = place({ arrival: '2026-10-20T16:00:00Z', lat: 43.2012 })
+    const far = place({ arrival: '2026-10-20T12:00:00Z', lat: 43.21 })
+    expect(mapDrawing(day({ places: [evening, far, place()] }), TODAY)!.pins).toEqual([
+      { at: [43.201, 5.285], label: '1 · 3', current: false },
+      { at: [43.21, 5.285], label: '2', current: false },
+    ])
+  })
+
+  it('met en évidence l’épingle du lieu où je suis encore', () => {
+    const here = place({ arrival: '2026-10-20T16:00:00Z', lat: 43.2012, departure: null, departure_time: null, ongoing: true })
+    const far = place({ arrival: '2026-10-20T12:00:00Z', lat: 43.21 })
+    expect(mapDrawing(day({ places: [here, far, place()] }), TODAY)!.pins).toEqual([
+      { at: [43.201, 5.285], label: '1 · 3', current: true },
+      { at: [43.21, 5.285], label: '2', current: false },
     ])
   })
 
   it('ne dessine rien sans trace ni lieu', () => {
-    expect(mapDrawing(day({ segments: [], visits: [] }), TODAY)).toBeNull()
+    expect(mapDrawing(day({ segments: [], places: [] }), TODAY)).toBeNull()
   })
 
   it('se décrit pour un lecteur d’écran', () => {
     expect(mapLabel(day())).toBe('Carte des déplacements : 1 lieu, 810 m de trace')
-    expect(mapLabel(day({ visits: [] }))).toBe('Carte des déplacements : aucun lieu, 810 m de trace')
-    expect(mapLabel(day({ segments: [], visits: [visit(), visit()] }))).toBe('Carte des déplacements : 2 lieux')
+    expect(mapLabel(day({ places: [] }))).toBe('Carte des déplacements : aucun lieu, 810 m de trace')
+    expect(mapLabel(day({ segments: [], places: [place(), place()] }))).toBe('Carte des déplacements : 2 lieux')
+    const here = place({ arrival: '2026-10-20T16:00:00Z', departure: null, departure_time: null, ongoing: true })
+    expect(mapLabel(day({ places: [place(), here] }))).toBe('Carte des déplacements : 2 lieux, 810 m de trace, lieu 2 en cours')
   })
 })

@@ -14,7 +14,11 @@ const EVE = addDays(today, -37)
 const DATE = addDays(today, -36)
 const NEXT = addDays(today, -35)
 const STILL = addDays(today, -34)
+const STAYS = addDays(today, -32)
 const AFTER = addDays(today, -30)
+// Le séjour en cours se compte depuis maintenant : un instant fixé au chargement, pour qu'un renvoi des
+// mêmes points retombe sur les mêmes clés.
+const NOW = Math.floor(Date.now() / 60_000) * 60_000
 const TILE = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGN4+fQOAAVlAquKsz3oAAAAAElFTkSuQmCC', 'base64')
 
 function sql(statement: string) {
@@ -42,6 +46,10 @@ type LatLng = [number, number]
 const HOME: LatLng = [43.19, 5.24]
 const CAFE: LatLng = [43.2055, 5.2705]
 const LOOKOUT: LatLng = [43.2207, 5.2703]
+// Les séjours détectés (un point par heure à l'arrêt), et le lieu où je suis encore aujourd'hui.
+const MOORING: LatLng = [43.17, 5.2]
+const BUOY: LatLng = [43.17, 5.23]
+const HERE: LatLng = [43.235, 5.3]
 
 const geometry = ([lat, lon]: LatLng) => ({ type: 'Point', coordinates: [lon, lat] })
 // Ce qu'Overland ajoute et qui ne doit jamais entrer.
@@ -73,6 +81,28 @@ function walk(date: string, start: string, from: LatLng, to: LatLng, steps: numb
   )
 }
 
+/** Un point `minutes` avant `NOW`. */
+const ago = (minutes: number, at: LatLng) => {
+  const feature = point(DATE, '12:00', at)
+  return { ...feature, properties: { ...feature.properties, timestamp: new Date(NOW - minutes * 60_000).toISOString().replace('.000Z', 'Z') } }
+}
+
+/**
+ * Aujourd'hui : une marche de 20 min qui s'arrête à 330 m du lieu, puis un point en arrivant, il y a
+ * 2 h, un autre une heure plus tard et un dernier il y a 12 min, comme Overland à l'arrêt. Envoyé
+ * seulement après le test d'aujourd'hui sans position ; le lot porte toujours les mêmes clés.
+ */
+async function seedToday(request: APIRequestContext) {
+  const start: LatLng = [HERE[0] - 0.003, HERE[1] - 0.025]
+  const end: LatLng = [HERE[0] - 0.003, HERE[1]]
+  await overland(request, [
+    ...Array.from({ length: 21 }, (_, i) => ago(150 - i, [start[0], start[1] + ((end[1] - start[1]) * i) / 20])),
+    ago(120, HERE),
+    ago(60, [HERE[0] + 0.0002, HERE[1]]),
+    ago(12, HERE),
+  ])
+}
+
 async function overland(request: APIRequestContext, locations: unknown[]) {
   const response = await request.post(`${API_URL}/v1/locations/overland`, {
     headers: { Authorization: `Bearer ${IPHONE_TOKEN}` },
@@ -96,6 +126,17 @@ async function seed(request: APIRequestContext) {
     visit([DATE, '18:00'], [NEXT, '07:30'], HOME),
     // Une visite encore ouverte : iOS ne connaît pas le départ, elle n'entre pas.
     visit([NEXT, '20:00'], null, HOME),
+    // Un point par heure à l'arrêt, au mouillage puis à la bouée, sans visite iOS au mouillage ; une
+    // marche entre les deux, qui part à 330 m du mouillage. La visite iOS à la bouée recouvre le séjour
+    // détecté là : un seul lieu, celui d'iOS.
+    point(STAYS, '08:00', MOORING),
+    point(STAYS, '09:00', [MOORING[0] + 0.0003, MOORING[1]]),
+    point(STAYS, '10:00', MOORING),
+    ...walk(STAYS, '10:05', [MOORING[0] + 0.003, MOORING[1]], [BUOY[0] + 0.003, BUOY[1]], 20),
+    point(STAYS, '10:30', BUOY),
+    point(STAYS, '11:30', BUOY),
+    point(STAYS, '12:00', BUOY),
+    visit([STAYS, '10:32'], [STAYS, '12:40'], BUOY),
     // Plus tard, un seul point : les jours d'entre-deux sont suivis, sans déplacement.
     point(AFTER, '12:00', HOME),
   ])
@@ -106,11 +147,27 @@ async function seed(request: APIRequestContext) {
     .poll(
       async () => {
         const body = await (await request.get(`/v1/days/${DATE}/locations`, { headers: { Cookie: cookie } })).json()
-        return [body.covered, body.visits.length, body.segments.length, body.point_count]
+        const stays = await (await request.get(`/v1/days/${STAYS}/locations`, { headers: { Cookie: cookie } })).json()
+        return [body.covered, body.places.length, body.segments.length, body.point_count, stays.places.length]
       },
       { timeout: 30_000 },
     )
-    .toEqual([true, 4, 3, 63])
+    .toEqual([true, 4, 3, 63, 2])
+}
+
+/** Le lieu en cours d'aujourd'hui, une fois les points interprétés. */
+async function seedHere(request: APIRequestContext) {
+  await seedToday(request)
+  const cookie = await apiSession(request)
+  await expect
+    .poll(
+      async () => {
+        const body = await (await request.get(`/v1/days/${today}/locations`, { headers: { Cookie: cookie } })).json()
+        return body.places.map((place: { origin: string; ongoing: boolean }) => [place.origin, place.ongoing])
+      },
+      { timeout: 30_000 },
+    )
+    .toEqual([['points', true]])
 }
 
 async function offlineTiles(page: Page) {
@@ -223,6 +280,30 @@ test('la case du mois : le nombre de lieux, par arrivée, dans sa couleur', asyn
   await expect(page.getByRole('group', { name: 'Métriques affichées' }).getByRole('button', { name: 'Déplacements' })).toHaveClass(/heat-location/)
 })
 
+test('des séjours détectés dans les points, avec leur durée, une visite iOS à la place du séjour qu’elle recouvre', async ({ page }) => {
+  await offlineTiles(page)
+  await login(page)
+  await page.goto(`/jour/${STAYS}`)
+  const card = page.getByTestId('location')
+  const rows = card.getByTestId('visit')
+  // Le séjour au mouillage part au premier point de la marche ; à la bouée, la visite iOS seule.
+  await expect(rows).toHaveCount(2)
+  await expect(rows.nth(0)).toContainText('08:00 – 10:05')
+  await expect(rows.nth(0)).toContainText('2 h 05')
+  await expect(rows.nth(1)).toContainText('10:32 – 12:40')
+  await expect(rows.nth(1)).toContainText('2 h 08')
+  await expect(card.getByTestId('location-places')).toHaveText('2')
+  await expect(card).not.toContainText('Aucun arrêt')
+  await expect(card.getByTestId('location-here')).toHaveCount(0)
+  await mapReady(page)
+  await expect(card.locator('.visit-pin')).toHaveText(['1', '2'])
+  await expect(card.locator('.visit-pin-current')).toHaveCount(0)
+  // Le calendrier ne compte que la visite iOS : un séjour détecté n'est pas un événement.
+  await onlyPlaces(page)
+  await page.goto(`/mois/${STAYS.slice(0, 7)}`)
+  await expect(page.locator(`.cell[data-date="${STAYS}"] .cell-value[data-metric="place.visit"]`)).toHaveText('1')
+})
+
 test("la page d'état : dernier envoi, dernière position et dernier lieu, puis le silence", async ({ page, request }) => {
   await heartbeat(request)
   await login(page)
@@ -245,6 +326,29 @@ test("la page d'état : dernier envoi, dernière position et dernier lieu, puis 
   // Et l'alerte de la carte du jour.
   await page.goto(`/jour/${DATE}`)
   await expect(page.getByTestId('location-alert')).toContainText("L'iPhone n'envoie plus sa position.")
+})
+
+test('le lieu où je suis encore : « Ici depuis », le temps passé, et son épingle en évidence', async ({ page, request }) => {
+  await seedHere(request)
+  await offlineTiles(page)
+  await login(page)
+  await page.goto('/')
+  const card = page.getByTestId('location')
+  // Il y a 2 h : la durée se compte de minute d'horloge en minute d'horloge, la veille comprise après minuit.
+  await expect(card.getByTestId('location-here').locator('.location-here-text')).toHaveText(/^Ici depuis .+ · 2 h 0[0-2]$/)
+  const rows = card.getByTestId('visit')
+  await expect(rows).toHaveCount(1)
+  await expect(rows.nth(0)).toContainText(/depuis \d\d:\d\d/)
+  await expect(rows.nth(0)).toContainText('en cours')
+  await expect(rows.nth(0).locator('.visit-number-current')).toHaveCount(1)
+  await mapReady(page)
+  await expect(card.locator('.visit-pin-current')).toHaveText('1')
+  await expect(card.locator('.route-map')).toHaveAccessibleName(/lieu 1 en cours$/)
+  await checkLayout(page)
+  // Un autre jour, rien n'est en cours.
+  await page.goto(`/jour/${DATE}`)
+  await expect(card.getByTestId('visit')).toHaveCount(4)
+  await expect(card.getByTestId('location-here')).toHaveCount(0)
 })
 
 for (const colorScheme of ['light', 'dark'] as const) {
@@ -275,6 +379,22 @@ for (const colorScheme of ['light', 'dark'] as const) {
           await expect(page.getByTestId('location-empty')).toBeVisible()
           await checkLayout(page)
           await shot('deplacements-jour-immobile')
+
+          await page.goto(`/jour/${STAYS}`)
+          await mapReady(page)
+          await page.evaluate(() => window.scrollTo(0, 0))
+          await page.waitForTimeout(300)
+          await checkLayout(page)
+          await shot('deplacements-sejours')
+
+          await seedHere(request)
+          await page.goto('/')
+          await expect(page.getByTestId('location-here')).toBeVisible()
+          await mapReady(page)
+          await page.evaluate(() => window.scrollTo(0, 0))
+          await page.waitForTimeout(300)
+          await checkLayout(page)
+          await shot('deplacements-en-cours')
 
           await openStatus(page)
           await expect(statusCard(page).getByTestId('status-word')).toHaveText('Fonctionne')
