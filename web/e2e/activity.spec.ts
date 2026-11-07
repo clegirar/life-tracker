@@ -195,6 +195,60 @@ test('les boutons de zoom : zoomer, dézoomer, recentrer, et le glisser au touch
   await expect(zoomOut).toBeEnabled()
 })
 
+/**
+ * Les cartes du jour, colonne par colonne (par leur bord gauche), et l'écart vertical entre deux cartes
+ * qui se suivent dans une colonne.
+ */
+const columnGaps = (page: Page) =>
+  page.locator('.cards > *').evaluateAll((cards) => {
+    const columns = new Map<number, DOMRect[]>()
+    for (const card of cards) {
+      const rect = card.getBoundingClientRect()
+      const left = Math.round(rect.left)
+      columns.set(left, [...(columns.get(left) ?? []), rect])
+    }
+    return [...columns.values()].map((rects) =>
+      rects.sort((a, b) => a.top - b.top).slice(1).map((rect, i) => rect.top - rects[i].bottom),
+    )
+  })
+
+test('la page du jour en maçonnerie : deux colonnes sur Mac, sans trou entre les cartes', async ({ page, request }) => {
+  await seed(request, await apiSession(request))
+  await offlineTiles(page)
+  await page.setViewportSize(DESKTOP)
+  await openDay(page, DAY)
+  await page.getByTestId('route-map').scrollIntoViewIfNeeded()
+  await expect(page.locator('.route-map')).toHaveAttribute('data-state', 'ready')
+  await expect(page.locator('.cards')).toHaveAttribute('data-masonry', '')
+  // L'ordre du DOM reste celui de la lecture.
+  await expect(page.locator('.cards > .card').first()).toHaveClass(/card-coffee/)
+  const gap = await page.locator('.cards').evaluate((el) => parseFloat(getComputedStyle(el).columnGap))
+  expect(gap).toBe(20)
+  const check = async () => {
+    const columns = await columnGaps(page)
+    expect(columns).toHaveLength(2)
+    for (const gaps of columns) {
+      for (const between of gaps) {
+        expect(between).toBeGreaterThanOrEqual(gap - 0.5)
+        expect(between).toBeLessThan(gap + 1)
+      }
+    }
+  }
+  await check()
+  // Une carte en moins : les autres se replacent, toujours sans trou.
+  await page.getByRole('group', { name: 'Métriques affichées' }).getByRole('button', { name: 'Écoutes' }).click()
+  await expect(page.getByTestId('music')).toHaveCount(0)
+  await check()
+
+  // Sur iPhone, une seule colonne, au même écart.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect.poll(async () => (await columnGaps(page)).length).toBe(1)
+  for (const between of (await columnGaps(page))[0]) {
+    expect(between).toBeGreaterThanOrEqual(gap - 0.5)
+    expect(between).toBeLessThan(gap + 1)
+  }
+})
+
 test('un jour sans données Garmin le dit, sans zéro', async ({ page }) => {
   await openDay(page, NO_DATA)
   const card = page.getByTestId('activity')

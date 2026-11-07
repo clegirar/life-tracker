@@ -18,6 +18,7 @@ import type { useSteam } from './useSteam'
 import type { useTwitch } from './useTwitch'
 import type { useVideo } from './useVideo'
 import { SteamCard } from './SteamCard'
+import { useMasonry } from './useMasonry'
 import { TwitchCard } from './TwitchCard'
 import { VideoCard } from './VideoCard'
 
@@ -86,6 +87,7 @@ export function DayPage({
   const [picked, setPicked] = useState('12:00')
   const [pickError, setPickError] = useState<string | null>(null)
   const timeInput = useRef<HTMLInputElement>(null)
+  const cards = useMasonry<HTMLDivElement>()
   const isToday = date === today
   const { cups } = coffee
   const available = metrics.map((m) => m.metric)
@@ -214,7 +216,7 @@ export function DayPage({
         </p>
       )}
 
-      <div className="cards">
+      <div ref={cards} className="cards">
         {shows('coffee') && (
           <section className="card card-coffee" aria-labelledby="titre-cafe">
             <h2 id="titre-cafe" className="card-title">

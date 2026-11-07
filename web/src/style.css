@@ -419,46 +419,30 @@ button:disabled {
   color: var(--control-disabled);
 }
 
-/* Deux colonnes dès que la place le permet, comme sur la maquette. */
+/*
+ * Les cartes du jour en maçonnerie : une colonne sur iPhone, deux colonnes égales dès 900 px de largeur
+ * utile (2 × 440 + l'écart). Chaque carte se pose sous la plus courte des deux, sans trou : `useMasonry`
+ * lui donne autant de lignes de 1 px que sa hauteur plus l'écart. L'ordre du DOM reste celui de la
+ * lecture ; seul le placement change, sans animation. Avant la mesure (ou sans JavaScript), une grille
+ * ordinaire, à lignes de la hauteur de leurs cartes.
+ */
 .cards {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 20px;
-  align-items: flex-start;
+  --cards-gap: 20px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr));
+  grid-auto-flow: row dense;
+  gap: var(--cards-gap);
+  align-items: start;
 }
 
-.card-coffee {
-  flex: 1 1 320px;
-  min-width: 0;
+.cards[data-masonry] {
+  grid-auto-rows: 1px;
+  row-gap: 0;
+  /* L'écart compté sous la dernière carte de chaque colonne ne s'ajoute pas au bas de la page. */
+  margin-bottom: calc(-1 * var(--cards-gap));
 }
 
-.card-music {
-  flex: 2 1 420px;
-  min-width: 0;
-}
-
-.card-activity {
-  flex: 2 1 420px;
-  min-width: 0;
-}
-
-.card-video {
-  flex: 2 1 420px;
-  min-width: 0;
-}
-
-.card-twitch {
-  flex: 2 1 420px;
-  min-width: 0;
-}
-
-.card-steam {
-  flex: 2 1 420px;
-  min-width: 0;
-}
-
-.card-location {
-  flex: 2 1 420px;
+.cards > * {
   min-width: 0;
 }
 
