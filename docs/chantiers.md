@@ -10,8 +10,8 @@ Le [POC](poc.md) est validé depuis le 4 nov. 2026. Chaque chantier a sa section
 | Page d'état des trackers | Construite le 5 nov. 2026 (PR #13), mise en service à vérifier |
 | Page Sources | Construite le 6 nov. 2026 (PR #20), sans action sur le NAS |
 | YouTube | En production depuis le 5 nov. 2026, vérifié le 6 nov. ; reste le renouvellement de l'accord Google à l'expiration du jeton (vers le 12 nov.) |
-| Twitch | En cours depuis le 6 nov. 2026 : backend en production (#17), extension Firefox et web app construites, essai sur le vrai Twitch concluant ; restent la fusion, la signature et l'installation |
-| Steam | En cours depuis le 6 nov. 2026 : backend, web app et MCP construits (branche `feat/steam`) ; essai de l'étape 0 en partie fait, mise en service à suivre |
+| Twitch | En production depuis le 6 nov. 2026 (#17, #19), extension signée et installée, vérifiée le 7 nov. ; restent le rattrapage hors ligne, le silence de la page d'état et l'affichage sur les vrais appareils |
+| Steam | En production depuis le 7 nov. 2026 (v0.12.0, corrigé en v0.12.1) ; restent une vraie partie (prévue le 14-15 nov.), les totaux, les succès au bon jour, minuit et l'affichage sur les vrais appareils |
 | Twitch : import de l'historique (export RGPD) | À faire, quand je le demanderai (l'export est demandé à Twitch) |
 | Ouvrir la web app sur Internet | À faire, quand je le demanderai |
 
@@ -190,6 +190,8 @@ Ouvert le 6 nov. 2026, à ma demande. Voir dans le calendrier, dès le lendemain
 
 Non essayés : popout, clips.twitch.tv, page d'une chaîne hors ligne qui lit une rediffusion. À reprendre seulement si un écart apparaît.
 
+**Vérifié le 7 nov. 2026**, sur le NAS : extension signée et installée dans Firefox ; une vraie soirée juste dans le calendrier et par le MCP ; deux streams en même temps (union au total, temps entier pour chacun) ; une session à cheval sur minuit et un Mac fermé en cours de stream ; `admin rebuild` sans différence. Restent le rattrapage hors ligne sans doublon, le silence de la page d'état quand l'extension est désactivée, et l'affichage sur l'iPhone et le Mac, en clair et en sombre.
+
 **Terminé quand**
 
 - La source est créée sur le NAS, et l'extension est signée et installée dans Firefox.
@@ -228,9 +230,11 @@ Ouvert le 6 nov. 2026, à ma demande. Suivre Steam : les heures jouées par jeu,
 
 **Construit le 6 nov. 2026, web app** : carte Steam du jour (`SteamCard.tsx`, `steam.ts`, `useSteam.ts`, `fetchDayGames`), montrée si « Jeux » ou « Succès » est choisi (depuis le 7 nov. 2026, si « Jeux » l'est, les succès n'ayant plus de filtre) : le temps de jeu du jour (jamais un zéro pour un jour à succès seul), le nombre de succès, puis chaque jeu avec son temps du jour, ses heures, son total Steam à la fin du jour (« 151 h au total ») et ses succès du jour avec leur heure ; un jeu qui n'a qu'un succès est listé sans temps ; chaque ligne ouvre la page du jeu sur le magasin Steam. Journée vide dite comme pour Twitch (« Pas de données Steam à cette date », « Pas encore de données pour ce jour… », « Pas de jeu ce jour-là »), alerte si le collecteur se tait. Couleur `--steam`, le bleu de Steam (`#1769d6`, `#4ea1ff` en sombre ; d'abord un vert olive, changé à ma demande le 7 nov. 2026). Page d'état : « Dernière partie », « Dernier succès », la consigne du profil privé et celle de la clé refusée (`STEAM_API_KEY`). Fiche Sources : l'arrivée par le collecteur, la clé d'API Web (sans échéance) et le token de la source. MCP : aucun code, un cas de bout en bout (`cumulative_duration`, `top`, `occurrences`). Testé par `web/e2e/steam.spec.ts` et `mcp/test/e2e.test.ts`, captures iPhone et Mac, clair et sombre. Restent l'essai de l'étape 0 et la mise en service.
 
-**Corrigé le 7 nov. 2026**, à la mise en service : `GetPlayerAchievements` répond 500 pour certains jeux, et le passage échouait en boucle ; les succès ne sont plus demandés que pour un jeu à statistiques, et un refus propre à un jeu n'arrête plus la tournée (abandon après trois refus).
+**Corrigé le 7 nov. 2026**, à la mise en service : `GetPlayerAchievements` répond 500 pour certains jeux, et le passage échouait en boucle ; les succès ne sont plus demandés que pour un jeu à statistiques, et un refus propre à un jeu n'arrête plus la tournée (abandon après trois refus). Après le déploiement de la v0.12.1, le premier passage complet a envoyé les 74 succès de l'historique, tous acceptés, sans aucun refus de Steam.
 
 **Revu le 7 nov. 2026, à ma demande** : les succès sortent des filtres et du calendrier (`game.achievement` passe à l'agrégat `none` : ni case, ni pastille, ni place dans `day_summary` ; la carte Steam, montrée si « Jeux » est choisi, garde leur nombre et leur liste par jeu ; le MCP les lit toujours par `occurrences` et `top`). Les jeux joués pour la première fois deviennent des découvertes (`game.play` avec `discovery = true`) : une section « Découvertes » dans la carte Steam, absente un jour sans nouveau jeu (ni titre ni « aucune »), et `discoveries` dans `GET /v1/days/{date}/games`. Pour qu'un jeu déjà joué avant le suivi n'en soit pas une, l'interprète déclare « déjà joué » (`game.known`, forme `declaration`, comme `music.known`) tout point de départ qui a déjà du temps : premier relevé à plus de zéro, état perdu, écart de plus de deux semaines. Un jeu à zéro au premier passage, ou acheté ensuite, devient une découverte à sa première partie. `read::day_discoveries` exclut désormais toute déclaration qui s'applique à la métrique, comme `read::discoveries` le faisait déjà. Testé par `backend/tests/steam.rs` (jeu déjà joué, jeu à zéro puis joué, jeu acheté, état perdu), `web/e2e/steam.spec.ts` (un jour à découverte, un jour sans : pas de section) et `mcp/test/e2e.test.ts`.
+
+**Vérifié le 7 nov. 2026**, sur le NAS : carte d'état verte ; collecteur relancé sans aucun doublon (`accepted: 0`) ; carte d'état en alerte avec une clé refusée, puis revenue ; `admin rebuild` sans différence ; logs sans clé ni nom de jeu (des nombres seulement). Restent une vraie partie (prévue le 14-15 nov. 2026, qui fixe le placement de l'étape 0), les totaux comparés à Steam, les succès au bon jour et un nouveau au passage suivant, une partie à cheval sur minuit, et l'affichage sur l'iPhone et le Mac, en clair et en sombre.
 
 **Terminé quand**
 
