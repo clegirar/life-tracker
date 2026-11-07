@@ -105,7 +105,9 @@ records="$(docker exec "$C" psql -U postgres -d tracker -Atc 'select count(*) fr
 [ "$records" = 25 ] || { echo "ÉCHEC : $records enregistrements au journal" >&2; exit 1; }
 
 echo "▶ Les logs du backend ne contiennent aucun jeton"
-if grep -qF -e "$LT_MCP_TEST_SERVICE_TOKEN" -e "$LT_MCP_TEST_IOS_TOKEN" -e "$LT_MCP_TEST_LASTFM_TOKEN" -e "$LT_MCP_TEST_GARMIN_TOKEN" -e "$LT_MCP_TEST_TWITCH_TOKEN" -e "$LT_MCP_TEST_STEAM_TOKEN" -e "$LT_MCP_TEST_IPHONE_TOKEN" -e "Jeu Fictif" -e "Succès fictif" -e "Veridis" -e "Ville Fictive" -e "43.21" -e "5.432" "$LOG"; then
+# Les heures des logs (« 21:27:55.432… ») contiennent parfois les chiffres des coordonnées
+# cherchées (« 5.432 ») : on les retire avant de chercher.
+if sed -E 's/[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?//g' "$LOG" | grep -qF -e "$LT_MCP_TEST_SERVICE_TOKEN" -e "$LT_MCP_TEST_IOS_TOKEN" -e "$LT_MCP_TEST_LASTFM_TOKEN" -e "$LT_MCP_TEST_GARMIN_TOKEN" -e "$LT_MCP_TEST_TWITCH_TOKEN" -e "$LT_MCP_TEST_STEAM_TOKEN" -e "$LT_MCP_TEST_IPHONE_TOKEN" -e "Jeu Fictif" -e "Succès fictif" -e "Veridis" -e "Ville Fictive" -e "43.21" -e "5.432"; then
   echo "ÉCHEC : secret ou donnée dans les logs" >&2
   exit 1
 fi
