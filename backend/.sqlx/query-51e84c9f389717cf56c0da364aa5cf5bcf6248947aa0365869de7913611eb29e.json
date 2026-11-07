@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings)) AS \"start!\",\n                  (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings)) AS \"end!\",\n                  ($2::timestamptz AT TIME ZONE (SELECT timezone FROM core.settings))::date = $1 AS \"today!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "start!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "end!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "today!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "51e84c9f389717cf56c0da364aa5cf5bcf6248947aa0365869de7913611eb29e"
+}
