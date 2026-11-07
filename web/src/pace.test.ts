@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { paceDrawing, PACE_CLASSES, sameSpot, smoothedSpeeds } from './pace'
+import { paceDrawing, PACE_CLASSES, smoothedSpeeds } from './pace'
 
 // Vers l'est, sur l'équateur : 0,0001° de longitude font environ 11,1 m.
 const STEP_M = 11.119
@@ -67,10 +67,5 @@ describe('l’allure d’une séance', () => {
     // Le lissage couvre ce tronçon avec ses voisins : la trace reste entière, sans trou.
     const drawing = paceDrawing(track(seconds))!
     expect(drawing.runs.reduce((sum, run) => sum + run.points.length - 1, 0)).toBe(55)
-  })
-
-  it('confond départ et arrivée à moins de 30 m', () => {
-    expect(sameSpot([48.85, 2.35], [48.85, 2.3503])).toBe(true) // environ 22 m
-    expect(sameSpot([48.85, 2.35], [48.85, 2.3506])).toBe(false) // environ 44 m
   })
 })

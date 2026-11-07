@@ -1938,31 +1938,35 @@ button:disabled {
 }
 
 /*
- * Départ et arrivée : un rond vert à flèche ▶, un drapeau à damier ; la forme les distingue, pas la seule
- * couleur. Centrés sur le point par CSS, cerclés de blanc pour se détacher de la trace et des tuiles.
+ * Les repères kilométriques : un disque sombre et son numéro, cerclé de blanc pour se détacher des
+ * couleurs d'allure comme des tuiles, les mêmes en clair et en sombre. Centrés sur le point par CSS ;
+ * un nombre à deux ou trois chiffres allonge le disque en pastille. Plus petits que les lieux : ils
+ * accompagnent la trace sans la couvrir.
  */
-.route-marker {
+.route-km {
   background: none;
   border: 0;
 }
 
-.route-marker > span {
+.route-km > span {
   position: absolute;
   transform: translate(-50%, -50%);
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  height: 24px;
-  padding: 0 1px;
-  border-radius: 12px;
-  background: #ffffff;
-  box-shadow: 0 0 0 2px #ffffff, 0 1px 4px rgba(0, 0, 0, 0.35);
-}
-
-.route-marker svg {
-  display: block;
-  width: 22px;
-  height: 22px;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 9px;
+  background: #1c1c1e;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  box-shadow: 0 0 0 2px #ffffff, 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 
 /* La mention due à OpenStreetMap, discrète mais touchable : 44 px de haut. */

@@ -1,5 +1,5 @@
 // Les cartes du jour, sur un fond OpenStreetMap : le parcours d'une séance, façon Garmin Connect (le
-// tracé en couleurs d'allure, le départ et l'arrivée), et les déplacements de l'iPhone (les morceaux de trace, les points
+// tracé en couleurs d'allure, un repère à chaque kilomètre), et les déplacements de l'iPhone (les morceaux de trace, les points
 // isolés et les lieux numérotés). Chargé à part (React.lazy), avec Leaflet et sa feuille de style.
 // Au toucher, la carte ne capte pas le défilement : on fait défiler la page, pas la carte, sauf une fois
 // zoomée au-delà de sa vue d'origine, où un doigt la déplace. La molette ne zoome jamais : nos boutons.
@@ -9,7 +9,8 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { fetchTrack } from './api'
 import { drawingPoints, type LatLng, type MapDrawing } from './location'
-import { paceDrawing, sameSpot, type PaceDrawing } from './pace'
+import { kilometreMarkers } from './kilometres'
+import { paceDrawing, type PaceDrawing } from './pace'
 
 const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
 
@@ -163,21 +164,14 @@ function MapFrame({
   )
 }
 
-/** Départ : un rond vert, une flèche ▶. */
-const START_SVG =
-  '<svg viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="11" fill="#248a3d"/><path d="M8.5 6.5v9l7.5-4.5z" fill="#ffffff"/></svg>'
+/**
+ * Un repère kilométrique, centré sur son point : un disque sombre cerclé de blanc et son numéro, lisible
+ * sur toutes les couleurs d'allure. Sans taille : le disque s'élargit par CSS pour « 10 » ou « 100 ».
+ */
+const kilometreIcon = (km: number) =>
+  L.divIcon({ className: 'route-km', html: `<span role="img" aria-label="Kilomètre ${km}">${km}</span>`, iconSize: [0, 0] })
 
-/** Arrivée : un drapeau à damier, noir et blanc. */
-const FINISH_SVG =
-  '<svg viewBox="0 0 22 22" aria-hidden="true"><path d="M6.5 4.5v13" stroke="#1c1c1e" stroke-width="1.6" stroke-linecap="round"/>' +
-  '<rect x="7" y="5" width="9" height="6" fill="#ffffff" stroke="#1c1c1e" stroke-width="0.8"/>' +
-  '<path d="M7 5h3v3H7zM13 5h3v3h-3zM10 8h3v3h-3z" fill="#1c1c1e"/></svg>'
-
-/** Un repère de la trace, centré sur son point ; `label` le nomme (« Départ », « Arrivée »). */
-const routeIcon = (label: string, svgs: string) =>
-  L.divIcon({ className: 'route-marker', html: `<span role="img" aria-label="${label}" title="${label}">${svgs}</span>`, iconSize: [0, 0] })
-
-/** La trace d'une séance, ses couleurs d'allure (ou d'une couleur si l'allure ne se lit pas), et ses repères. */
+/** La trace d'une séance, ses couleurs d'allure (ou d'une couleur si l'allure ne se lit pas), et ses repères kilométriques. */
 function drawTrack(map: L.Map, el: HTMLElement, points: [number, number, number][], pace: PaceDrawing | null): L.LatLngBounds {
   const all = points.map(([lat, lon]) => [lat, lon] as L.LatLngTuple)
   let line: L.Polyline
@@ -197,15 +191,8 @@ function drawTrack(map: L.Map, el: HTMLElement, points: [number, number, number]
   } else {
     line = L.polyline(all, { color: color(el, '--workout'), weight: 4, opacity: 0.95, lineJoin: 'round', interactive: false }).addTo(map)
   }
-  const start = all[0]
-  const finish = all[all.length - 1]
-  const marker = (at: L.LatLngTuple, label: string, svgs: string) =>
-    L.marker(at, { icon: routeIcon(label, svgs), interactive: false, keyboard: false }).addTo(map)
-  // Une boucle : un seul repère, sinon l'arrivée cache le départ.
-  if (sameSpot([start[0], start[1]], [finish[0], finish[1]])) marker(start, 'Départ · Arrivée', START_SVG + FINISH_SVG)
-  else {
-    marker(start, 'Départ', START_SVG)
-    marker(finish, 'Arrivée', FINISH_SVG)
+  for (const { km, at } of kilometreMarkers(points)) {
+    L.marker(at as L.LatLngTuple, { icon: kilometreIcon(km), interactive: false, keyboard: false }).addTo(map)
   }
   return line.getBounds()
 }

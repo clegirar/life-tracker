@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
+import { kilometreMarkers } from '../src/kilometres'
 import { addDays, apiSession, checkLayout, DESKTOP, fullShot, GARMIN_TOKEN, login, parisToday, send } from './helpers'
 
 // La carte Activité (Garmin) et le calendrier à six métriques. Des jours que les autres fichiers
@@ -21,8 +22,8 @@ function parisNoon(date: string): string {
 }
 
 /**
- * Un parcours fictif : les sept huitièmes d'un ovale d'environ 1,6 km sur 0,9, départ et arrivée à plus
- * de 30 m l'un de l'autre, une allure qui varie d'un tronçon à l'autre (de 13 à 31 s entre deux points).
+ * Un parcours fictif : les sept huitièmes d'un ovale d'environ 1,6 km sur 0,9 (3,6 km de trace, trois
+ * repères kilométriques), une allure qui varie d'un tronçon à l'autre (de 13 à 31 s entre deux points).
  */
 function loop(): [number, number, number][] {
   let seconds = 0
@@ -115,7 +116,7 @@ test('la carte Activité : pas, calories, sommeil et séances, avec le parcours'
   await expect(workouts.nth(0)).toContainText('FC max176 bpm')
   await expect(workouts.nth(1)).toContainText('Marche')
   await expect(workouts.nth(1)).toContainText('4,5 km/h')
-  // Une carte pour la séance avec GPS seulement, tracé, départ et arrivée.
+  // Une carte pour la séance avec GPS seulement, tracé et repères kilométriques.
   await expect(card.getByTestId('route-map')).toHaveCount(1)
   // La carte ne se monte qu'à l'approche : les filtres du jour la poussent sous l'écran d'un iPhone.
   await card.getByTestId('route-map').scrollIntoViewIfNeeded()
@@ -124,10 +125,12 @@ test('la carte Activité : pas, calories, sommeil et séances, avec le parcours'
   await expect(map).toHaveAccessibleName('Parcours : course de 07:30')
   // Un liseré sous la trace, puis un morceau par suite de tronçons de même allure.
   expect(await map.locator('.leaflet-overlay-pane path').count()).toBeGreaterThan(3)
-  // Départ et arrivée, deux repères distincts par leur forme et leur nom.
-  await expect(map.locator('.route-marker [role="img"]')).toHaveCount(2)
-  await expect(map.locator('.route-marker [aria-label="Départ"] circle')).toHaveCount(1)
-  await expect(map.locator('.route-marker [aria-label="Arrivée"] rect')).toHaveCount(1)
+  // Un repère à chaque kilomètre de la trace, numéroté et nommé, ni départ ni arrivée.
+  const kilometres = kilometreMarkers(loop()).map(({ km }) => km)
+  expect(kilometres).toEqual([1, 2, 3])
+  const markers = map.locator('.route-km [role="img"]')
+  await expect(markers).toHaveText(kilometres.map(String))
+  for (const km of kilometres) await expect(map.getByRole('img', { name: `Kilomètre ${km}`, exact: true })).toHaveCount(1)
   // La légende : les bornes de l'échelle, en allure de course, la plus lente d'abord.
   const legend = card.getByTestId('pace-legend')
   await expect(legend).toHaveText(/^Couleur de la trace selon l’allure : Lent \d+:\d\d \/kmRapide \d+:\d\d \/km$/)
@@ -243,10 +246,13 @@ test('la page du jour en maçonnerie : deux colonnes sur Mac, sans trou entre le
   // Sur iPhone, une seule colonne, au même écart.
   await page.setViewportSize({ width: 390, height: 844 })
   await expect.poll(async () => (await columnGaps(page)).length).toBe(1)
-  for (const between of (await columnGaps(page))[0]) {
-    expect(between).toBeGreaterThanOrEqual(gap - 0.5)
-    expect(between).toBeLessThan(gap + 1)
-  }
+  // Les cartes se remesurent à la nouvelle largeur une image plus tard (ResizeObserver) : on attend.
+  await expect(async () => {
+    for (const between of (await columnGaps(page))[0]) {
+      expect(between).toBeGreaterThanOrEqual(gap - 0.5)
+      expect(between).toBeLessThan(gap + 1)
+    }
+  }).toPass({ timeout: 5_000 })
 })
 
 test('un jour sans données Garmin le dit, sans zéro', async ({ page }) => {

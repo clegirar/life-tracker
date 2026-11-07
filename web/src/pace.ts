@@ -115,10 +115,3 @@ export function paceDrawing(points: [number, number, number][], classes = PACE_C
   }
   return { runs, slow, fast }
 }
-
-/** Départ et arrivée à moins de 30 m (une boucle) : un seul repère, sinon l'un cache l'autre. */
-export const START_FINISH_MERGE_M = 30
-
-export function sameSpot(start: LatLng, finish: LatLng): boolean {
-  return distanceM(start, finish) < START_FINISH_MERGE_M
-}
