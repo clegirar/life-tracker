@@ -193,6 +193,18 @@ pub static INTERPRETERS: &[Interpreter] = &[
         schema_version: 1,
         interpret: steam_achievement,
     },
+    Interpreter {
+        kind: "overland.location",
+        version: 1,
+        schema_version: 1,
+        interpret: overland_location,
+    },
+    Interpreter {
+        kind: "overland.visit",
+        version: 1,
+        schema_version: 1,
+        interpret: overland_visit,
+    },
 ];
 
 /// Un café : un événement à l'heure de l'enveloppe. La charge utile, attendue vide, est ignorée.
@@ -579,15 +591,24 @@ fn place_key(name: &str) -> String {
 /// Assez pour tout nom de ville, et court pour l'index des éléments.
 const MAX_PLACE_CHARS: usize = 200;
 
-/// Une coordonnée dans ses bornes, ou rien.
-fn garmin_coordinate(payload: &Value, field: &str, bound: f64) -> Result<Value, InterpretError> {
+/// Une coordonnée dans ses bornes, ou rien ; autre chose est l'erreur `error`.
+fn coordinate(
+    payload: &Value,
+    field: &str,
+    bound: f64,
+    error: &'static str,
+) -> Result<Value, InterpretError> {
     match payload.get(field) {
         None | Some(Value::Null) => Ok(Value::Null),
         Some(Value::Number(n)) if n.as_f64().is_some_and(|c| c.abs() <= bound) => {
             Ok(Value::Number(n.clone()))
         }
-        Some(_) => Err(InterpretError("garmin: invalid coordinate")),
+        Some(_) => Err(InterpretError(error)),
     }
+}
+
+fn garmin_coordinate(payload: &Value, field: &str, bound: f64) -> Result<Value, InterpretError> {
+    coordinate(payload, field, bound, "garmin: invalid coordinate")
 }
 
 /// `{activity_id, type, start, duration_s, moving_s, distance_m, avg_speed_mps, avg_hr, max_hr,
@@ -1046,6 +1067,111 @@ fn steam_achievement(record: &Record) -> Result<Vec<Output>, InterpretError> {
             ),
         ],
         ..Event::at_envelope(record, "game.achievement")
+    })])
+}
+
+// ─── Position de l'iPhone (Overland) ─────────────────────────────────────────
+//
+// Les charges utiles sont déjà réduites à leur liste blanche par la route d'adaptation
+// (`crate::overland`), qui ne garde d'une visite que sa version complète, départ connu.
+
+/// Les états de mouvement qu'Overland tire de CoreMotion ; tout autre mot est ignoré.
+const OVERLAND_MOTIONS: [&str; 5] = ["walking", "running", "cycling", "driving", "stationary"];
+
+/// Un nombre fini de la charge utile, tel qu'envoyé ; `null` ou absent : `None`.
+fn overland_number<'a>(
+    payload: &'a Value,
+    field: &str,
+    error: &'static str,
+) -> Result<Option<&'a serde_json::Number>, InterpretError> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(n)) if n.as_f64().is_some_and(f64::is_finite) => Ok(Some(n)),
+        Some(_) => Err(InterpretError(error)),
+    }
+}
+
+/// Une coordonnée obligatoire, dans ses bornes.
+fn overland_coordinate(
+    payload: &Value,
+    field: &str,
+    bound: f64,
+    error: &'static str,
+) -> Result<Value, InterpretError> {
+    Some(coordinate(payload, field, bound, error)?)
+        .filter(|c| !c.is_null())
+        .ok_or(InterpretError(error))
+}
+
+/// `{lat, lon, horizontal_accuracy, altitude, speed, motion}` : un point `location.point` à son
+/// instant (l'enveloppe), sans valeur. Une précision négative est, pour iOS, une position invalide :
+/// aucun événement, comme le titre en cours de Last.fm. Une vitesse négative est inconnue : `null`.
+fn overland_location(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    const ERROR: &str = "overland.location: invalid point";
+    let payload = &record.payload;
+    let lat = overland_coordinate(payload, "lat", 90.0, ERROR)?;
+    let lon = overland_coordinate(payload, "lon", 180.0, ERROR)?;
+    let accuracy = overland_number(payload, "horizontal_accuracy", ERROR)?;
+    if accuracy.is_some_and(|a| a.as_f64().is_some_and(|a| a < 0.0)) {
+        return Ok(Vec::new());
+    }
+    let speed =
+        overland_number(payload, "speed", ERROR)?.filter(|s| s.as_f64().is_some_and(|s| s >= 0.0));
+    let altitude = overland_number(payload, "altitude", ERROR)?;
+    let motion: Vec<&str> = match payload.get("motion") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(states)) => states
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|s| OVERLAND_MOTIONS.contains(s))
+            .collect(),
+        Some(_) => return Err(InterpretError(ERROR)),
+    };
+    let number = |n: Option<&serde_json::Number>| n.cloned().map_or(Value::Null, Value::Number);
+    Ok(vec![Output::Event(Event {
+        details: json!({
+            "point_lat": lat,
+            "point_lon": lon,
+            "horizontal_accuracy": number(accuracy),
+            "altitude": number(altitude),
+            "speed": number(speed),
+            "motion": motion,
+        }),
+        ..Event::at_envelope(record, "location.point")
+    })])
+}
+
+/// `{lat, lon, arrival, departure, horizontal_accuracy}` : un lieu `place.visit` à son arrivée
+/// (l'enveloppe), sans valeur (le jour compte les lieux). Détails : coordonnées, arrivée et départ tels
+/// qu'envoyés (RFC 3339), durée en secondes, précision.
+fn overland_visit(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    const ERROR: &str = "overland.visit: invalid visit";
+    let payload = &record.payload;
+    let lat = overland_coordinate(payload, "lat", 90.0, ERROR)?;
+    let lon = overland_coordinate(payload, "lon", 180.0, ERROR)?;
+    let instant = |field: &str| {
+        payload
+            .get(field)
+            .and_then(Value::as_str)
+            .and_then(|t| crate::ingest::parse_occurred_at(t).map(|(at, _)| (t, at)))
+            .ok_or(InterpretError(ERROR))
+    };
+    let (arrival, arrived) = instant("arrival")?;
+    let (departure, departed) = instant("departure")?;
+    if departed < arrived {
+        return Err(InterpretError(ERROR));
+    }
+    let accuracy = overland_number(payload, "horizontal_accuracy", ERROR)?;
+    Ok(vec![Output::Event(Event {
+        details: json!({
+            "visit_lat": lat,
+            "visit_lon": lon,
+            "arrival": arrival,
+            "departure": departure,
+            "duration_s": (departed - arrived).num_seconds(),
+            "horizontal_accuracy": accuracy.cloned().map_or(Value::Null, Value::Number),
+        }),
+        ..Event::at_envelope(record, "place.visit")
     })])
 }
 
@@ -2058,6 +2184,68 @@ mod tests {
         ] {
             let err = steam_achievement(&record(payload.clone())).unwrap_err();
             assert!(err.0.starts_with("steam.achievement: invalid"), "{payload}");
+        }
+    }
+
+    #[test]
+    fn an_overland_point_keeps_its_whitelist_and_drops_what_ios_calls_invalid() {
+        let event = single_event(
+            overland_location(&record(json!({
+                "lat": 43.3, "lon": 5.3, "horizontal_accuracy": 8, "altitude": 12,
+                "speed": -1, "motion": ["walking", "secret", 3],
+            })))
+            .unwrap(),
+        );
+        assert_eq!(event.metric, "location.point");
+        assert_eq!(event.value, None);
+        assert_eq!(
+            event.details,
+            json!({"point_lat": 43.3, "point_lon": 5.3, "horizontal_accuracy": 8,
+                   "altitude": 12, "speed": null, "motion": ["walking"]})
+        );
+        let invalid = overland_location(&record(
+            json!({"lat": 1, "lon": 2, "horizontal_accuracy": -1}),
+        ));
+        assert_eq!(invalid, Ok(Vec::new()));
+        for payload in [
+            json!({"lon": 5.3}),
+            json!({"lat": 91, "lon": 5.3}),
+            json!({"lat": 43.3, "lon": "5.3"}),
+            json!({"lat": 43.3, "lon": 5.3, "speed": "fast"}),
+            json!({"lat": 43.3, "lon": 5.3, "motion": "walking"}),
+        ] {
+            assert_eq!(
+                overland_location(&record(payload)),
+                Err(InterpretError("overland.location: invalid point"))
+            );
+        }
+    }
+
+    #[test]
+    fn an_overland_visit_is_a_place_with_its_duration() {
+        let event = single_event(
+            overland_visit(&record(json!({
+                "lat": 43.3, "lon": 5.3, "arrival": "2026-10-13T07:42:10Z",
+                "departure": "2026-10-13T09:12:10Z", "horizontal_accuracy": 35,
+            })))
+            .unwrap(),
+        );
+        assert_eq!(event.metric, "place.visit");
+        assert_eq!(event.value, None);
+        assert_eq!(event.details["visit_lat"], json!(43.3));
+        assert_eq!(event.details["duration_s"], json!(5400));
+        assert_eq!(event.details["departure"], json!("2026-10-13T09:12:10Z"));
+        for payload in [
+            json!({"lat": 43.3, "lon": 5.3, "arrival": "2026-10-13T07:42:10Z"}),
+            json!({"lat": 43.3, "lon": 5.3, "arrival": "2026-10-13T07:42:10Z",
+                   "departure": "2026-10-13T07:00:00Z"}),
+            json!({"lon": 5.3, "arrival": "2026-10-13T07:42:10Z",
+                   "departure": "2026-10-13T09:12:10Z"}),
+        ] {
+            assert_eq!(
+                overland_visit(&record(payload)),
+                Err(InterpretError("overland.visit: invalid visit"))
+            );
         }
     }
 }

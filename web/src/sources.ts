@@ -109,6 +109,14 @@ export const TRACKERS: TrackerSheet[] = [
       "Le collecteur du NAS interroge l'API Web de Steam tous les quarts d'heure pour le compte de `STEAM_ID` : le total de chaque jeu, dont l'écart entre deux relevés donne le temps joué, et les succès avec leur date. Le profil et ses « Détails des jeux » doivent être publics.",
     keys: [{ name: "Clé d'API Web Steam (`STEAM_API_KEY`)", expiry: NO_EXPIRY }, sourceToken('steam')],
   },
+  {
+    id: 'iphone',
+    title: 'Position (iPhone)',
+    source: /^iphone\b/,
+    arrival:
+      "L'app Overland de l'iPhone enregistre la position en arrière-plan et l'envoie par lots à l'API, par Tailscale, avec les lieux où iOS me voit rester. Hors réseau, elle garde ses points et les envoie au retour. Il lui faut la localisation « Toujours ».",
+    keys: [sourceToken('iphone')],
+  },
 ]
 
 export const OTHER_KEYS: KeyGroup[] = [

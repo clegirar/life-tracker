@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH bounds AS (\n             SELECT ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings)) AS day_start,\n                    (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings)) AS day_end\n           )\n           SELECT EXISTS (SELECT 1 FROM derived.live_events e, bounds b\n                          WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n                            AND e.metric IN ('location.point', 'place.visit')\n                            AND e.occurred_at < b.day_end)\n              AND EXISTS (SELECT 1 FROM derived.live_events e, bounds b\n                          WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n                            AND e.metric IN ('location.point', 'place.visit')\n                            AND e.occurred_at >= b.day_start) AS \"covered!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "covered!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "5f09dbc38c62b0b759f6af7b5652e55d51a2a6dd4918bb096598d5061d4c5a8b"
+}

@@ -16,6 +16,7 @@ const lastfmToken = process.env.LT_MCP_TEST_LASTFM_TOKEN ?? '';
 const garminToken = process.env.LT_MCP_TEST_GARMIN_TOKEN ?? '';
 const twitchToken = process.env.LT_MCP_TEST_TWITCH_TOKEN ?? '';
 const steamToken = process.env.LT_MCP_TEST_STEAM_TOKEN ?? '';
+const iphoneToken = process.env.LT_MCP_TEST_IPHONE_TOKEN ?? '';
 const skip = backendUrl === undefined ? 'sans backend : lancer mcp/test.sh' : false;
 
 const EXPECTED_TOOLS = [
@@ -113,6 +114,38 @@ const STEAM = [
   },
 ];
 
+// Overland (iOS), tel qu'il envoie à sa route d'adaptation : le 18 oct. (UTC+2), un point, un lieu dans
+// la zone de confidentialité (10:00 à 11:00) et un lieu dehors (14:00 à 15:30). Coordonnées fictives.
+const OVERLAND = {
+  locations: [
+    {
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [5.36, 43.29] },
+      properties: { timestamp: '2026-10-18T07:30:00Z', horizontal_accuracy: 10, speed: 1.2, altitude: 3, motion: ['walking'], wifi: 'Réseau', battery_level: 0.5 },
+    },
+    {
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [5.4322, 43.2124] },
+      properties: { timestamp: '2026-10-18T09:00:00Z', action: 'visit', arrival_date: '2026-10-18T08:00:00Z', departure_date: '2026-10-18T09:00:00Z', horizontal_accuracy: 30 },
+    },
+    {
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [5.37, 43.3] },
+      properties: { timestamp: '2026-10-18T13:30:00Z', action: 'visit', arrival_date: '2026-10-18T12:00:00Z', departure_date: '2026-10-18T13:30:00Z', horizontal_accuracy: 30 },
+    },
+  ],
+};
+
+async function ingestOverland(): Promise<void> {
+  const response = await fetch(`${backendUrl}/v1/locations/overland`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${iphoneToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify(OVERLAND),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { result: 'ok' });
+}
+
 async function ingest(token: string, records: unknown[]): Promise<void> {
   const response = await fetch(`${backendUrl}/v1/records`, {
     method: 'POST',
@@ -141,7 +174,9 @@ async function settled(): Promise<void> {
       events('sleep') === 1 &&
       events('stream.watch') === 5 &&
       events('game.play') === 1 &&
-      events('game.achievement') === 1
+      events('game.achievement') === 1 &&
+      events('location.point') === 1 &&
+      events('place.visit') === 2
     ) {
       return;
     }
@@ -190,6 +225,7 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
     await ingest(garminToken, GARMIN);
     await ingest(twitchToken, TWITCH);
     await ingest(steamToken, STEAM);
+    await ingestOverland();
     await settled();
     h = await startServer({ backendUrl, serviceToken });
     const tokens = await login(h);
@@ -400,6 +436,39 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
     assert.equal(found.marked_known, 1);
   });
 
+  test('Overland : les lieux à travers la zone de confidentialité, jamais un point', async () => {
+    const outputs: string[] = [];
+    const tool = async (name: string, args: Record<string, unknown>) => {
+      const result = (await client.callTool({ name, arguments: args })) as ToolResult;
+      outputs.push(result.content[0]?.text ?? '');
+      return parse(result);
+    };
+    const inventory = await tool('inventory', {});
+    type Inventoried = { metric: string; tools: string[]; events: number };
+    const places = (inventory.metrics as Inventoried[]).find((m) => m.metric === 'place.visit');
+    assert.equal(places?.events, 2);
+    assert.ok(places?.tools.includes('day_summary'));
+    assert.ok(!places?.tools.includes('route'), 'un lieu n’a pas de parcours');
+    const visits = await tool('occurrences', { metric: 'place.visit', from: '2026-10-18', to: '2026-10-18' });
+    type Occurrence = { local: string; details: Record<string, unknown> };
+    const [inside, outside] = visits.occurrences as Occurrence[];
+    assert.equal(inside?.local, '2026-10-18 10:00');
+    assert.equal(inside?.details.visit_lat, null, 'le lieu est dans la zone');
+    assert.equal(inside?.details.visit_lon, null);
+    assert.equal(inside?.details.visit_hidden, true);
+    assert.equal(inside?.details.duration_s, 3600);
+    assert.equal(outside?.details.visit_lat, 43.3, 'le lieu est dehors');
+    assert.equal(outside?.details.duration_s, 5400);
+    const day = await tool('day_summary', { date: '2026-10-18' });
+    const entry = (day.metrics as { metric: string; value: number | null }[]).find((m) => m.metric === 'place.visit');
+    assert.equal(entry?.value, 2, 'le nombre de lieux du jour');
+    await tool('occurrences', { metric: 'location.point', from: '2026-10-18', to: '2026-10-18' });
+    const all = outputs.join('');
+    for (const forbidden of ['43.2124', '5.4322', '43.29', '5.36', 'point_lat', 'Réseau']) {
+      assert.ok(!all.includes(forbidden), `${forbidden} visible par le MCP`);
+    }
+  });
+
   test('Garmin : détails du jour, séances par lieu, parcours coupé à la zone de confidentialité', async () => {
     const outputs: string[] = [];
     const tool = async (name: string, args: Record<string, unknown>) => {
@@ -413,7 +482,7 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
     const metrics = day.metrics as Entry[];
     assert.deepEqual(
       metrics.map((m) => m.metric),
-      ['coffee', 'music.listen', 'steps', 'workout', 'sleep', 'calories.burned', 'video.watch', 'stream.watch', 'game.play'],
+      ['coffee', 'music.listen', 'steps', 'workout', 'sleep', 'calories.burned', 'video.watch', 'stream.watch', 'game.play', 'place.visit'],
       'l’ordre d’affichage du registre',
     );
     const steps = metrics.find((m) => m.metric === 'steps');

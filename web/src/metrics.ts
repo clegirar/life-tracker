@@ -21,6 +21,7 @@ const TONES: Record<string, string> = {
   'video.watch': 'heat-video',
   'stream.watch': 'heat-twitch',
   'game.play': 'heat-steam',
+  'place.visit': 'heat-location',
 }
 
 /** La classe qui pose `--heat`, la couleur de la métrique : chiffres, points, pastilles, filtres et rampes. */

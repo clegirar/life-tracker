@@ -1,0 +1,92 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH bounds AS (\n             SELECT ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings)) AS day_start,\n                    (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings)) AS day_end\n           ), visits AS (\n             SELECT e.occurred_at AS arrival, (e.details->>'departure')::timestamptz AS departure,\n                    (e.details->>'visit_lat')::float8 AS lat, (e.details->>'visit_lon')::float8 AS lon,\n                    (e.details->>'duration_s')::int8 AS duration_s,\n                    (e.details->>'horizontal_accuracy')::float8 AS accuracy, e.seq\n             FROM derived.live_events e, bounds b\n             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n               AND e.metric = 'place.visit'\n               AND e.occurred_at >= b.day_start - make_interval(days => $2)\n               AND e.occurred_at < b.day_end\n           )\n           SELECT v.arrival AS \"arrival!\", v.departure AS \"departure!\", v.lat AS \"lat!\",\n                  v.lon AS \"lon!\", v.duration_s AS \"duration_s!\", v.accuracy,\n                  to_char(v.arrival AT TIME ZONE (SELECT timezone FROM core.settings), 'HH24:MI') AS \"arrival_time!\",\n                  to_char(v.departure AT TIME ZONE (SELECT timezone FROM core.settings), 'HH24:MI') AS \"departure_time!\",\n                  v.arrival < b.day_start AS \"arrived_before!\",\n                  v.departure >= b.day_end AS \"departed_after!\"\n           FROM visits v, bounds b\n           WHERE v.departure > b.day_start OR v.arrival >= b.day_start\n           ORDER BY v.arrival, v.seq",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "arrival!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "departure!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "lat!",
+        "type_info": "Float8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "lon!",
+        "type_info": "Float8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "duration_s!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "accuracy",
+        "type_info": "Float8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "arrival_time!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "departure_time!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 8,
+        "name": "arrived_before!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 9,
+        "name": "departed_after!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      true,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "5c957fa8162cee90bc17e16107fd35e272f8db828a7109aec8bc28247df697f7"
+}

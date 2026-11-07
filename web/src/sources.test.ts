@@ -32,7 +32,7 @@ const texts = (key: KeyInfo) => [key.name, key.expiry]
 
 describe('les fiches', () => {
   it('couvrent chaque tracker, chacun avec au moins une clé', () => {
-    expect(TRACKERS.map((tracker) => tracker.id)).toEqual(['cafe', 'musique', 'garmin', 'youtube', 'twitch', 'steam'])
+    expect(TRACKERS.map((tracker) => tracker.id)).toEqual(['cafe', 'musique', 'garmin', 'youtube', 'twitch', 'steam', 'iphone'])
     for (const tracker of TRACKERS) {
       expect(tracker.arrival, tracker.id).not.toBe('')
       expect(tracker.keys.length, tracker.id).toBeGreaterThan(0)

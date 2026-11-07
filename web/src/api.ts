@@ -455,3 +455,43 @@ export interface GameDiscovery {
 }
 
 export const fetchDayGames = (date: string) => read<DayGames>(`/v1/days/${date}/games`)
+
+/** Un morceau de la trace du jour : les points se suivent sans silence de plus de 15 min. */
+export interface LocationSegment {
+  /** Heures de Paris du premier et du dernier point. */
+  start_time: string
+  end_time: string
+  start: string
+  end: string
+  /** `[lat, lon]`, simplifiés ; un seul point pour un morceau isolé. */
+  points: [number, number][]
+}
+
+/** Un lieu où je suis resté (visite iOS), qui touche ce jour-là. */
+export interface LocationVisit {
+  lat: number
+  lon: number
+  arrival: string
+  departure: string
+  /** Heures de Paris de l'arrivée et du départ, même un autre jour. */
+  arrival_time: string
+  departure_time: string
+  /** Arrivé avant ce jour (la veille ou plus tôt). */
+  arrived_before: boolean
+  /** Reparti après ce jour. */
+  departed_after: boolean
+  duration_s: number
+  horizontal_accuracy: number | null
+}
+
+/** Les déplacements d'un jour (iPhone, Overland). */
+export interface DayLocations {
+  date: string
+  /** Le jour est dans la période suivie : faux, c'est un jour sans données, pas sans déplacement. */
+  covered: boolean
+  point_count: number
+  segments: LocationSegment[]
+  visits: LocationVisit[]
+}
+
+export const fetchDayLocations = (date: string) => read<DayLocations>(`/v1/days/${date}/locations`)

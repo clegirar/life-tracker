@@ -998,6 +998,52 @@ Puis, par le MCP, `inventory` : le nombre de « Vidéos YouTube » tombe à ≈1
 
 **Retour arrière.** Couper Steam seul : retirer les trois lignes `STEAM_*` de `secrets/collector.env`, puis `sudo docker compose up -d collector`. Le journal garde ce qui est entré ; `admin revoke-source steam` coupe le token, et révoquer la clé sur steamcommunity.com coupe l'accès à Steam. Revenir à une image d'avant : la migration ajoute des registres que l'ancienne version ignore, sauf le calendrier, qui montre alors les métriques comme des sommes vides ; rien n'est perdu.
 
+## Mise à jour : position de l'iPhone (Overland)
+
+À faire une fois, sur le NAS déjà en service. La PR du backend part en production à la fusion, migration comprise (`20261108120000_location.sql`, par le service `migrate` : deux types, deux métriques, pas de `rebuild`). `compose.yaml` ne change pas, et aucun secret ne va dans `secrets/` : le token de la source vit dans Overland, sur l'iPhone. La métrique « Déplacements » apparaît dans les filtres du calendrier dès le déploiement, vide jusqu'au premier lieu. Je ne lance rien de tout cela depuis le dépôt.
+
+1. Après le déploiement de la version, sur le NAS, en root dans le dossier en `700` :
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   sudo docker compose logs migrate | tail -3   # « migrations à jour »
+   TOKEN=$(sudo docker compose run --rm -T admin create-source iphone --silence-threshold "2 days" --label "Position (iPhone)" </dev/null)
+   [ "${#TOKEN}" = 64 ] && echo "token ok" || echo "ÉCHEC : ne pas continuer"
+   for kind in overland.location overland.visit; do
+     sudo docker compose run --rm -T admin grant-kind iphone "$kind" </dev/null
+   done
+   ```
+
+   Le token ne s'affiche qu'une fois : le copier dans le gestionnaire de mots de passe (pour Overland), puis `unset TOKEN`. Seulement les deux types d'Overland : la route n'annule rien. Sans `grant-kind`, la route répond 403 `kind_not_granted` et Overland garde ses points jusqu'à la correction.
+
+2. **Tailscale sur l'iPhone** : l'app Tailscale, connectée au tailnet, VPN actif (« Connect on demand » pour qu'il le reste). Hors du tailnet, Overland garde ses points et réessaie : rien n'est perdu.
+
+3. **Overland**, sur l'iPhone (App Store, gratuite) :
+   - **Server URL** : `https://<nas>.<tailnet>.ts.net:8443/v1/locations/overland`, avec le token de la source `iphone` comme access token (envoyé en `Authorization: Bearer`). Pas de device ID : il n'entrerait pas au journal.
+   - **Logging Mode** : « All Data » (jamais « Owntracks », qui envoie un autre format avec une authentification `Basic`). **Locations per Batch** : 200 (la route en refuse plus de 500 par un 413).
+   - **Continuous Tracking Mode** : « Significant Location » pour la batterie, ou « Standard » avec **Desired Accuracy** à 100 m pour une trace plus fine ; **Activity Type** « Other » ; **Pause Updates Automatically** activé ; **Visit Tracking** activé (les lieux).
+   - **Location Authorization Status** : « Always », sinon rien ne s'enregistre en arrière-plan ; et l'accès à « Mouvements et forme » pour `motion`.
+   - Dans Réglages iOS → Apps → Overland, laisser **Consider HTTP 2XX Successful** désactivé : la route répond `{"result":"ok"}`, qu'Overland vérifie.
+   - « Send Now » sur l'écran principal envoie la file : la file se vide, sans message d'erreur.
+
+4. Vérifier, sur le NAS :
+
+   ```sh
+   sudo docker compose logs backend | grep "/v1/locations/overland" | tail -3   # status 200, aucune coordonnée
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select kind, count(*) from core.records where source_id = (select id from core.sources where name = 'iphone') group by kind" </dev/null
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select rejected_count from core.sources where name = 'iphone'" </dev/null   # 0
+   ```
+
+   Puis les critères du chantier « Déplacements (iPhone, Overland) » dans [les chantiers](chantiers.md), et le rejeu :
+
+   ```sh
+   sudo docker compose run --rm -T admin coverage place.visit </dev/null
+   sudo docker compose run --rm -T admin rebuild </dev/null   # 0 différence
+   ```
+
+**Retour arrière.** Couper la position seule : `admin revoke-source iphone` ; Overland reçoit alors un 401, garde ses points et l'affiche. Le journal garde ce qui est entré. Revenir à une image d'avant : la migration ajoute des registres que l'ancienne version ignore, sauf le calendrier, qui montre alors « Déplacements » comme une somme vide ; rien n'est perdu.
+
 ## Vérifier les critères « Terminé quand »
 
 **Un café saisi depuis l'iPhone, par la web app comme par le raccourci, apparaît.**

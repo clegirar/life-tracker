@@ -31,6 +31,7 @@ const isLastfm = (name: string) => /^lastfm\b/.test(name)
 const isYoutube = (name: string) => /^youtube\b/.test(name)
 const isTwitch = (name: string) => /^twitch\b/.test(name)
 const isSteam = (name: string) => /^steam\b/.test(name)
+const isIphone = (name: string) => /^iphone\b/.test(name)
 
 /** Comment une source dit son échéance. */
 interface ExpiryPolicy {
@@ -328,8 +329,26 @@ export function thresholdText(seconds: number): string {
   return hours >= 48 && hours % 24 === 0 ? plural(hours / 24, 'jour').replace(' ', NBSP) : `${hours}${NBSP}h`
 }
 
+/**
+ * L'iPhone (Overland) : rien à faire sur le NAS, tout se règle sur le téléphone. Overland garde ses
+ * points hors réseau ; il ne sait pas rapporter d'état, son silence seul se voit.
+ */
+const IPHONE_STEPS = [
+  "Sur l'iPhone, ouvre Tailscale : le VPN doit être connecté (« Connect on demand » le garde actif).",
+  "Ouvre Overland : le suivi doit être activé, et la file d'attente doit se vider avec « Send Now ».",
+  'Dans Réglages iOS, Confidentialité et sécurité, Service de localisation, Overland : « Toujours ».',
+  "Overland affiche une erreur 401 : le token est refusé. Recrée la source `iphone` sur le NAS (`docs/deploiement.md`, « Mise à jour : position de l'iPhone ») et colle le nouveau token dans Overland.",
+]
+
 function silence(source: SourceStatus): Guidance {
   const threshold = thresholdText(source.silence_threshold_seconds ?? 0)
+  if (isIphone(source.name)) {
+    return {
+      title: `Aucun envoi de l'iPhone depuis plus de ${threshold} : des déplacements peuvent manquer.`,
+      steps: IPHONE_STEPS,
+      note: "Rien n'est perdu tant qu'Overland garde ses points : ils partent dès que le serveur répond.",
+    }
+  }
   if (isTwitch(source.name)) {
     return {
       title: `Aucun signal de Firefox depuis plus de ${threshold} : des streams peuvent manquer.`,
@@ -372,6 +391,8 @@ const LAST_OF: Record<string, string> = {
   'stream.watch': 'Dernier visionnage',
   'game.play': 'Dernière partie',
   'game.achievement': 'Dernier succès',
+  'place.visit': 'Dernier lieu',
+  'location.point': 'Dernière position',
 }
 
 export function metricLine(metric: SourceStatus['metrics'][number], now: number): Line {
@@ -415,7 +436,10 @@ export function sourceCard(source: SourceStatus, now: number): Card {
     // L'extension Twitch n'a pas de passe : un battement toutes les 15 min, tant que Firefox est ouvert.
     isTwitch(source.name)
       ? { label: 'Dernier signal de Firefox', value: seen === null ? "aucun pour l'instant" : since(seen, now) }
-      : collected
+      : // Overland n'a pas de passe : il envoie ses lots au rythme de l'iPhone.
+        isIphone(source.name)
+        ? { label: "Dernier envoi de l'iPhone", value: seen === null ? "aucun pour l'instant" : since(seen, now) }
+        : collected
         ? { label: 'Dernière passe', value: seen === null ? "aucune pour l'instant" : since(seen, now) }
         : { label: 'Dernier contact', value: seen === null ? "aucun pour l'instant" : since(seen, now) },
   ]
