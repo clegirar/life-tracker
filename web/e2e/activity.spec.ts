@@ -20,14 +20,19 @@ function parisNoon(date: string): string {
   return `${date}T12:00:00${offset || '+00:00'}`
 }
 
-/** Une boucle fictive : un ovale d'environ 1,6 km sur 0,9. */
+/**
+ * Un parcours fictif : les sept huitièmes d'un ovale d'environ 1,6 km sur 0,9, départ et arrivée à plus
+ * de 30 m l'un de l'autre, une allure qui varie d'un tronçon à l'autre (de 13 à 31 s entre deux points).
+ */
 function loop(): [number, number, number][] {
+  let seconds = 0
   return Array.from({ length: 80 }, (_, i) => {
-    const angle = (i / 79) * 2 * Math.PI
+    const angle = (i / 79) * 1.75 * Math.PI
+    if (i > 0) seconds += Math.round(22 + 9 * Math.sin(3 * angle))
     return [
       Math.round((48.85 + 0.004 * Math.sin(angle)) * 1e6) / 1e6,
       Math.round((2.35 + 0.011 * (1 - Math.cos(angle))) * 1e6) / 1e6,
-      i * 22,
+      seconds,
     ]
   })
 }
@@ -117,7 +122,20 @@ test('la carte Activité : pas, calories, sommeil et séances, avec le parcours'
   const map = card.locator('.route-map')
   await expect(map).toHaveAttribute('data-state', 'ready')
   await expect(map).toHaveAccessibleName('Parcours : course de 07:30')
-  await expect(map.locator('.leaflet-overlay-pane path')).toHaveCount(3)
+  // Un liseré sous la trace, puis un morceau par suite de tronçons de même allure.
+  expect(await map.locator('.leaflet-overlay-pane path').count()).toBeGreaterThan(3)
+  // Départ et arrivée, deux repères distincts par leur forme et leur nom.
+  await expect(map.locator('.route-marker [role="img"]')).toHaveCount(2)
+  await expect(map.locator('.route-marker [aria-label="Départ"] circle')).toHaveCount(1)
+  await expect(map.locator('.route-marker [aria-label="Arrivée"] rect')).toHaveCount(1)
+  // La légende : les bornes de l'échelle, en allure de course, la plus lente d'abord.
+  const legend = card.getByTestId('pace-legend')
+  await expect(legend).toHaveText(/^Couleur de la trace selon l’allure : Lent \d+:\d\d \/kmRapide \d+:\d\d \/km$/)
+  const [slow, fast] = (await legend.locator('strong').allTextContents()).map((text) => {
+    const [m, s] = text.split(' ')[0].split(':').map(Number)
+    return m * 60 + s
+  })
+  expect(slow).toBeGreaterThan(fast)
   await expect(card.getByRole('link', { name: '© les contributeurs d’OpenStreetMap' })).toBeVisible()
   await checkLayout(page)
 })

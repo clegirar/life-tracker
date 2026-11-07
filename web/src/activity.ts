@@ -38,15 +38,20 @@ export function clockText(seconds: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`
 }
 
-/** « 5:59 /km » pour une course, « 24,3 km/h » pour le reste ; rien sans vitesse. */
-export function paceText(details: WorkoutDetails): string | null {
-  const speed = details.avg_speed_mps
-  if (!speed || speed <= 0) return null
-  if (RUNS.has(details.type)) {
+/** « 5:59 /km » pour une course, « 24,3 km/h » pour le reste, d'une vitesse en m/s. */
+export function speedText(speed: number, type: string): string {
+  if (RUNS.has(type)) {
     const perKm = Math.round(1000 / speed)
     return `${Math.floor(perKm / 60)}:${String(perKm % 60).padStart(2, '0')} /km`
   }
   return `${(speed * 3.6).toFixed(1).replace('.', ',')} km/h`
+}
+
+/** L'allure moyenne d'une séance, comme `speedText` ; rien sans vitesse. */
+export function paceText(details: WorkoutDetails): string | null {
+  const speed = details.avg_speed_mps
+  if (!speed || speed <= 0) return null
+  return speedText(speed, details.type)
 }
 
 /** Les chiffres d'une séance, dans l'ordre de Garmin Connect : distance, durée, allure, fréquence cardiaque. */

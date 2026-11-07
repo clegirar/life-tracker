@@ -1,5 +1,5 @@
 // Les cartes du jour, sur un fond OpenStreetMap : le parcours d'une séance, façon Garmin Connect (le
-// tracé, le départ et l'arrivée), et les déplacements de l'iPhone (les morceaux de trace, les points
+// tracé en couleurs d'allure, le départ et l'arrivée), et les déplacements de l'iPhone (les morceaux de trace, les points
 // isolés et les lieux numérotés). Chargé à part (React.lazy), avec Leaflet et sa feuille de style.
 // Au toucher, la carte ne capte pas le défilement : on fait défiler la page, pas la carte, sauf une fois
 // zoomée au-delà de sa vue d'origine, où un doigt la déplace. La molette ne zoome jamais : nos boutons.
@@ -9,6 +9,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { fetchTrack } from './api'
 import { drawingPoints, type LatLng, type MapDrawing } from './location'
+import { paceDrawing, sameSpot, type PaceDrawing } from './pace'
 
 const TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
 
@@ -162,7 +163,60 @@ function MapFrame({
   )
 }
 
-export default function RouteMap({ activityId, label }: { activityId: number; label: string }) {
+/** Départ : un rond vert, une flèche ▶. */
+const START_SVG =
+  '<svg viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="11" fill="#248a3d"/><path d="M8.5 6.5v9l7.5-4.5z" fill="#ffffff"/></svg>'
+
+/** Arrivée : un drapeau à damier, noir et blanc. */
+const FINISH_SVG =
+  '<svg viewBox="0 0 22 22" aria-hidden="true"><path d="M6.5 4.5v13" stroke="#1c1c1e" stroke-width="1.6" stroke-linecap="round"/>' +
+  '<rect x="7" y="5" width="9" height="6" fill="#ffffff" stroke="#1c1c1e" stroke-width="0.8"/>' +
+  '<path d="M7 5h3v3H7zM13 5h3v3h-3zM10 8h3v3h-3z" fill="#1c1c1e"/></svg>'
+
+/** Un repère de la trace, centré sur son point ; `label` le nomme (« Départ », « Arrivée »). */
+const routeIcon = (label: string, svgs: string) =>
+  L.divIcon({ className: 'route-marker', html: `<span role="img" aria-label="${label}" title="${label}">${svgs}</span>`, iconSize: [0, 0] })
+
+/** La trace d'une séance, ses couleurs d'allure (ou d'une couleur si l'allure ne se lit pas), et ses repères. */
+function drawTrack(map: L.Map, el: HTMLElement, points: [number, number, number][], pace: PaceDrawing | null): L.LatLngBounds {
+  const all = points.map(([lat, lon]) => [lat, lon] as L.LatLngTuple)
+  let line: L.Polyline
+  if (pace) {
+    // Un liseré sous toute la trace, puis un morceau par suite de tronçons de même allure.
+    line = L.polyline(all, { color: color(el, '--pace-casing'), weight: 7, lineJoin: 'round', lineCap: 'round', interactive: false }).addTo(map)
+    for (const run of pace.runs) {
+      L.polyline(run.points as L.LatLngTuple[], {
+        color: color(el, `--pace-${run.level}`),
+        weight: 4,
+        opacity: 1,
+        lineJoin: 'round',
+        lineCap: 'round',
+        interactive: false,
+      }).addTo(map)
+    }
+  } else {
+    line = L.polyline(all, { color: color(el, '--workout'), weight: 4, opacity: 0.95, lineJoin: 'round', interactive: false }).addTo(map)
+  }
+  const start = all[0]
+  const finish = all[all.length - 1]
+  const marker = (at: L.LatLngTuple, label: string, svgs: string) =>
+    L.marker(at, { icon: routeIcon(label, svgs), interactive: false, keyboard: false }).addTo(map)
+  // Une boucle : un seul repère, sinon l'arrivée cache le départ.
+  if (sameSpot([start[0], start[1]], [finish[0], finish[1]])) marker(start, 'Départ · Arrivée', START_SVG + FINISH_SVG)
+  else {
+    marker(start, 'Départ', START_SVG)
+    marker(finish, 'Arrivée', FINISH_SVG)
+  }
+  return line.getBounds()
+}
+
+/** Les bornes de l'échelle d'allure d'une séance, en m/s, pour la légende sous la carte. */
+export interface PaceScale {
+  slow: number
+  fast: number
+}
+
+export default function RouteMap({ activityId, label, onPace }: { activityId: number; label: string; onPace?: (scale: PaceScale | null) => void }) {
   const host = useRef<HTMLDivElement>(null)
   const [state, setState] = useState<MapState>('loading')
   const { view, setView, controls, setControls } = useMapView()
@@ -175,18 +229,12 @@ export default function RouteMap({ activityId, label }: { activityId: number; la
     fetchTrack(activityId).then(
       (track) => {
         if (cancelled || track.points.length < 2) return
-        map = createMap(el, () => setState('ready'))
-        const line = L.polyline(
-          track.points.map(([lat, lon]) => [lat, lon] as L.LatLngTuple),
-          { color: color(el, '--workout'), weight: 4, opacity: 0.95, lineJoin: 'round', interactive: false },
-        ).addTo(map)
-        const marker = (at: [number, number, number], fill: string) =>
-          L.circleMarker([at[0], at[1]], { radius: 6, color: '#ffffff', weight: 2, fillColor: fill, fillOpacity: 1, interactive: false }).addTo(map!)
-        marker(track.points[0], color(el, '--steps'))
-        marker(track.points[track.points.length - 1], color(el, '--music'))
-        const bounds = line.getBounds()
-        const fitted = map
+        const fitted = createMap(el, () => setState('ready'))
+        map = fitted
+        const pace = paceDrawing(track.points)
+        const bounds = drawTrack(fitted, el, track.points, pace)
         setControls(trackView(fitted, () => fitted.fitBounds(bounds, { padding: [20, 20] }), setView))
+        onPace?.(pace && { slow: pace.slow, fast: pace.fast })
       },
       () => {
         if (!cancelled) setState('failed')
@@ -196,7 +244,7 @@ export default function RouteMap({ activityId, label }: { activityId: number; la
       cancelled = true
       map?.remove()
     }
-  }, [activityId, setView, setControls])
+  }, [activityId, onPace, setView, setControls])
 
   return <MapFrame host={host} state={state} label={label} failure="Parcours indisponible." view={view} controls={controls} />
 }

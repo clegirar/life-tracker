@@ -68,6 +68,19 @@
   --map-control: rgba(255, 255, 255, 0.86);
   --map-control-press: rgba(0, 0, 0, 0.08);
   --map-control-shadow: 0 1px 4px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+  /*
+   * L'allure d'une séance, de lent (0) à rapide (5) : des tons de « plasma », du violet à l'orange, dont la
+   * clarté croît avec la vitesse (OKLab L 0,36 à 0,79) ; perçus dans l'ordre même sans les teintes
+   * (daltonisme). Mêmes teintes pour le même sens dans les deux modes ; un liseré sombre sous la trace
+   * détache les tons clairs des tuiles.
+   */
+  --pace-0: #41049d;
+  --pace-1: #7905a6;
+  --pace-2: #aa2494;
+  --pace-3: #d04d74;
+  --pace-4: #eb7754;
+  --pace-5: #fca636;
+  --pace-casing: rgba(0, 0, 0, 0.42);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -118,6 +131,14 @@
     --map-control: rgba(44, 44, 46, 0.86);
     --map-control-press: rgba(255, 255, 255, 0.12);
     --map-control-shadow: 0 1px 4px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.1);
+    /* Sur les tuiles sombres, la rampe monte d'un cran (OKLab L 0,48 à 0,94), liseré clair. */
+    --pace-0: #8f0da4;
+    --pace-1: #bc3686;
+    --pace-2: #dd5e66;
+    --pace-3: #f48b47;
+    --pace-4: #fcbe2c;
+    --pace-5: #f0f921;
+    --pace-casing: rgba(255, 255, 255, 0.5);
   }
 }
 
@@ -1867,9 +1888,97 @@ button:disabled {
 }
 
 .route-credit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  column-gap: 16px;
   font-size: 11px;
   line-height: 14px;
-  text-align: right;
+}
+
+/* La légende de l'allure, à gauche sous la carte : « Lent 7:12 /km ▬▬▬ Rapide 5:01 /km ». */
+.pace-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-right: auto;
+  padding: 6px 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted);
+}
+
+.pace-legend strong {
+  font-weight: 600;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.pace-scale {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.pace-scale span {
+  width: 12px;
+  height: 6px;
+}
+
+.pace-scale span:first-child {
+  border-radius: 3px 0 0 3px;
+}
+
+.pace-scale span:last-child {
+  border-radius: 0 3px 3px 0;
+}
+
+.pace-scale span:nth-child(1) {
+  background: var(--pace-0);
+}
+.pace-scale span:nth-child(2) {
+  background: var(--pace-1);
+}
+.pace-scale span:nth-child(3) {
+  background: var(--pace-2);
+}
+.pace-scale span:nth-child(4) {
+  background: var(--pace-3);
+}
+.pace-scale span:nth-child(5) {
+  background: var(--pace-4);
+}
+.pace-scale span:nth-child(6) {
+  background: var(--pace-5);
+}
+
+/*
+ * Départ et arrivée : un rond vert à flèche ▶, un drapeau à damier ; la forme les distingue, pas la seule
+ * couleur. Centrés sur le point par CSS, cerclés de blanc pour se détacher de la trace et des tuiles.
+ */
+.route-marker {
+  background: none;
+  border: 0;
+}
+
+.route-marker > span {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  padding: 0 1px;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 0 0 2px #ffffff, 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+.route-marker svg {
+  display: block;
+  width: 22px;
+  height: 22px;
 }
 
 /* La mention due à OpenStreetMap, discrète mais touchable : 44 px de haut. */
