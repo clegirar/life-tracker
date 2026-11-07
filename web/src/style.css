@@ -64,6 +64,10 @@
   /* Les chiffres du jour (cafés, écoutes, temps) : une seule taille, d'une carte à l'autre. */
   --figure-size: 34px;
   --figure-line: 41px;
+  /* Les boutons posés sur une carte : une matière claire, translucide, au-dessus des tuiles. */
+  --map-control: rgba(255, 255, 255, 0.86);
+  --map-control-press: rgba(0, 0, 0, 0.08);
+  --map-control-shadow: 0 1px 4px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -111,6 +115,9 @@
     --state-error: #ff8a80;
     --state-silent: #a1a1a6;
     --state-tint: 18%;
+    --map-control: rgba(44, 44, 46, 0.86);
+    --map-control-press: rgba(255, 255, 255, 0.12);
+    --map-control-shadow: 0 1px 4px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.1);
   }
 }
 
@@ -1718,6 +1725,7 @@ button:disabled {
 
 /* Un cadre de taille fixe dès le départ : la carte qui arrive ne pousse rien. */
 .route-frame {
+  position: relative;
   aspect-ratio: 16 / 10;
   max-height: 320px;
   width: 100%;
@@ -1727,6 +1735,9 @@ button:disabled {
 }
 
 .route-map {
+  /* Ses volets (tuiles, tracé, repères) restent sous les boutons de zoom. */
+  position: relative;
+  z-index: 0;
   width: 100%;
   height: 100%;
   background: var(--field);
@@ -1737,6 +1748,108 @@ button:disabled {
 /* Les tuiles reçues, la carte apparaît d'un fondu : pas de damier gris qui se remplit. */
 .route-map[data-state='ready'] {
   opacity: 1;
+}
+
+/*
+ * Zoomer, dézoomer, recentrer : en bas à droite, comme Plans. Des cibles de 44 px, un retour à l'appui,
+ * pas de survol au toucher. Ils arrivent avec la carte, du même fondu.
+ */
+.map-controls {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 1;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  transition: opacity 200ms var(--ease-out);
+}
+
+@starting-style {
+  .map-controls {
+    opacity: 0;
+  }
+}
+
+.map-zoom,
+.map-recenter {
+  background: var(--map-control);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  backdrop-filter: blur(12px) saturate(180%);
+  box-shadow: var(--map-control-shadow);
+  color: var(--fg);
+}
+
+.map-zoom {
+  display: flex;
+  flex-direction: column;
+  border-radius: 22px;
+  overflow: hidden;
+}
+
+.map-zoom-button {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 120ms var(--ease-out);
+}
+
+/* Un filet entre les deux, comme les boutons groupés d'Apple. */
+.map-zoom-button + .map-zoom-button {
+  box-shadow: inset 0 0.5px 0 var(--separator);
+}
+
+.map-zoom-button:active:not(:disabled) {
+  background-color: var(--map-control-press);
+  transition: none;
+}
+
+.map-zoom-button:disabled {
+  color: var(--control-disabled);
+}
+
+/* Le contour de focus à l'intérieur : le groupe arrondi le couperait. */
+.map-zoom-button:focus-visible {
+  outline-offset: -3px;
+  border-radius: 22px;
+}
+
+.map-recenter {
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 22px;
+  font-size: 15px;
+  font-weight: 600;
+  transition: transform 300ms var(--spring);
+}
+
+.map-recenter:active {
+  transform: scale(0.95);
+  transition: transform 100ms var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .map-zoom-button:hover:not(:disabled) {
+    background-color: var(--map-control-press);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .map-zoom,
+  .map-recenter {
+    background: var(--card);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-recenter,
+  .map-recenter:active {
+    transform: none;
+  }
 }
 
 .route-map .leaflet-container,

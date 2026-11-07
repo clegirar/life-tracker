@@ -122,6 +122,61 @@ test('la carte Activité : pas, calories, sommeil et séances, avec le parcours'
   await checkLayout(page)
 })
 
+/** Le zoom de la carte, lu dans l'adresse de ses tuiles : `null` tant que deux zooms se mêlent. */
+const zoomLevel = (page: Page) =>
+  page.locator('.route-map img.leaflet-tile').evaluateAll((tiles) => {
+    const levels = new Set(tiles.map((tile) => Number(new URL((tile as HTMLImageElement).src).pathname.split('/')[1])))
+    return levels.size === 1 ? [...levels][0] : null
+  })
+
+test('les boutons de zoom : zoomer, dézoomer, recentrer, et le glisser au toucher une fois zoomé', async ({ page, request }) => {
+  await seed(request, await apiSession(request))
+  await offlineTiles(page)
+  await openDay(page, DAY)
+  const figure = page.getByTestId('route-map')
+  await figure.scrollIntoViewIfNeeded()
+  const map = figure.locator('.route-map')
+  await expect(map).toHaveAttribute('data-state', 'ready')
+  const zoomIn = figure.getByRole('button', { name: 'Zoomer', exact: true })
+  const zoomOut = figure.getByRole('button', { name: 'Dézoomer' })
+  const recenter = figure.getByRole('button', { name: 'Recentrer' })
+  await expect(zoomIn).toBeEnabled()
+  await expect(zoomOut).toBeEnabled()
+  // La vue d'origine : rien à recentrer, et au toucher, un doigt fait défiler la page.
+  await expect(recenter).toHaveCount(0)
+  const touch = await page.evaluate(() => window.matchMedia('(pointer: coarse)').matches)
+  expect(touch).toBe(true)
+  await expect(map).not.toHaveClass(/leaflet-touch-drag/)
+  const home = await zoomLevel(page)
+  expect(home).not.toBeNull()
+
+  await zoomIn.click()
+  await expect.poll(() => zoomLevel(page)).toBe(home! + 1)
+  await expect(recenter).toBeVisible()
+  // Zoomée : le doigt déplace la carte.
+  await expect(map).toHaveClass(/leaflet-touch-drag/)
+  await checkLayout(page)
+
+  await recenter.click()
+  await expect(recenter).toHaveCount(0)
+  await expect.poll(() => zoomLevel(page)).toBe(home)
+  await expect(map).not.toHaveClass(/leaflet-touch-drag/)
+
+  // Dézoomer : la vue change aussi, mais le doigt fait toujours défiler la page.
+  await zoomOut.click()
+  await expect.poll(() => zoomLevel(page)).toBe(home! - 1)
+  await expect(recenter).toBeVisible()
+  await expect(map).not.toHaveClass(/leaflet-touch-drag/)
+
+  // Au plus près (19), « Zoomer » se grise.
+  for (let zoom = home! - 1; zoom < 19; zoom++) {
+    await zoomIn.click()
+    await expect.poll(() => zoomLevel(page)).toBe(zoom + 1)
+  }
+  await expect(zoomIn).toBeDisabled()
+  await expect(zoomOut).toBeEnabled()
+})
+
 test('un jour sans données Garmin le dit, sans zéro', async ({ page }) => {
   await openDay(page, NO_DATA)
   const card = page.getByTestId('activity')
@@ -175,6 +230,13 @@ for (const colorScheme of ['light', 'dark'] as const) {
         await page.waitForTimeout(300) // la fin du fondu de la carte
         await checkLayout(page)
         await shot('jour-activite')
+
+        // La carte zoomée d'un cran, ses boutons et « Recentrer ».
+        const figure = page.getByTestId('route-map')
+        await figure.getByRole('button', { name: 'Zoomer', exact: true }).click()
+        await expect(figure.getByRole('button', { name: 'Recentrer' })).toBeVisible()
+        await page.waitForTimeout(400) // la fin du zoom
+        await figure.screenshot({ path: `${SHOTS}/${width}-${colorScheme}-carte-zoomee.png` })
 
         await page.goto(`/mois/${DAY.slice(0, 7)}`)
         await expect(page.locator(`.cell[data-date="${DAY}"] .day-dot[data-metric="workout"]`)).toHaveCount(1)
