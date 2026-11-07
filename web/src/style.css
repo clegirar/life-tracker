@@ -27,10 +27,9 @@
   /* Twitch : un fuchsia, entre le violet de YouTube et le rouge des écoutes, loin des deux. */
   --twitch: #b4198f;
   /*
-   * Steam : un vert olive, dans le seul creux du cercle des teintes, entre l'orange des calories et le vert
-   * des pas. Le bleu de Steam est déjà celui des séances.
+   * Steam : son bleu, plus franc et plus violet que le bleu-vert des séances (à ma demande, 7 nov. 2026).
    */
-  --steam: #5f7a00;
+  --steam: #1769d6;
   --segment-on: #ffffff;
   --check: #c98500;
   /* La barre latérale : un cran sous le fond de page, comme la barre de Réglages sur Mac. */
@@ -85,7 +84,7 @@
     --workout: #64d2ff;
     --video: #da8fff;
     --twitch: #ff6fd8;
-    --steam: #bfe04d;
+    --steam: #4ea1ff;
     --segment-on: #636366;
     --check: #ffcc4d;
     --sidebar-bg: #121214;
