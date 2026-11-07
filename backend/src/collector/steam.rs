@@ -120,6 +120,8 @@ pub struct TickReport {
     pub skipped: u32,
     /// Steam a refusé les succès : le profil n'est pas public. Les relevés sont partis.
     pub profile_private: bool,
+    /// Jeux dont Steam a refusé les succès (erreur 500…), sans arrêter le passage.
+    pub achievement_failures: u32,
 }
 
 // ─── Les listes blanches ─────────────────────────────────────────────────────
@@ -145,6 +147,9 @@ pub struct OwnedGame {
     pub playtime_disconnected: i64,
     /// Secondes Unix de la dernière partie ; `None` pour 0 (jamais).
     pub rtime_last_played: Option<i64>,
+    /// `has_community_visible_stats` : le jeu a des statistiques, donc peut-être des succès. Sans lui,
+    /// `GetPlayerAchievements` n'a rien à dire (et répond parfois une erreur 500) : on ne demande pas.
+    pub stats: bool,
 }
 
 /// Un entier positif ou nul.
@@ -160,6 +165,10 @@ pub fn owned_game(raw: &Value) -> Option<OwnedGame> {
         playtime_forever: count(raw.get("playtime_forever"))?,
         playtime_disconnected: count(raw.get("playtime_disconnected")).unwrap_or(0),
         rtime_last_played: count(raw.get("rtime_last_played")).filter(|s| *s > 0),
+        stats: raw
+            .get("has_community_visible_stats")
+            .and_then(Value::as_bool)
+            == Some(true),
     })
 }
 
@@ -408,7 +417,18 @@ struct Game {
     /// Ses succès restent à demander : son compteur a changé, ou la demande a échoué.
     #[serde(default)]
     achievements_pending: bool,
+    /// Demandes de succès refusées d'affilée par Steam pour ce jeu (erreur 500…) ; au-delà de
+    /// `MAX_ACHIEVEMENT_FAILURES`, le jeu est tenu pour sans succès.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    achievement_failures: u32,
 }
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
+/// Au-delà, un jeu dont Steam refuse toujours les succès n'est plus demandé.
+const MAX_ACHIEVEMENT_FAILURES: u32 = 3;
 
 /// Ce qui survit à un redémarrage. Le perdre ne coûte qu'un point de départ par jeu joué (le temps
 /// joué depuis le dernier relevé n'est pas compté) et des `duplicate`.
@@ -423,6 +443,7 @@ struct State {
 struct Reading {
     appid: u64,
     playtime: i64,
+    stats: bool,
     record: Value,
 }
 
@@ -571,6 +592,7 @@ impl Collector {
                             achievements: BTreeSet::new(),
                             no_achievements: false,
                             achievements_pending: false,
+                            achievement_failures: 0,
                         },
                     );
                     continue;
@@ -583,6 +605,7 @@ impl Collector {
             readings.push(Reading {
                 appid: game.appid,
                 playtime: game.playtime_forever,
+                stats: game.stats,
                 record: playtime_record(game, previous, now),
             });
         }
@@ -613,10 +636,11 @@ impl Collector {
                     achievements: BTreeSet::new(),
                     no_achievements: false,
                     achievements_pending: false,
+                    achievement_failures: 0,
                 });
                 game.playtime = reading.playtime;
                 game.observed_at = now;
-                game.achievements_pending = !game.no_achievements;
+                game.achievements_pending = reading.stats && !game.no_achievements;
             }
             self.save()?;
         }
@@ -641,7 +665,24 @@ impl Collector {
             if i > 0 {
                 tokio::time::sleep(self.config.pause).await;
             }
-            let list = match self.steam.achievements(appid).await? {
+            let answer = match self.steam.achievements(appid).await {
+                // Un refus propre à ce jeu (erreur 500 de Steam…) n'arrête pas la tournée : le jeu reste
+                // en attente, et n'est plus demandé après quelques refus d'affilée.
+                Err(ServiceError::Failed { status, .. }) => {
+                    report.achievement_failures += 1;
+                    let game = self.state.games.get_mut(&appid).expect("jeu de l'état");
+                    game.achievement_failures += 1;
+                    if game.achievement_failures >= MAX_ACHIEVEMENT_FAILURES {
+                        game.no_achievements = true;
+                        game.achievements_pending = false;
+                    }
+                    warn!(status, "steam achievements refused for one game");
+                    self.save()?;
+                    continue;
+                }
+                other => other?,
+            };
+            let list = match answer {
                 Achievements::ProfilePrivate => {
                     report.calls += 1;
                     report.profile_private = true;
@@ -680,6 +721,7 @@ impl Collector {
             }
             let game = self.state.games.get_mut(&appid).expect("jeu de l'état");
             game.achievements_pending = false;
+            game.achievement_failures = 0;
             self.save()?;
         }
         Ok(())
@@ -704,6 +746,12 @@ impl Collector {
         report.games = u32::try_from(games.len()).unwrap_or(u32::MAX);
         let readings = self.readings(&games, now);
         self.send_readings(readings, now, &mut report).await?;
+        // Un jeu sans statistiques n'a pas de succès à demander, même s'il était en attente.
+        for game in games.iter().filter(|g| !g.stats) {
+            if let Some(known) = self.state.games.get_mut(&game.appid) {
+                known.achievements_pending = false;
+            }
+        }
         let names = games.iter().map(|g| (g.appid, g.name.clone())).collect();
         self.achievements(&names, &mut report).await?;
         self.state.last_pass_at = Some(now);
@@ -728,6 +776,7 @@ impl Collector {
                     rejected = report.rejected,
                     skipped = report.skipped,
                     profile_private = report.profile_private,
+                    achievement_failures = report.achievement_failures,
                     "steam pass completed"
                 );
                 let status = if report.profile_private {

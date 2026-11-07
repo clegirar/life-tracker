@@ -867,6 +867,47 @@ async fn a_rate_limit_waits_and_the_achievements_resume_at_the_next_pass() {
 }
 
 #[tokio::test]
+async fn a_game_steam_refuses_does_not_block_the_pass_and_a_game_without_stats_is_never_asked() {
+    let bench = Bench::new().await;
+    let fake = Fake::start().await;
+    library(&fake);
+    fake.with(|d| {
+        // Un jeu sans statistiques : pas de demande de succès.
+        let mut silent = game(DELTA, 30, at("2026-10-02T20:00:00Z").timestamp());
+        silent["has_community_visible_stats"] = json!(false);
+        d.games.push(silent);
+        // Steam répond une erreur 500 pour les succès d'un jeu (vu en production le 7 nov. 2026).
+        d.achievements.insert(
+            GAMMA,
+            (
+                500,
+                json!({"playerstats": {"error": "Unknown error", "success": false}}),
+            ),
+        );
+    });
+    let mut collector = bench.collector(&fake);
+    for _ in 0..3 {
+        let report = collector.tick().await.unwrap();
+        assert_eq!(
+            report.achievement_failures, 1,
+            "le passage aboutit malgré le refus"
+        );
+    }
+    let asked = fake.asked();
+    assert!(!asked.contains(&DELTA), "jamais demandé : {asked:?}");
+    assert_eq!(asked.iter().filter(|a| **a == GAMMA).count(), 3);
+    assert_eq!(bench.journal("steam.playtime").await, 3);
+    assert_eq!(bench.journal("steam.achievement").await, 2);
+    // Après trois refus d'affilée, le jeu n'est plus demandé.
+    let report = collector.tick().await.unwrap();
+    assert_eq!(report.achievement_failures, 0);
+    assert!(!fake.asked().contains(&GAMMA));
+    collector.pass().await;
+    let state = bench.status().await.unwrap();
+    assert_eq!(state["state"], json!("ok"));
+}
+
+#[tokio::test]
 async fn a_rebuild_gives_no_difference() {
     let bench = Bench::new().await;
     let fake = Fake::start().await;
@@ -929,6 +970,7 @@ async fn the_day_card_gives_each_game_its_minutes_its_total_and_its_achievements
         playtime_forever: 300,
         playtime_disconnected: 0,
         rtime_last_played: None,
+        stats: true,
     };
     let mut skipped = 0;
     let mut records: Vec<Value> = steam::unlocked(
@@ -1077,6 +1119,7 @@ fn reading(appid: u64, minutes: i64, at_: &str, previous: Option<(i64, &str)>) -
         playtime_forever: minutes,
         playtime_disconnected: 0,
         rtime_last_played: None,
+        stats: true,
     };
     steam::playtime_record(
         &owned,
