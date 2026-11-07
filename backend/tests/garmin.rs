@@ -1184,10 +1184,16 @@ async fn a_track_is_downloaded_once_for_each_workout_with_gps() {
     .await
     .unwrap();
     let points = points.as_array().unwrap();
+    // Un point toutes les 10 s : simplifiée, il en reste un toutes les 20 s (15 s au moins entre deux).
     assert!(
-        (3..20).contains(&points.len()),
+        (55..65).contains(&points.len()),
         "simplifiée : {}",
         points.len()
+    );
+    assert!(
+        points
+            .windows(2)
+            .all(|w| w[1][2].as_i64().unwrap() - w[0][2].as_i64().unwrap() <= 20)
     );
     assert_eq!(points[0], json!([LAT, LON, 0]));
     fake.clear_calls();
