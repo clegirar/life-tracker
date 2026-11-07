@@ -12,6 +12,7 @@ Le [POC](poc.md) est validé depuis le 4 nov. 2026. Chaque chantier a sa section
 | YouTube | En production depuis le 5 nov. 2026, vérifié le 6 nov. ; reste le renouvellement de l'accord Google à l'expiration du jeton (vers le 12 nov.) |
 | Twitch | En production depuis le 6 nov. 2026 (#17, #19), extension signée et installée, vérifiée le 7 nov. ; restent le rattrapage hors ligne, le silence de la page d'état et l'affichage sur les vrais appareils |
 | Steam | En production depuis le 7 nov. 2026 (v0.12.0, corrigé en v0.12.1) ; restent une vraie partie (prévue le 14-15 nov.), les totaux, les succès au bon jour, minuit et l'affichage sur les vrais appareils |
+| Déplacements (iPhone, Overland) | Backend construit le 7 nov. 2026 (branche `feat/position-iphone`) ; restent la web app (carte du jour, page d'état, fiche Sources), la mise en service et une vraie journée |
 | Twitch : import de l'historique (export RGPD) | À faire, quand je le demanderai (l'export est demandé à Twitch) |
 | Ouvrir la web app sur Internet | À faire, quand je le demanderai |
 
@@ -247,6 +248,38 @@ Ouvert le 6 nov. 2026, à ma demande. Suivre Steam : les heures jouées par jeu,
 - La carte d'état passe en alerte quand la clé est révoquée, puis revient.
 - Aucune clé ni donnée personnelle dans le dépôt ou dans les logs.
 - La carte est vérifiée aux largeurs iPhone et Mac, en clair et en sombre.
+
+## Déplacements (iPhone, Overland)
+
+Ouvert le 7 nov. 2026, à ma demande (l'idée « Déplacements via géolocalisation » de [l'architecture](architecture.md)). Ce que je veux voir : la trace du jour sur une carte et les lieux où je suis resté. Les choix sont au journal des décisions de l'architecture, 7 nov. 2026, et dans la fiche « Position (iPhone) ».
+
+**Accès.** iOS ne laisse lire ni l'historique de position d'Apple ni les « Lieux importants » : il faut une app tierce. **Overland** (gratuite, open source, aaronpk/Overland-iOS) enregistre en arrière-plan, garde les points tant que le serveur ne répond pas, et envoie des lots `{"locations": [Feature GeoJSON…]}` en `POST` avec `Authorization: Bearer <token>`. Elle envoie aussi les visites détectées par iOS. L'iPhone joint l'API par Tailscale, comme l'extension Twitch ; hors réseau, Overland garde ses points, rien n'est perdu.
+
+**Vérifié dans le code d'Overland** (`GLManager.m`, le 7 nov. 2026), avant d'écrire la route : la forme du lot, les noms des propriétés (`timestamp` à la seconde en UTC, `horizontal_accuracy`, `altitude`, `speed`, `motion` en liste, `wifi`, `battery_level`, `device_id`…), les visites (`action: "visit"`, `arrival_date` et `departure_date`, `null` quand iOS ne les connaît pas ; envoyées une fois à l'arrivée, une fois au départ), les trajets (`type: "trip"`, et `trip` au niveau du lot), la réponse attendue (`{"result":"ok"}`) et le token en `Bearer`. Reste à confirmer sur un vrai lot de l'iPhone.
+
+**Mes choix** (à corriger si besoin) :
+
+- une route d'adaptation, `POST /v1/locations/overland`, qui traduit le lot et suit le chemin de `POST /v1/records` ; elle répond `ok` dès que le lot est écrit, doublons et rejets compris ;
+- deux types, `overland.location` (un point) et `overland.visit` (une visite complète, départ connu) ; Wi-Fi, batterie et identifiants de l'appareil n'entrent jamais ;
+- deux métriques, `location.point` (hors du calendrier, lue par la seule carte du jour) et `place.visit` (« Lieux », le nombre de lieux du jour) ; le MCP voit les lieux à travers les zones de confidentialité, jamais un point ;
+- pas de nom de lieu ni de ville en v1 : le géocodage inverse (Nominatim) est un chantier suivant, à décider à part ;
+- source `iphone`, en poussée seule comme Twitch, seuil de silence de 2 jours, pas de `PUT status` (Overland ne sait pas en envoyer).
+
+**Étapes** :
+
+1. **Backend, MCP et docs** (PR 1) : la migration, la route d'adaptation, les interprètes, la route du jour, l'inventaire du MCP, les tests et les docs.
+2. **Web** (PR 2) : la carte Déplacements du jour (`RouteMap.tsx`, polyligne et cercles des lieux, heure et durée en liste), la carte de la page d'état (Tailscale actif sur l'iPhone, Overland en suivi, position sur « Toujours »), la fiche Sources (arrivée par Overland et Tailscale, clé `sourceToken('iphone')`, sans échéance), les tests de bout en bout, les captures iPhone et Mac, en clair et en sombre.
+3. **Mise en service** sur le NAS (`docs/deploiement.md`, « Mise à jour : position de l'iPhone »), puis une vraie journée.
+
+**Construit le 7 nov. 2026, backend** : migration `20261108120000_location.sql` (types `overland.location` et `overland.visit` ; métriques `location.point` et `place.visit`), la route `POST /v1/locations/overland` (`overland.rs`, dans `NO_SESSION_ROUTES` : le token seulement ; 1 Mo et 500 Features au plus ; un type non accordé laisse le lot sur l'iPhone par un 403), les interprètes `overland_location` et `overland_visit`, la route de session `GET /v1/days/{date}/locations` (`location.rs` : la trace en morceaux, simplifiée à 5 m par le Douglas–Peucker des traces Garmin, extrait dans `geo.rs` ; les lieux qui touchent le jour ; `covered`), l'outil `route` du MCP réservé aux métriques qu'une trace éclaire, les tests (`backend/tests/location.rs` sur un lot fictif `fixtures/overland/batch.json`, en mer ; le MCP de bout en bout, lieu masqué dans la zone). **Reste la partie web.**
+
+**Terminé quand**
+
+- Une journée réelle de déplacements apparaît sur la carte du jour, avec la trace et les visites.
+- Un lot renvoyé ne crée aucun doublon, et un jour sans aucun point s'affiche comme sans données, pas comme sans déplacement.
+- Pour le jeton de service, le MCP ne voit ni point ni visite dans la zone du domicile.
+- La source a sa carte à la page d'état et sa fiche dans Sources.
+- Après une journée réelle, la consommation de batterie est jugée acceptable.
 
 ## Twitch : import de l'historique (export RGPD)
 

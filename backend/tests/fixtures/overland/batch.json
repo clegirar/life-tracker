@@ -1,0 +1,622 @@
+{
+  "locations": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.28,
+          43.2
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:00:00Z",
+        "altitude": 3,
+        "speed": 1.4,
+        "course": 90,
+        "horizontal_accuracy": 8,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [
+          "walking"
+        ],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.2805,
+          43.2
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:01:00Z",
+        "altitude": 3,
+        "speed": 1.4,
+        "course": 90,
+        "horizontal_accuracy": 8,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [
+          "walking"
+        ],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.281,
+          43.2
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:02:00Z",
+        "altitude": 3,
+        "speed": 1.4,
+        "course": 90,
+        "horizontal_accuracy": 8,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [
+          "walking"
+        ],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.2815,
+          43.2
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:03:00Z",
+        "altitude": 3,
+        "speed": 1.4,
+        "course": 90,
+        "horizontal_accuracy": 8,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [
+          "walking"
+        ],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.282,
+          43.2
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:04:00Z",
+        "altitude": 3,
+        "speed": 1.4,
+        "course": 90,
+        "horizontal_accuracy": 8,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [
+          "walking"
+        ],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.2825,
+          43.2
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:05:00Z",
+        "altitude": 3,
+        "speed": 1.4,
+        "course": 90,
+        "horizontal_accuracy": 8,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [
+          "walking"
+        ],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.2825,
+          43.2005
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:06:00Z",
+        "altitude": 3,
+        "speed": 1.4,
+        "course": 90,
+        "horizontal_accuracy": 8,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [
+          "walking"
+        ],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.2825,
+          43.201
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:07:00Z",
+        "altitude": 3,
+        "speed": 1.4,
+        "course": 90,
+        "horizontal_accuracy": 8,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [
+          "walking"
+        ],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.2825,
+          43.2015
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:08:00Z",
+        "altitude": 3,
+        "speed": 1.4,
+        "course": 90,
+        "horizontal_accuracy": 8,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [
+          "walking"
+        ],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.2825,
+          43.202
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:09:00Z",
+        "altitude": 3,
+        "speed": 1.4,
+        "course": 90,
+        "horizontal_accuracy": 8,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [
+          "walking"
+        ],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.2825,
+          43.2025
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:10:00Z",
+        "altitude": 3,
+        "speed": 1.4,
+        "course": 90,
+        "horizontal_accuracy": 8,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [
+          "walking"
+        ],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.35,
+          43.25
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:10:30Z",
+        "altitude": 3,
+        "speed": -1,
+        "course": 90,
+        "horizontal_accuracy": 1500,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.29,
+          43.2
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:10:40Z",
+        "altitude": 3,
+        "speed": -1,
+        "course": 90,
+        "horizontal_accuracy": -1,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.285,
+          43.201
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:15:00Z",
+        "action": "visit",
+        "arrival_date": "2026-10-20T08:12:00Z",
+        "departure_date": null,
+        "horizontal_accuracy": 35,
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.29,
+          43.21
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:50:00Z",
+        "altitude": 3,
+        "speed": 12.5,
+        "course": 90,
+        "horizontal_accuracy": 8,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [
+          "driving"
+        ],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.2905,
+          43.21
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:51:00Z",
+        "altitude": 3,
+        "speed": 12.5,
+        "course": 90,
+        "horizontal_accuracy": 8,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [
+          "driving"
+        ],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.291,
+          43.21
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:52:00Z",
+        "altitude": 3,
+        "speed": 12.5,
+        "course": 90,
+        "horizontal_accuracy": 8,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [
+          "driving"
+        ],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.285,
+          43.201
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:51:00Z",
+        "action": "visit",
+        "arrival_date": "2026-10-20T08:12:00Z",
+        "departure_date": "2026-10-20T08:48:00Z",
+        "horizontal_accuracy": 35,
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.291,
+          43.21
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:52:00Z",
+        "type": "trip",
+        "mode": "walk",
+        "start": "2026-10-20T08:00:00Z",
+        "end": "2026-10-20T08:52:00Z",
+        "start_location": null,
+        "end_location": null,
+        "duration": 3120,
+        "distance": 1500,
+        "stopped_automatically": false,
+        "steps": 2000,
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.291,
+          43.21
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:53:00Z",
+        "action": "paused_location_updates",
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    }
+  ],
+  "current": {
+    "type": "Feature",
+    "geometry": {
+      "type": "Point",
+      "coordinates": [
+        5.291,
+        43.21
+      ]
+    },
+    "properties": {
+      "timestamp": "2026-10-20T08:53:00Z",
+      "altitude": 3,
+      "speed": 1.4,
+      "course": 90,
+      "horizontal_accuracy": 8,
+      "vertical_accuracy": 4,
+      "speed_accuracy": 0.5,
+      "course_accuracy": 10,
+      "motion": [
+        "walking"
+      ],
+      "device_id": "iphone-fictif",
+      "wifi": "Réseau fictif",
+      "wifi_bssid": "00:11:22:33:44:55",
+      "battery_state": "unplugged",
+      "battery_level": 0.81,
+      "unique_id": "00000000-0000-0000-0000-000000000000"
+    }
+  },
+  "trip": {
+    "mode": "walk",
+    "start": "2026-10-20T08:00:00Z",
+    "distance": 1500,
+    "current_location": {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          5.291,
+          43.21
+        ]
+      },
+      "properties": {
+        "timestamp": "2026-10-20T08:53:00Z",
+        "altitude": 3,
+        "speed": 1.4,
+        "course": 90,
+        "horizontal_accuracy": 8,
+        "vertical_accuracy": 4,
+        "speed_accuracy": 0.5,
+        "course_accuracy": 10,
+        "motion": [
+          "walking"
+        ],
+        "device_id": "iphone-fictif",
+        "wifi": "Réseau fictif",
+        "wifi_bssid": "00:11:22:33:44:55",
+        "battery_state": "unplugged",
+        "battery_level": 0.81,
+        "unique_id": "00000000-0000-0000-0000-000000000000"
+      }
+    }
+  }
+}

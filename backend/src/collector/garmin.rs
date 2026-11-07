@@ -33,6 +33,7 @@ use tracing::{error, info, warn};
 
 use super::lastfm::network_reason;
 use super::{backoff, load_state, rate_limit_wait, report_status, save_state};
+use crate::geo::douglas_peucker;
 use crate::ingest_client::{IngestClient, IngestFailure, RecordOutcome, http_client};
 use crate::source_status::{Reason, SourceStatus, State as Health};
 
@@ -544,57 +545,6 @@ pub fn fit_points(fit: &[u8]) -> Option<Vec<[f64; 3]>> {
         points.push([lat, lon, (at - start) as f64]);
     }
     Some(points)
-}
-
-/// La distance en mètres d'un point au segment `a`–`b`, sur un plan local (équirectangulaire) : à
-/// l'échelle d'une séance, l'écart à la sphère est négligeable.
-fn segment_distance(p: &[f64; 3], a: &[f64; 3], b: &[f64; 3]) -> f64 {
-    const METERS_PER_DEGREE: f64 = 111_320.0;
-    let scale = a[0].to_radians().cos();
-    let xy = |q: &[f64; 3]| {
-        (
-            (q[1] - a[1]) * METERS_PER_DEGREE * scale,
-            (q[0] - a[0]) * METERS_PER_DEGREE,
-        )
-    };
-    let ((px, py), (bx, by)) = (xy(p), xy(b));
-    let length = bx * bx + by * by;
-    let t = if length == 0.0 {
-        0.0
-    } else {
-        ((px * bx + py * by) / length).clamp(0.0, 1.0)
-    };
-    ((px - t * bx).powi(2) + (py - t * by).powi(2)).sqrt()
-}
-
-/// Douglas–Peucker, sans récursion : les points qui s'écartent de plus de `tolerance` mètres.
-fn douglas_peucker(points: &[[f64; 3]], tolerance: f64) -> Vec<[f64; 3]> {
-    if points.len() < 3 {
-        return points.to_vec();
-    }
-    let mut keep = vec![false; points.len()];
-    keep[0] = true;
-    keep[points.len() - 1] = true;
-    let mut stack = vec![(0, points.len() - 1)];
-    while let Some((first, last)) = stack.pop() {
-        let mut farthest = (0.0, first);
-        for i in first + 1..last {
-            let distance = segment_distance(&points[i], &points[first], &points[last]);
-            if distance > farthest.0 {
-                farthest = (distance, i);
-            }
-        }
-        if farthest.0 > tolerance {
-            keep[farthest.1] = true;
-            stack.push((first, farthest.1));
-            stack.push((farthest.1, last));
-        }
-    }
-    points
-        .iter()
-        .zip(keep)
-        .filter_map(|(p, kept)| kept.then_some(*p))
-        .collect()
 }
 
 /// La trace simplifiée : 5 m de tolérance, doublée tant qu'il reste plus de `cap` points. Les

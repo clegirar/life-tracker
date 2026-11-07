@@ -83,8 +83,8 @@ const key = z
   .min(1)
   .describe('The exact item key returned by `search`, `top` or `discoveries` (keys are normalized, never guess them)');
 
-/** Les outils et ce qui les rend applicables, d'après le registre. */
-function toolsFor(m: RegistryMetric): string[] {
+/** Les outils et ce qui les rend applicables, d'après le registre (`all` : toutes ses métriques). */
+function toolsFor(m: RegistryMetric, all: RegistryMetric[]): string[] {
   const tools = inCalendar(m) ? ['occurrences', 'day_summary', 'completeness'] : ['occurrences', 'completeness'];
   if (m.item_levels.length > 0) {
     tools.push('search', 'top', 'last_time');
@@ -95,8 +95,10 @@ function toolsFor(m: RegistryMetric): string[] {
   if (m.duration_from || m.shape === 'duration') {
     tools.push('cumulative_duration');
   }
-  // Des coordonnées dans les détails : la métrique a des parcours (séances).
-  if (m.shared_details.some((field) => field.endsWith('_lat'))) {
+  // Des coordonnées dans les détails et une référence qui l'éclaire (la trace d'une séance) : la
+  // métrique a des parcours. Un lieu (`place.visit`) a des coordonnées mais pas de parcours.
+  const hasTrack = all.some((r) => r.shape === 'reference' && r.applies_to === m.metric);
+  if (hasTrack && m.shared_details.some((field) => field.endsWith('_lat'))) {
     tools.push('route');
   }
   return tools;
@@ -236,7 +238,7 @@ export function buildServer(backend: Backend): McpServer {
             last_at: m.last_at,
             sources: m.sources.map((s) => ({ source: s.source, events: s.events, first_at: s.first_at, last_at: s.last_at })),
             stale_after_seconds: m.freshness_threshold_seconds,
-            tools: toolsFor(m),
+            tools: toolsFor(m, inventory.metrics),
           })),
           modifiers: inventory.metrics
             .filter((m) => !displayable(m))

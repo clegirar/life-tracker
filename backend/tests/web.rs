@@ -413,6 +413,15 @@ async fn every_route_refuses_a_request_without_session() {
                 .json(&json!({ "records": [] })),
         ),
         ("heartbeat", c.post(format!("{base}/v1/heartbeat"))),
+        (
+            "overland",
+            c.post(format!("{base}/v1/locations/overland"))
+                .json(&json!({ "locations": [] })),
+        ),
+        (
+            "locations",
+            c.get(format!("{base}/v1/days/2026-10-25/locations")),
+        ),
         ("logout", c.post(format!("{base}/v1/auth/logout"))),
         (
             "logout+csrf",
@@ -457,6 +466,7 @@ async fn the_routes_without_session_are_exactly_these() {
             "/health",
             "/v1/auth/login",
             "/v1/heartbeat",
+            "/v1/locations/overland",
             "/v1/sources/me/status",
             "/v1/sources/me/authorization",
             "/v1/sources/me/authorization/code"

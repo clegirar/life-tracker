@@ -29,7 +29,9 @@ use crate::authorization::{self, Outcome};
 use crate::calendar;
 use crate::games;
 use crate::ingest::{Envelope, RejectReason, Rejection, parse_envelope};
+use crate::location;
 use crate::music::fold;
+use crate::overland;
 use crate::privacy::Zones;
 use crate::read::{self, Exposure, Period, ReadError};
 use crate::source_status::SourceStatus;
@@ -40,6 +42,8 @@ pub const MAX_BODY_BYTES: usize = 1_000_000;
 
 const LOGIN: &str = "/v1/auth/login";
 const RECORDS: &str = "/v1/records";
+/// La route d'adaptation d'Overland (iOS) : le token de la source seulement (voir `post_overland`).
+const OVERLAND: &str = "/v1/locations/overland";
 const SOURCE_STATUS: &str = "/v1/sources/me/status";
 const SOURCE_AUTHORIZATION: &str = "/v1/sources/me/authorization";
 const SOURCE_AUTHORIZATION_CODE: &str = "/v1/sources/me/authorization/code";
@@ -55,12 +59,14 @@ const MAX_LOGIN_BYTES: usize = 4096;
 const MAX_CONCURRENT_LOGINS: usize = 2;
 
 /// Une route exige la session par défaut (voir `guard`) : seules celles-ci en sont dispensées.
-/// `/v1/records` est à part : le token, ou sinon la session. `/v1/heartbeat`, `/v1/sources/me/status`
-/// et les deux routes de l'accord OAuth n'acceptent que le token d'une source (voir leurs extracteurs).
-pub const NO_SESSION_ROUTES: [&str; 6] = [
+/// `/v1/records` est à part : le token, ou sinon la session. `/v1/heartbeat`, `/v1/sources/me/status`,
+/// les deux routes de l'accord OAuth et la route d'Overland n'acceptent que le token d'une source (voir
+/// leurs extracteurs) : jamais de repli sur le cookie.
+pub const NO_SESSION_ROUTES: [&str; 7] = [
     "/health",
     LOGIN,
     "/v1/heartbeat",
+    OVERLAND,
     SOURCE_STATUS,
     SOURCE_AUTHORIZATION,
     SOURCE_AUTHORIZATION_CODE,
@@ -135,6 +141,10 @@ fn routes() -> Router<AppState> {
             RECORDS,
             post(post_records).layer(DefaultBodyLimit::max(MAX_BODY_BYTES)),
         )
+        .route(
+            OVERLAND,
+            post(post_overland).layer(DefaultBodyLimit::max(MAX_BODY_BYTES)),
+        )
         .route("/v1/heartbeat", post(post_heartbeat))
         .route(
             SOURCE_STATUS,
@@ -173,6 +183,8 @@ fn routes() -> Router<AppState> {
         // Le MCP lit les siennes par les occurrences et `/v1/route`, à travers les zones.
         .route("/v1/days/{date}/activity", get(get_day_activity))
         .route("/v1/activities/{id}/track", get(get_activity_track))
+        // Pas dans `READ_ROUTES` : des coordonnées, pour la carte du jour de la web app seulement.
+        .route("/v1/days/{date}/locations", get(get_day_locations))
         .route("/v1/months/{month}", get(get_month))
         // Pas dans `READ_ROUTES` : la vue de l'année ne sert qu'à la web app.
         .route("/v1/years/{year}", get(get_year))
@@ -312,6 +324,9 @@ enum ApiError {
     PrivacyZoneMissing,
     InvalidJson,
     BatchTooLarge,
+    /// Un lot d'Overland porte un type que la source n'a pas le droit d'envoyer : le lot reste sur
+    /// l'iPhone jusqu'à la correction (`admin grant-kind`).
+    KindNotGranted,
     Internal,
 }
 
@@ -332,6 +347,7 @@ impl IntoResponse for ApiError {
             Self::PrivacyZoneMissing => (StatusCode::FORBIDDEN, "privacy_zone_missing"),
             Self::InvalidJson => (StatusCode::BAD_REQUEST, "invalid_json"),
             Self::BatchTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "batch_too_large"),
+            Self::KindNotGranted => (StatusCode::FORBIDDEN, "kind_not_granted"),
             Self::Internal => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
         };
         let mut response = (status, Json(json!({ "error": code }))).into_response();
@@ -496,6 +512,45 @@ async fn post_records(
         request_id,
         results,
     }))
+}
+
+/// Un lot d'Overland (iOS), traduit en enregistrements (`overland`) puis vérifié et ajouté comme ceux
+/// de `post_records` : mêmes droits par type, même idempotence, mêmes rejets comptés. Overland ne
+/// retire un lot de sa file que sur `{"result":"ok"}` : la réponse est `ok` dès que le lot est écrit,
+/// doublons et rejets compris, sinon il le renverrait sans fin. Seule exception, un type non accordé :
+/// ce qui pouvait entrer est écrit, mais la réponse est une erreur, et le lot reste sur l'iPhone
+/// jusqu'à `admin grant-kind` (son renvoi n'ajoutera alors que ce qui manquait).
+async fn post_overland(
+    State(state): State<AppState>,
+    Extension(RequestId(request_id)): Extension<RequestId>,
+    source: Source,
+    // Dernier extracteur : le corps n'est lu qu'après l'authentification.
+    body: Result<Bytes, BytesRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let body = body.map_err(|rejection| {
+        if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            ApiError::BatchTooLarge
+        } else {
+            ApiError::InvalidJson
+        }
+    })?;
+    let document: Value = serde_json::from_slice(&body).map_err(|_| ApiError::InvalidJson)?;
+    let features = overland::features(&document).ok_or(ApiError::InvalidJson)?;
+    if features.len() > overland::MAX_FEATURES {
+        return Err(ApiError::BatchTooLarge);
+    }
+    let records = overland::translate(features);
+    let parsed = check_envelopes(&state.pool, source.id, &records, Utc::now()).await?;
+    let inserted = store(&state.pool, &source, request_id, &parsed).await?;
+    let ungranted = parsed
+        .iter()
+        .any(|p| matches!(p, Err(r) if r.reason == RejectReason::KindNotDeclared));
+    // Pour le seul log du lot : des nombres et des positions, jamais une coordonnée.
+    build_results(&records, parsed, inserted);
+    if ungranted {
+        return Err(ApiError::KindNotGranted);
+    }
+    Ok(Json(json!({ "result": "ok" })))
 }
 
 async fn check_envelopes(
@@ -1342,6 +1397,15 @@ async fn get_day_activity(
 ) -> Result<Json<activity::DayActivity>, ApiError> {
     let date = parse_day(&date).ok_or(ApiError::InvalidDate)?;
     Ok(Json(activity::day(&state.pool, date).await?))
+}
+
+/// La trace de l'iPhone et les lieux d'un jour, pour la carte Déplacements (voir `location`).
+async fn get_day_locations(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Result<Json<location::DayLocations>, ApiError> {
+    let date = parse_day(&date).ok_or(ApiError::InvalidDate)?;
+    Ok(Json(location::day(&state.pool, date).await?))
 }
 
 /// La trace simplifiée d'une séance, pour sa carte.
