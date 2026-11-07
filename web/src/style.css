@@ -30,6 +30,11 @@
    * Steam : son bleu, plus franc et plus violet que le bleu-vert des séances (à ma demande, 7 nov. 2026).
    */
   --steam: #1769d6;
+  /*
+   * Déplacements (iPhone) : un vert d'eau, entre le vert des pas et le bleu des séances, loin des deux ;
+   * lisible en texte sur fond clair, et sur les tuiles d'OpenStreetMap.
+   */
+  --location: #00796b;
   --segment-on: #ffffff;
   --check: #c98500;
   /* La barre latérale : un cran sous le fond de page, comme la barre de Réglages sur Mac. */
@@ -85,6 +90,7 @@
     --video: #da8fff;
     --twitch: #ff6fd8;
     --steam: #4ea1ff;
+    --location: #3ad6b4;
     --segment-on: #636366;
     --check: #ffcc4d;
     --sidebar-bg: #121214;
@@ -419,6 +425,11 @@ button:disabled {
 }
 
 .card-steam {
+  flex: 2 1 420px;
+  min-width: 0;
+}
+
+.card-location {
   flex: 2 1 420px;
   min-width: 0;
 }
@@ -1221,6 +1232,10 @@ button:disabled {
 
 .heat-steam {
   --heat: var(--steam);
+}
+
+.heat-location {
+  --heat: var(--location);
 }
 
 .heat-neutral {
@@ -2245,6 +2260,76 @@ button:disabled {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
+}
+
+/* ─── La carte Déplacements (iPhone) ─────────────────────────────────────── */
+
+.card-title-location,
+.card-location .more {
+  color: var(--location);
+}
+
+/* Un lieu : sa pastille numérotée, la même que sur la carte, puis ses heures et sa durée. */
+.visit {
+  justify-content: flex-start;
+}
+
+.visit-text {
+  flex: 1;
+}
+
+.visit-number,
+.visit-pin span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--location);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* L'épingle sur la carte : un liseré blanc pour se détacher des tuiles et de la trace. */
+.visit-pin {
+  background: none;
+  border: 0;
+}
+
+.visit-pin span {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: auto;
+  min-width: 24px;
+  padding: 0 7px;
+  border-radius: 12px;
+  white-space: nowrap;
+  box-shadow: 0 0 0 2px #ffffff, 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+@media (prefers-color-scheme: dark) {
+  /* Le vert d'eau clair du sombre porte un chiffre sombre, lisible. */
+  .visit-number,
+  .visit-pin span {
+    color: #002a22;
+  }
+}
+
+/* Lu par un lecteur d'écran seulement. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* ─── Le retour de Google (/autorisation) ────────────────────────────────── */

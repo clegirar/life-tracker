@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { SourcesHealth, Workout } from './api'
 import { integerText, isEmpty, kmText, sleepHeartRate, sleepSpan, sleepStages, sleepText, workoutFigures, workoutType } from './activity'
 import type { useActivity } from './useActivity'
@@ -18,8 +18,11 @@ interface Props {
   shown: string[]
 }
 
-/** La carte d'une séance, montée quand elle approche de l'écran ; d'ici là, un cadre de même taille. */
-function LazyRouteMap({ activityId, label }: { activityId: number; label: string }) {
+/**
+ * Une carte du jour (séance, déplacements), montée quand elle approche de l'écran ; d'ici là, un cadre
+ * de même taille. `children` est la carte chargée à part (React.lazy) : rien ne se charge avant.
+ */
+export function MapFigure({ testId, children }: { testId: string; children: ReactNode }) {
   const frame = useRef<HTMLDivElement>(null)
   const [near, setNear] = useState(false)
   useEffect(() => {
@@ -35,13 +38,9 @@ function LazyRouteMap({ activityId, label }: { activityId: number; label: string
     return () => observer.disconnect()
   }, [near])
   return (
-    <figure className="route" data-testid="route-map">
+    <figure className="route" data-testid={testId}>
       <div ref={frame} className="route-frame">
-        {near && (
-          <Suspense fallback={null}>
-            <RouteMap activityId={activityId} label={label} />
-          </Suspense>
-        )}
+        {near && <Suspense fallback={null}>{children}</Suspense>}
       </div>
       <figcaption className="route-credit">
         <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
@@ -72,7 +71,11 @@ function WorkoutRow({ workout }: { workout: Workout }) {
           ))}
         </dl>
       )}
-      {workout.has_track && <LazyRouteMap activityId={details.activity_id} label={`Parcours : ${type.toLowerCase()} de ${workout.time}`} />}
+      {workout.has_track && (
+        <MapFigure testId="route-map">
+          <RouteMap activityId={details.activity_id} label={`Parcours : ${type.toLowerCase()} de ${workout.time}`} />
+        </MapFigure>
+      )}
     </li>
   )
 }

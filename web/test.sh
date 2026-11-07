@@ -99,6 +99,12 @@ export E2E_STEAM_TOKEN
 for kind in steam.playtime steam.achievement; do
   ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin grant-kind steam "$kind" 2>/dev/null
 done
+# La position de l'iPhone : la source d'Overland, comme sur le NAS (seuil de 2 jours, libellé posé à la création).
+E2E_IPHONE_TOKEN="$(ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin create-source iphone --silence-threshold "2 days" --label "Position (iPhone)" 2>/dev/null)"
+export E2E_IPHONE_TOKEN
+for kind in overland.location overland.visit; do
+  ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin grant-kind iphone "$kind" 2>/dev/null
+done
 # Les noms affichés de la page d'état, comme sur le NAS.
 ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin set-label garmin "Garmin Connect" 2>/dev/null
 ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin set-label lastfm "Musique" 2>/dev/null
@@ -128,7 +134,7 @@ npx playwright test "$@"
 
 echo "▶ Les logs du backend ne contiennent ni mot de passe ni token"
 # Sans l'horodatage : « …:48.853Z » ressemble à la latitude des parcours fictifs.
-if sed 's/"timestamp":"[^"]*"//' "$LOG" | grep -qF -e "$E2E_PASSWORD" -e "$E2E_IOS_TOKEN" -e "$E2E_LASTFM_TOKEN" -e "$E2E_APPLE_TOKEN" -e "$E2E_GARMIN_TOKEN" -e "$E2E_YOUTUBE_TOKEN" -e "$E2E_TWITCH_TOKEN" -e "$E2E_STEAM_TOKEN" -e "JeuFictif" -e "Jeu Fictif" -e "Succès fictif" -e "StreamFictif" -e "streamfictif" -e "Ville Fictive" -e "Chaîne Fictive" -e "vidéo fictive" -e "Fictif-code" -e "etatFictif" -e "48.85" -e "Artiste Fictif" -e "Titre fictif"; then
+if sed 's/"timestamp":"[^"]*"//' "$LOG" | grep -qF -e "$E2E_PASSWORD" -e "$E2E_IOS_TOKEN" -e "$E2E_LASTFM_TOKEN" -e "$E2E_APPLE_TOKEN" -e "$E2E_GARMIN_TOKEN" -e "$E2E_YOUTUBE_TOKEN" -e "$E2E_TWITCH_TOKEN" -e "$E2E_STEAM_TOKEN" -e "$E2E_IPHONE_TOKEN" -e "JeuFictif" -e "Jeu Fictif" -e "Succès fictif" -e "StreamFictif" -e "streamfictif" -e "Ville Fictive" -e "Chaîne Fictive" -e "vidéo fictive" -e "Fictif-code" -e "etatFictif" -e "48.85" -e "Artiste Fictif" -e "Titre fictif" -e "Réseau fictif" -e "iphone-fictif"; then
   echo "ÉCHEC : secret dans les logs" >&2
   exit 1
 fi

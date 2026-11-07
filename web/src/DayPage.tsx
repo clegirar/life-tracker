@@ -2,6 +2,8 @@ import { useRef, useState, type ReactNode } from 'react'
 import type { MonthDay, MonthMetric } from './api'
 import { ACTIVITY_METRICS, ActivityCard } from './ActivityCard'
 import type { useActivity } from './useActivity'
+import { LocationCard } from './LocationCard'
+import type { useLocations } from './useLocations'
 import { monthName, monthOf } from './calendar'
 import type { Op } from './reconcile'
 import { isAdd } from './reconcile'
@@ -40,6 +42,7 @@ interface Props {
   video: ReturnType<typeof useVideo>
   twitch: ReturnType<typeof useTwitch>
   steam: ReturnType<typeof useSteam>
+  locations: ReturnType<typeof useLocations>
 }
 
 function Chevron({ d }: { d: string }) {
@@ -77,6 +80,7 @@ export function DayPage({
   video,
   twitch,
   steam,
+  locations,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [picked, setPicked] = useState('12:00')
@@ -275,6 +279,8 @@ export function DayPage({
         {shows('stream.watch') && <TwitchCard date={date} today={today} state={twitch} health={music.health} calendarDay={calendarDay} />}
         {/* Les succès n'ont pas de filtre : la carte les montre avec le temps de jeu. */}
         {shows('game.play') && <SteamCard date={date} today={today} state={steam} health={music.health} calendarDay={calendarDay} />}
+        {/* La trace n'a pas de filtre (`location.point` est hors du calendrier) : elle suit les lieux. */}
+        {shows('place.visit') && <LocationCard date={date} today={today} state={locations} health={music.health} />}
       </div>
     </main>
   )

@@ -55,12 +55,16 @@ describe('les textes', () => {
     expect(valueText(METRICS[0], 0)).toBe('0 café')
     expect(valueText(METRICS[0], 3)).toBe('3 cafés')
     expect(valueText(METRICS[1], 1)).toBe('1 écoute')
+    const places = { metric: 'place.visit', label: 'Lieux', unit: 'lieu' }
+    expect(valueText(places, 1)).toBe('1 lieu')
+    expect(valueText(places, 3)).toBe('3 lieux')
   })
 
   it('disent ce qui manque à la journée', () => {
     const notes = dayNotes(day({ errors: 2, pending: ['lastfm-2'], to_check: ['music.listen'] }), METRICS)
     expect(notes).toEqual(['journée incomplète, 2 enregistrements en erreur', 'en attente de Last.fm', 'écoutes à vérifier'])
     expect(sourceName('apple')).toBe('apple')
+    expect(sourceName('iphone-2')).toBe('iPhone')
     expect(cellLabel(day({ errors: 1 }), METRICS, '2026-11-02')).toBe(
       'Dimanche 25 octobre : cafés : pas de données, 0 écoute, journée incomplète, 1 enregistrement en erreur',
     )

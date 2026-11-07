@@ -287,6 +287,48 @@ describe("l'accord à donner (YouTube)", () => {
   })
 })
 
+describe("l'iPhone (Overland)", () => {
+  const iphone = (overrides: Partial<SourceStatus> = {}) =>
+    source({
+      name: 'iphone',
+      label: 'Position (iPhone)',
+      silence_threshold_seconds: 172_800,
+      status: null,
+      status_reported_at: null,
+      metrics: [
+        { metric: 'location.point', label: 'Position', last_at: iso(-15 * MIN) },
+        { metric: 'place.visit', label: 'Lieux', last_at: iso(-3 * HOUR) },
+      ],
+      ...overrides,
+    })
+
+  it("dit le dernier envoi de l'iPhone, la dernière position et le dernier lieu, sans passe", () => {
+    const card = sourceCard(iphone(), NOW)
+    expect(card.state).toBe('ok')
+    expect(card.title).toBe('Position (iPhone)')
+    expect(card.lines).toEqual([
+      { label: "Dernier envoi de l'iPhone", value: `il y a 10${NBSP}min` },
+      { label: 'Dernière position', value: `il y a 15${NBSP}min` },
+      { label: 'Dernier lieu', value: `il y a 3${NBSP}h` },
+    ])
+    expect(sourceCard(iphone({ last_seen_at: null, metrics: [] }), NOW).lines).toEqual([{ label: "Dernier envoi de l'iPhone", value: "aucun pour l'instant" }])
+    expect(card.guidance).toBeNull()
+  })
+
+  it('silencieux, renvoie vers Tailscale, Overland et la localisation « Toujours », pas vers le NAS', () => {
+    const card = sourceCard(iphone({ name: 'iphone-2', silent: true, last_seen_at: iso(-3 * DAY) }), NOW)
+    expect(card.state).toBe('silent')
+    expect(card.guidance?.title).toBe(`Aucun envoi de l'iPhone depuis plus de 2${NBSP}jours : des déplacements peuvent manquer.`)
+    const steps = card.guidance?.steps.join(' ') ?? ''
+    expect(steps).toContain('Tailscale')
+    expect(steps).toContain('Overland')
+    expect(steps).toContain('« Toujours »')
+    expect(steps).toContain('401')
+    expect(steps).not.toContain('collector')
+    expect(card.guidance?.note).toContain("Rien n'est perdu")
+  })
+})
+
 describe("l'extension Twitch", () => {
   const twitch = (overrides: Partial<SourceStatus> = {}) =>
     source({
