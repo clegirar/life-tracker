@@ -71,9 +71,6 @@ export function channelOfDay(watches: VideoWatch[]): { name: string; count: numb
   return best
 }
 
-/** Les chaînes regardées pour la première fois ce jour-là, dans l'ordre du serveur. */
-export const newChannels = (day: DayVideo) => day.discoveries.filter((d) => d.level === 'channel')
-
 /** La source YouTube se tait : des vues de ce jour peuvent manquer. */
 export const youtubeSilent = (health: SourcesHealth | null) =>
   health?.sources.some((source) => isYoutube(source.name) && source.silent) ?? false

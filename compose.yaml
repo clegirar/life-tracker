@@ -93,9 +93,10 @@ services:
     security_opt: ["no-new-privileges:true"]
     logging: *logging
 
-  # Interroge Last.fm, Garmin et YouTube, chacun si sa clé est dans le fichier de secrets, et écrit par
-  # l'API d'ingestion. Seul à sortir vers Internet : ni la base, ni le web. YouTube joint
-  # oauth2.googleapis.com, dataportability.googleapis.com, storage.googleapis.com et www.googleapis.com.
+  # Interroge Last.fm, Garmin, YouTube et Steam, chacun si sa clé est dans le fichier de secrets, et
+  # écrit par l'API d'ingestion. Seul à sortir vers Internet : ni la base, ni le web. YouTube joint
+  # oauth2.googleapis.com, dataportability.googleapis.com, storage.googleapis.com et www.googleapis.com ;
+  # Steam, api.steampowered.com.
   collector:
     image: ${TRACKER_IMAGE_PREFIX:?}/backend:${TRACKER_TAG:?}
     command: ["collect"]
@@ -110,10 +111,10 @@ services:
       - collector-state:/var/lib/life-tracker
     healthcheck:
       # L'état de chaque connecteur configuré est réécrit à chaque passage réussi : Last.fm et YouTube
-      # toutes les 5 min, Garmin tous les quarts d'heure. « unhealthy » sans redémarrage : le collecteur
-      # réessaie déjà seul, et la page d'état signale le silence de la source (une clé Garmin refusée,
-      # un accord YouTube à donner aussi).
-      test: ["CMD-SHELL", "fresh() { test -n \"$$(find /var/lib/life-tracker/$$1 -mmin -360)\"; }; { test -z \"$$LASTFM_API_KEY\" || fresh state.json; } && { test -z \"$$GARMIN_API_KEY\" || fresh garmin-state.json; } && { test -z \"$$YOUTUBE_CLIENT_ID\" || fresh youtube-state.json; }"]
+      # toutes les 5 min, Garmin et Steam tous les quarts d'heure. « unhealthy » sans redémarrage : le
+      # collecteur réessaie déjà seul, et la page d'état signale le silence de la source (une clé Garmin
+      # ou Steam refusée, un accord YouTube à donner aussi).
+      test: ["CMD-SHELL", "fresh() { test -n \"$$(find /var/lib/life-tracker/$$1 -mmin -360)\"; }; { test -z \"$$LASTFM_API_KEY\" || fresh state.json; } && { test -z \"$$GARMIN_API_KEY\" || fresh garmin-state.json; } && { test -z \"$$YOUTUBE_CLIENT_ID\" || fresh youtube-state.json; } && { test -z \"$$STEAM_API_KEY\" || fresh steam-state.json; }"]
       interval: 5m
       timeout: 5s
       retries: 1

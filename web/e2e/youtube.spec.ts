@@ -208,9 +208,8 @@ test('la carte du jour : vidéos, durée des vidéos, vidéo indisponible et lie
   const box = await watches.nth(2).getByTestId('video-thumb').boundingBox()
   expect(box && Math.round((box.width / box.height) * 9)).toBe(16)
 
-  const channels = video.getByTestId('new-channels')
-  await expect(channels.locator('.row')).toHaveCount(1)
-  await expect(channels).toContainText('Chaîne Fictive B')
+  // Pas de « Nouvelles chaînes », retirées à ma demande.
+  await expect(video.getByTestId('new-channels')).toHaveCount(0)
   await checkLayout(page)
 
   // Avant l'historique : pas de données, pas « aucune vidéo ».

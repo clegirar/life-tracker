@@ -1,0 +1,5 @@
+{"records":[
+  {"key":"playtime:4242:120","kind":"steam.playtime","schema_version":1,"occurred_at":"2026-11-06T20:15:00Z","payload":{"appid":4242,"name":"Jeu Fictif","playtime_forever":120,"playtime_disconnected":0,"rtime_last_played":null,"previous":null}},
+  {"key":"playtime:4242:160","kind":"steam.playtime","schema_version":1,"occurred_at":"2026-11-06T21:00:00Z","payload":{"appid":4242,"name":"Jeu Fictif","playtime_forever":160,"playtime_disconnected":0,"rtime_last_played":1793998500,"previous":{"playtime_forever":120,"observed_at":"2026-11-06T20:15:00Z"}}},
+  {"key":"achievement:4242:ACH_FICTIF","kind":"steam.achievement","schema_version":1,"occurred_at":"2026-11-06T20:50:00Z","payload":{"appid":4242,"game_name":"Jeu Fictif","apiname":"ACH_FICTIF","name":"Succès fictif"}}
+]}

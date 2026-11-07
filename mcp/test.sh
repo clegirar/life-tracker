@@ -69,7 +69,10 @@ for kind in garmin.daily_summary garmin.sleep garmin.activity garmin.activity_tr
 done
 LT_MCP_TEST_TWITCH_TOKEN="$(admin create-source twitch --silence-threshold "3 days" --label "Twitch")"
 admin grant-kind twitch twitch.watch
-export LT_MCP_TEST_SERVICE_TOKEN LT_MCP_TEST_IOS_TOKEN LT_MCP_TEST_LASTFM_TOKEN LT_MCP_TEST_GARMIN_TOKEN LT_MCP_TEST_TWITCH_TOKEN
+LT_MCP_TEST_STEAM_TOKEN="$(admin create-source steam --silence-threshold "6 hours" --label "Steam")"
+admin grant-kind steam steam.playtime
+admin grant-kind steam steam.achievement
+export LT_MCP_TEST_SERVICE_TOKEN LT_MCP_TEST_IOS_TOKEN LT_MCP_TEST_LASTFM_TOKEN LT_MCP_TEST_GARMIN_TOKEN LT_MCP_TEST_TWITCH_TOKEN LT_MCP_TEST_STEAM_TOKEN
 
 API_PORT="$(free_port)"
 # Une zone de confidentialité fictive, centrée sur le départ de la séance du jeu de données.
@@ -93,12 +96,12 @@ rm -f "$OUT"
 [ "$status" = 0 ] || exit "$status"
 [ "$none_skipped" = 1 ] || { echo "ÉCHEC : des tests ont été sautés" >&2; exit 1; }
 
-echo "▶ Aucun appel MCP n'a écrit : le journal ne contient que le jeu de données (4 cafés, 6 Last.fm, 4 Garmin, 5 Twitch)"
+echo "▶ Aucun appel MCP n'a écrit : le journal ne contient que le jeu de données (4 cafés, 6 Last.fm, 4 Garmin, 5 Twitch, 3 Steam)"
 records="$(docker exec "$C" psql -U postgres -d tracker -Atc 'select count(*) from core.records')"
-[ "$records" = 19 ] || { echo "ÉCHEC : $records enregistrements au journal" >&2; exit 1; }
+[ "$records" = 22 ] || { echo "ÉCHEC : $records enregistrements au journal" >&2; exit 1; }
 
 echo "▶ Les logs du backend ne contiennent aucun jeton"
-if grep -qF -e "$LT_MCP_TEST_SERVICE_TOKEN" -e "$LT_MCP_TEST_IOS_TOKEN" -e "$LT_MCP_TEST_LASTFM_TOKEN" -e "$LT_MCP_TEST_GARMIN_TOKEN" -e "$LT_MCP_TEST_TWITCH_TOKEN" -e "Veridis" -e "Ville Fictive" -e "43.21" -e "5.432" "$LOG"; then
+if grep -qF -e "$LT_MCP_TEST_SERVICE_TOKEN" -e "$LT_MCP_TEST_IOS_TOKEN" -e "$LT_MCP_TEST_LASTFM_TOKEN" -e "$LT_MCP_TEST_GARMIN_TOKEN" -e "$LT_MCP_TEST_TWITCH_TOKEN" -e "$LT_MCP_TEST_STEAM_TOKEN" -e "Jeu Fictif" -e "Succès fictif" -e "Veridis" -e "Ville Fictive" -e "43.21" -e "5.432" "$LOG"; then
   echo "ÉCHEC : secret ou donnée dans les logs" >&2
   exit 1
 fi

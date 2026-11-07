@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DayVideo, SourcesHealth, VideoWatch } from './api'
-import { channelOfDay, newChannels, thumbnailUrl, totalText, videoEmptyText, videoUrl, watchRows, youtubeSilent } from './video'
+import { channelOfDay, thumbnailUrl, totalText, videoEmptyText, videoUrl, watchRows, youtubeSilent } from './video'
 
 const watch = (overrides: Partial<VideoWatch>): VideoWatch => ({
   time: '20:30',
@@ -96,12 +96,6 @@ describe('channelOfDay', () => {
     expect(channelOfDay(DAY.watches)).toBeNull()
     const again = watch({ occurred_at: '2026-10-14T21:00:00Z' })
     expect(channelOfDay([...DAY.watches, again])).toEqual({ name: 'Chaîne Fictive A', count: 2 })
-  })
-})
-
-describe('newChannels', () => {
-  it('garde les chaînes seules', () => {
-    expect(newChannels(DAY).map((d) => d.name)).toEqual(['Chaîne Fictive B'])
   })
 })
 

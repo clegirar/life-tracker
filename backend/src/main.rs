@@ -17,6 +17,9 @@ const LASTFM_PAUSE: Duration = Duration::from_millis(250);
 const GARMIN_PAUSE: Duration = Duration::from_secs(1);
 /// Tant qu'un accord YouTube est attendu : le code reçu par la web app s'échange dans la minute.
 const YOUTUBE_CONSENT_POLL: Duration = Duration::from_secs(60);
+/// Steam n'annonce pas de limite par seconde (100 000 appels par jour) : une seconde entre deux
+/// demandes de succès, le premier passage reste de quelques minutes.
+const STEAM_PAUSE: Duration = Duration::from_secs(1);
 
 #[derive(Parser)]
 #[command(
@@ -46,7 +49,7 @@ enum Command {
         #[arg(long, env = "PRIVACY_ZONES", hide_env_values = true)]
         privacy_zones: Option<String>,
     },
-    /// Interroge Last.fm, Garmin et YouTube, chacun si sa clé est fournie, et envoie à l'API
+    /// Interroge Last.fm, Garmin, YouTube et Steam, chacun si sa clé est fournie, et envoie à l'API
     /// d'ingestion, sans jamais connaître la base. Chaque connecteur a son token, son état et ses
     /// nouveaux essais
     Collect {
@@ -105,6 +108,19 @@ enum Command {
         /// Le seul préfixe accepté pour télécharger une archive d'export
         #[arg(long, env = "YOUTUBE_STORAGE_URL", default_value = collector::youtube::DEFAULT_STORAGE_URL)]
         youtube_storage_url: String,
+        /// La clé de l'API Web de Steam (steamcommunity.com/dev/apikey)
+        #[arg(long, env = "STEAM_API_KEY", hide_env_values = true)]
+        steam_api_key: Option<String>,
+        /// L'identifiant Steam 64 bits du compte
+        #[arg(long, env = "STEAM_ID", hide_env_values = true)]
+        steam_id: Option<String>,
+        /// Le token de la source Steam
+        #[arg(long, env = "STEAM_TOKEN", hide_env_values = true)]
+        steam_token: Option<String>,
+        #[arg(long, env = "STEAM_API_URL", default_value = collector::steam::DEFAULT_STEAM_URL)]
+        steam_url: String,
+        #[arg(long, env = "STEAM_INTERVAL_SECONDS", default_value_t = 900)]
+        steam_interval_seconds: u64,
         #[arg(long, env = "INGEST_URL")]
         ingest_url: String,
         /// Où garder l'état de chaque connecteur ; le perdre ne coûte qu'un rattrapage
@@ -226,6 +242,11 @@ async fn main() -> Result<()> {
             youtube_portability_url,
             youtube_data_url,
             youtube_storage_url,
+            steam_api_key,
+            steam_id,
+            steam_token,
+            steam_url,
+            steam_interval_seconds,
             ingest_url,
             state_dir,
         } => {
@@ -288,10 +309,10 @@ async fn main() -> Result<()> {
                     client_secret,
                     redirect_uri,
                     api_key,
-                    ingest_url,
+                    ingest_url: ingest_url.clone(),
                     token,
                     source: youtube_source,
-                    state_dir,
+                    state_dir: state_dir.clone(),
                     interval: Duration::from_secs(youtube_interval_seconds),
                     consent_poll: YOUTUBE_CONSENT_POLL,
                     auth_url: collector::youtube::DEFAULT_AUTH_URL.to_owned(),
@@ -307,13 +328,27 @@ async fn main() -> Result<()> {
                      YOUTUBE_API_KEY et YOUTUBE_TOKEN ensemble"
                 ),
             };
-            if lastfm.is_none() && garmin.is_none() && youtube.is_none() {
+            let steam = match (set(steam_api_key), set(steam_id), set(steam_token)) {
+                (None, None, None) => None,
+                (Some(api_key), Some(steam_id), Some(token)) => Some(collector::steam::Config {
+                    api_url: steam_url,
+                    api_key,
+                    steam_id,
+                    ingest_url,
+                    token,
+                    state_dir,
+                    interval: Duration::from_secs(steam_interval_seconds),
+                    pause: STEAM_PAUSE,
+                }),
+                _ => bail!("Steam demande STEAM_API_KEY, STEAM_ID et STEAM_TOKEN ensemble"),
+            };
+            if lastfm.is_none() && garmin.is_none() && youtube.is_none() && steam.is_none() {
                 bail!(
-                    "aucun connecteur : LASTFM_API_KEY (Last.fm), GARMIN_API_KEY (Garmin) ou \
-                     YOUTUBE_CLIENT_ID (YouTube) est requis"
+                    "aucun connecteur : LASTFM_API_KEY (Last.fm), GARMIN_API_KEY (Garmin), \
+                     YOUTUBE_CLIENT_ID (YouTube) ou STEAM_API_KEY (Steam) est requis"
                 );
             }
-            collect(lastfm, garmin, youtube).await
+            collect(lastfm, garmin, youtube, steam).await
         }
         Command::ImportApple {
             archive,
@@ -338,6 +373,7 @@ async fn collect(
     lastfm: Option<collector::Config>,
     garmin: Option<collector::garmin::Config>,
     youtube: Option<collector::youtube::Config>,
+    steam: Option<collector::steam::Config>,
 ) -> Result<()> {
     let filter = [
         "reqwest=off",
@@ -367,6 +403,10 @@ async fn collect(
     }
     if let Some(config) = youtube {
         let connector = collector::youtube::Collector::new(config)?;
+        workers.push(tokio::spawn(connector.run(stopped.clone())));
+    }
+    if let Some(config) = steam {
+        let connector = collector::steam::Collector::new(config)?;
         workers.push(tokio::spawn(connector.run(stopped.clone())));
     }
     shutdown_signal().await;

@@ -3,7 +3,7 @@ import type { SourcesHealth } from './api'
 import { MoreButton } from './MusicCard'
 import { plural, visibleRows } from './music'
 import type { useVideo } from './useVideo'
-import { channelOfDay, newChannels, totalText, videoEmptyText, watchRows, youtubeSilent, type WatchRow } from './video'
+import { channelOfDay, totalText, videoEmptyText, watchRows, youtubeSilent, type WatchRow } from './video'
 
 interface Props {
   date: string
@@ -69,19 +69,16 @@ function WatchLine({ row }: { row: WatchRow }) {
 
 export function VideoCard({ date, today, state, health }: Props) {
   // Déplié pour un jour : changer de jour replie, même en revenant.
-  const [unfolded, setUnfolded] = useState({ date: '', channels: false, watches: false })
-  const channelsSection = useRef<HTMLElement>(null)
+  const [unfolded, setUnfolded] = useState({ date: '', watches: false })
   const watchesSection = useRef<HTMLElement>(null)
   const { video, loadFailed } = state
-  const open = unfolded.date === date ? unfolded : { date, channels: false, watches: false }
-  const toggle = (part: 'channels' | 'watches') => setUnfolded({ ...open, [part]: !open[part] })
+  const open = unfolded.date === date ? unfolded : { date, watches: false }
+  const toggle = () => setUnfolded({ ...open, watches: !open.watches })
 
   const watched = video !== null && video.count > 0
   const rows = watched ? watchRows(video) : []
-  const channels = watched ? newChannels(video) : []
   const topChannel = watched ? channelOfDay(video.watches) : null
   const shownRows = visibleRows(rows, open.watches).shown
-  const shownChannels = visibleRows(channels, open.channels).shown
 
   return (
     <section className="card card-video" aria-labelledby="titre-youtube" data-testid="video">
@@ -139,27 +136,6 @@ export function VideoCard({ date, today, state, health }: Props) {
             )}
           </dl>
 
-          <section ref={channelsSection} className="music-section" aria-labelledby="titre-nouvelles-chaines" data-testid="new-channels">
-            <h3 id="titre-nouvelles-chaines" className="subsection-title">
-              Nouvelles chaînes
-              {channels.length > 0 && <span className="subsection-count subsection-count-video">{channels.length}</span>}
-            </h3>
-            {channels.length === 0 ? (
-              <p className="empty">Aucune nouvelle chaîne ce jour-là.</p>
-            ) : (
-              <ul className="rows">
-                {shownChannels.map((channel) => (
-                  <li key={channel.key} className="row">
-                    <div className="row-text">
-                      <p className="row-name">{channel.name}</p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <MoreButton total={channels.length} expanded={open.channels} onToggle={() => toggle('channels')} section={channelsSection} />
-          </section>
-
           <section ref={watchesSection} className="music-section" aria-labelledby="titre-vues" data-testid="video-watches">
             <h3 id="titre-vues" className="subsection-title">
               Vidéos vues
@@ -169,7 +145,7 @@ export function VideoCard({ date, today, state, health }: Props) {
                 <WatchLine key={row.key} row={row} />
               ))}
             </ul>
-            <MoreButton total={rows.length} expanded={open.watches} onToggle={() => toggle('watches')} section={watchesSection} />
+            <MoreButton total={rows.length} expanded={open.watches} onToggle={toggle} section={watchesSection} />
           </section>
         </>
       )}

@@ -12,6 +12,7 @@ import {
   login,
   openMenu,
   PASSWORD,
+  STEAM_TOKEN,
   TWITCH_TOKEN,
   USER,
   YOUTUBE_TOKEN,
@@ -83,7 +84,7 @@ test('les fiches, les autres clés et les échéances vivantes, sans aucune vale
 
   // Une fiche par tracker, dans l'ordre, puis les autres clés.
   const trackers = page.getByRole('region', { name: 'Trackers' }).getByRole('article')
-  await expect(trackers.getByRole('heading', { level: 3 })).toHaveText(['Café', 'Musique', 'Garmin Connect', 'YouTube', 'Twitch'])
+  await expect(trackers.getByRole('heading', { level: 3 })).toHaveText(['Café', 'Musique', 'Garmin Connect', 'YouTube', 'Twitch', 'Steam'])
   const others = page.getByRole('region', { name: 'Autres clés à gérer' }).getByRole('article')
   await expect(others.getByRole('heading', { level: 3 })).toHaveText([
     'Claude (serveur MCP)',
@@ -95,6 +96,9 @@ test('les fiches, les autres clés et les échéances vivantes, sans aucune vale
   ])
   await expect(sheet(page, 'garmin')).toContainText("tous les quarts d'heure")
   await expect(sheet(page, 'twitch')).toContainText('segments de 60 s')
+  await expect(sheet(page, 'steam')).toContainText("l'API Web de Steam tous les quarts d'heure")
+  await expect(sheet(page, 'steam')).toContainText('STEAM_API_KEY')
+  await expect(sheet(page, 'steam')).toContainText('Token de la source steam')
   await expect(sheet(page, 'musique')).toContainText('Token de la source apple')
   for (const name of ['NAS_SSH_KEY', 'TS_OAUTH_SECRET', 'WEB_EXT_API_KEY', 'MCP_LOGIN_HASH', 'tracker_owner', 'read:packages']) {
     await expect(page.locator('main')).toContainText(name)
@@ -112,7 +116,7 @@ test('les fiches, les autres clés et les échéances vivantes, sans aucune vale
 
   // Aucun token, aucun mot de passe de l'environnement de test dans la page.
   const html = await page.content()
-  for (const secret of [IOS_TOKEN, LASTFM_TOKEN, APPLE_TOKEN, GARMIN_TOKEN, YOUTUBE_TOKEN, TWITCH_TOKEN, PASSWORD]) {
+  for (const secret of [IOS_TOKEN, LASTFM_TOKEN, APPLE_TOKEN, GARMIN_TOKEN, YOUTUBE_TOKEN, TWITCH_TOKEN, STEAM_TOKEN, PASSWORD]) {
     expect(secret.length).toBeGreaterThan(8)
     expect(html.includes(secret)).toBe(false)
   }

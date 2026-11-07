@@ -1,0 +1,54 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH seen AS (\n             SELECT DISTINCT ON (i.level, i.item_key)\n                    e.generation, i.level, i.item_key, i.display,\n                    min(e.occurred_at) OVER (PARTITION BY i.level, i.item_key) AS first_at,\n                    ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings)) AS day_start\n             FROM derived.live_events e\n               JOIN derived.event_items i USING (generation, seq, ordinal)\n             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n               AND e.metric = $2\n               AND i.level = ANY($3)\n               AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n               AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n             ORDER BY i.level, i.item_key, e.occurred_at DESC, e.seq DESC\n           )\n           SELECT w.level, w.item_key, w.display\n           FROM seen w\n           LEFT JOIN LATERAL (\n             SELECT 1 AS found FROM derived.live_event_items x\n             WHERE x.generation = w.generation AND x.metric = $2\n               AND x.level = w.level AND x.item_key = w.item_key\n               AND x.occurred_at < w.day_start\n             LIMIT 1\n           ) earlier ON true\n           LEFT JOIN LATERAL (\n             SELECT 1 AS found FROM derived.live_event_items k\n             WHERE k.generation = w.generation\n               AND k.metric IN (SELECT m.metric FROM core.metrics m\n                                WHERE m.applies_to = $2 AND m.shape = 'declaration')\n               AND k.level = w.level AND k.item_key = w.item_key\n             LIMIT 1\n           ) known ON true\n           WHERE earlier.found IS NULL AND known.found IS NULL\n           ORDER BY array_position($3, w.level), w.first_at, w.item_key",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "level",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.event_items",
+            "name": "level"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "item_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.event_items",
+            "name": "item_key"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "display",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.event_items",
+            "name": "display"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date",
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "623a713799f7ea030212163f36617fbd0f6a6835f8e52719bae78262d652c17d"
+}

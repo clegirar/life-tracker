@@ -1,8 +1,10 @@
 // Les filtres : une pastille par métrique du registre, un seul choix pour le mois, l'année et le jour.
-// Un nouveau tracker y apparaît de lui-même. Au bout, « Tout cocher » ou « Tout décocher ».
+// Un nouveau tracker y apparaît de lui-même. Les métriques d'un groupe (`metricChips` : Pas, Séances,
+// Sommeil et Calories sous « Activité ») partagent une pastille, allumée dès que l'une est cochée. Au
+// bout, « Tout cocher » ou « Tout décocher ».
 
 import type { MonthMetric } from './api'
-import { metricTone } from './metrics'
+import { metricChips, metricTone } from './metrics'
 
 /** L'invitation d'une vue dont toutes les métriques sont décochées. */
 export const NO_METRIC = 'Choisis au moins une métrique.'
@@ -19,18 +21,12 @@ export function MetricFilters({ metrics, selected, onToggle, onSetAll }: Props) 
   const allOn = metrics.every((metric) => selected.includes(metric.metric))
   return (
     <div className="filters" role="group" aria-label="Métriques affichées">
-      {metrics.map((metric) => {
-        const on = selected.includes(metric.metric)
+      {metricChips(metrics).map((chip) => {
+        const on = chip.metrics.some((metric) => selected.includes(metric))
         return (
-          <button
-            key={metric.metric}
-            type="button"
-            className={`chip ${metricTone(metric.metric)}`}
-            aria-pressed={on}
-            onClick={() => onToggle(metric.metric)}
-          >
+          <button key={chip.id} type="button" className={`chip ${chip.tone}`} aria-pressed={on} onClick={() => onToggle(chip.id)}>
             <span className="chip-dot" aria-hidden="true" />
-            {metric.label}
+            {chip.label}
           </button>
         )
       })}

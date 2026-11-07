@@ -63,7 +63,7 @@ export const MARKER_LABELS: Record<Marker, string> = {
   check: 'À vérifier',
 }
 
-const SOURCE_NAMES: Record<string, string> = { lastfm: 'Last.fm', garmin: 'Garmin', twitch: 'Twitch' }
+const SOURCE_NAMES: Record<string, string> = { lastfm: 'Last.fm', garmin: 'Garmin', twitch: 'Twitch', steam: 'Steam' }
 
 /** Le nom d'une source tel qu'on le dit : `lastfm-2` reste Last.fm. */
 export function sourceName(name: string): string {

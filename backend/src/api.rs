@@ -27,6 +27,7 @@ use crate::admin::{generate_token, token_hash};
 use crate::auth;
 use crate::authorization::{self, Outcome};
 use crate::calendar;
+use crate::games;
 use crate::ingest::{Envelope, RejectReason, Rejection, parse_envelope};
 use crate::music::fold;
 use crate::privacy::Zones;
@@ -165,6 +166,9 @@ fn routes() -> Router<AppState> {
         // Pas dans `READ_ROUTES` : la carte Twitch de la web app ; le MCP lit les mêmes faits par les
         // lectures génériques.
         .route("/v1/days/{date}/stream", get(get_day_stream))
+        // Pas dans `READ_ROUTES` : la carte Steam de la web app ; le MCP lit les mêmes faits par les
+        // lectures génériques.
+        .route("/v1/days/{date}/games", get(get_day_games))
         // Pas dans `READ_ROUTES` : des coordonnées et des traces entières, pour la carte Activité.
         // Le MCP lit les siennes par les occurrences et `/v1/route`, à travers les zones.
         .route("/v1/days/{date}/activity", get(get_day_activity))
@@ -1319,6 +1323,16 @@ async fn get_day_stream(
 ) -> Result<Json<stream::DayStream>, ApiError> {
     let date = parse_day(&date).ok_or(ApiError::InvalidDate)?;
     Ok(Json(stream::day(&state.pool, date).await?))
+}
+
+/// Le temps joué sur Steam un jour, par jeu, avec le total de chaque jeu et les succès du jour (voir
+/// `games`).
+async fn get_day_games(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Result<Json<games::DayGames>, ApiError> {
+    let date = parse_day(&date).ok_or(ApiError::InvalidDate)?;
+    Ok(Json(games::day(&state.pool, date).await?))
 }
 
 /// Pas, calories, sommeil et séances d'un jour, avec leurs détails (voir `activity`).

@@ -12,8 +12,10 @@ import { MusicCard } from './MusicCard'
 import type { useMusic } from './useMusic'
 import { addDays, dayTitle, emptyLabel, longDate, parisInstant, parisTime } from './time'
 import type { useCoffee } from './useCoffee'
+import type { useSteam } from './useSteam'
 import type { useTwitch } from './useTwitch'
 import type { useVideo } from './useVideo'
+import { SteamCard } from './SteamCard'
 import { TwitchCard } from './TwitchCard'
 import { VideoCard } from './VideoCard'
 
@@ -37,6 +39,7 @@ interface Props {
   activity: ReturnType<typeof useActivity>
   video: ReturnType<typeof useVideo>
   twitch: ReturnType<typeof useTwitch>
+  steam: ReturnType<typeof useSteam>
 }
 
 function Chevron({ d }: { d: string }) {
@@ -73,6 +76,7 @@ export function DayPage({
   activity,
   video,
   twitch,
+  steam,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [picked, setPicked] = useState('12:00')
@@ -269,6 +273,8 @@ export function DayPage({
         {shows('music.listen') && <MusicCard date={date} today={today} state={music} />}
         {shows('video.watch') && <VideoCard date={date} today={today} state={video} health={music.health} />}
         {shows('stream.watch') && <TwitchCard date={date} today={today} state={twitch} health={music.health} calendarDay={calendarDay} />}
+        {/* Les succès n'ont pas de filtre : la carte les montre avec le temps de jeu. */}
+        {shows('game.play') && <SteamCard date={date} today={today} state={steam} health={music.health} calendarDay={calendarDay} />}
       </div>
     </main>
   )

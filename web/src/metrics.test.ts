@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { MonthDay } from './api'
-import { dayActivity, effectiveSelection, metricTone, setAll, toggleMetric, visibleDots } from './metrics'
+import type { MonthDay, MonthMetric } from './api'
+import { dayActivity, effectiveSelection, metricChips, metricTone, setAll, toggleMetric, visibleDots } from './metrics'
 
 const ALL = ['coffee', 'music.listen']
 
@@ -31,6 +31,45 @@ describe('le choix des métriques', () => {
     expect(setAll(ALL, true)).toEqual(ALL)
     expect(setAll(ALL, true)).not.toBe(ALL)
     expect(setAll(ALL, false)).toEqual([])
+  })
+})
+
+// Le registre tel que le mois le rend, dans l'ordre d'affichage.
+const REGISTRY = ['coffee', 'music.listen', 'steps', 'workout', 'sleep', 'calories.burned', 'game.play']
+const GARMIN = ['steps', 'workout', 'sleep', 'calories.burned']
+const registry = (ids: string[]): MonthMetric[] =>
+  ids.map((metric) => ({ metric, label: metric, unit: null }))
+
+describe('la pastille « Activité »', () => {
+  it('remplace Pas, Séances, Sommeil et Calories, à la place de la première', () => {
+    const chips = metricChips(registry(REGISTRY))
+    expect(chips.map((chip) => chip.label)).toEqual(['coffee', 'music.listen', 'Activité', 'game.play'])
+    expect(chips[2]).toEqual({ id: 'steps', label: 'Activité', tone: 'heat-steps', metrics: GARMIN })
+    expect(chips[0]).toEqual({ id: 'coffee', label: 'coffee', tone: 'heat-coffee', metrics: ['coffee'] })
+  })
+
+  it('ne coche que les métriques du registre', () => {
+    const chips = metricChips(registry(['coffee', 'sleep', 'steps']))
+    expect(chips.map((chip) => [chip.label, chip.metrics])).toEqual([
+      ['coffee', ['coffee']],
+      ['Activité', ['sleep', 'steps']],
+    ])
+    expect(toggleMetric(['coffee'], 'sleep', ['coffee', 'sleep', 'steps'])).toEqual(['coffee', 'sleep', 'steps'])
+  })
+
+  it('coche et décoche les quatre ensemble, quelle que soit la métrique de l’appui', () => {
+    expect(toggleMetric(['coffee'], 'steps', REGISTRY)).toEqual(['coffee', ...GARMIN])
+    expect(toggleMetric(['coffee', ...GARMIN], 'steps', REGISTRY)).toEqual(['coffee'])
+    expect(toggleMetric(['coffee', ...GARMIN], 'sleep', REGISTRY)).toEqual(['coffee'])
+    expect(toggleMetric(GARMIN, 'steps', REGISTRY)).toEqual([])
+  })
+
+  it('un ancien choix d’une partie du groupe compte pour tout le groupe', () => {
+    expect(effectiveSelection(['coffee', 'sleep'], REGISTRY)).toEqual(['coffee', ...GARMIN])
+    expect(effectiveSelection(['coffee'], REGISTRY)).toEqual(['coffee'])
+    // Allumée par une seule métrique, la pastille s'éteint d'un appui, les quatre avec elle.
+    expect(toggleMetric(['coffee', 'sleep'], 'steps', REGISTRY)).toEqual(['coffee'])
+    expect(setAll(REGISTRY, false)).toEqual([])
   })
 })
 

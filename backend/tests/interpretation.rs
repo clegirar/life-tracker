@@ -597,7 +597,8 @@ async fn concurrent_starters_establish_one_active_generation() {
         json!({"coffee.cup": 1, "record.cancel": 1, "lastfm.scrobble": 2, "lastfm.track_info": 2,
                "music.mark_known": 2, "apple.play_history_row": 2, "garmin.daily_summary": 1,
                "garmin.sleep": 2, "garmin.activity": 1, "garmin.activity_track": 1,
-               "youtube.watch": 1, "youtube.video_info": 1, "twitch.watch": 1})
+               "youtube.watch": 1, "youtube.video_info": 1, "twitch.watch": 1,
+               "steam.playtime": 1, "steam.achievement": 1})
     );
 }
 

@@ -128,10 +128,58 @@ describe("l'état d'une carte", () => {
   })
 
   it('traduit chaque raison', () => {
-    for (const reason of ['consent_required', 'consent_expired', 'rate_limited', 'service_unavailable', 'ingest_failed'] as const) {
+    for (const reason of ['consent_required', 'consent_expired', 'profile_private', 'rate_limited', 'service_unavailable', 'ingest_failed'] as const) {
       const card = sourceCard(source({ status: { state: 'error', reason, expires_at: null, next_run_at: null } }), NOW)
       expect(card.guidance?.title, reason).toBeTruthy()
     }
+  })
+})
+
+describe('le collecteur Steam', () => {
+  const steam = (overrides: Partial<SourceStatus> = {}) =>
+    source({
+      name: 'steam',
+      label: 'Steam',
+      silence_threshold_seconds: 21_600,
+      status: { state: 'ok', reason: null, expires_at: null, next_run_at: iso(10 * MIN), last_collected_at: iso(-5 * MIN) },
+      metrics: [
+        { metric: 'game.play', label: 'Jeux', last_at: iso(-2 * HOUR) },
+        { metric: 'game.achievement', label: 'Succès', last_at: iso(-3 * HOUR) },
+      ],
+      ...overrides,
+    })
+
+  it('dit la dernière partie et le dernier succès, sans échéance de clé', () => {
+    const card = sourceCard(steam(), NOW)
+    expect(card.state).toBe('ok')
+    expect(card.lines).toContainEqual({ label: 'Dernière partie', value: `il y a 2${NBSP}h` })
+    expect(card.lines).toContainEqual({ label: 'Dernier succès', value: `il y a 3${NBSP}h` })
+    expect(card.lines.map((line) => line.label)).not.toContain('Clé')
+  })
+
+  it('à faire quand le profil est privé, même sans collecte réussie', () => {
+    const card = sourceCard(
+      steam({ status: { state: 'action_required', reason: 'profile_private', expires_at: null, next_run_at: null, last_collected_at: null } }),
+      NOW,
+    )
+    expect(card.state).toBe('todo')
+    expect(card.guidance?.title).toBe('Le profil Steam est privé : Steam ne donne ni les jeux ni les succès.')
+    expect(card.guidance?.steps.join(' ')).toContain('« Détails des jeux »')
+    expect(card.lines.map((line) => line.label)).not.toContain('Dernière collecte')
+  })
+
+  it('une clé refusée renvoie vers `STEAM_API_KEY`', () => {
+    const card = sourceCard(steam({ status: { state: 'action_required', reason: 'key_rejected', expires_at: null, next_run_at: null } }), NOW)
+    expect(card.state).toBe('todo')
+    expect(card.guidance?.title).toMatch(/^Steam refuse la clé/)
+    expect(card.guidance?.steps.join(' ')).toContain('`STEAM_API_KEY`')
+  })
+
+  it('silencieux, renvoie vers le collecteur du NAS', () => {
+    const card = sourceCard(steam({ silent: true, last_seen_at: iso(-8 * HOUR) }), NOW)
+    expect(card.state).toBe('silent')
+    expect(card.guidance?.title).toBe(`Aucun contact réussi avec Steam depuis plus de 6${NBSP}h : des données peuvent manquer.`)
+    expect(card.guidance?.steps.join(' ')).toContain('sudo docker compose ps collector')
   })
 })
 

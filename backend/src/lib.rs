@@ -8,6 +8,7 @@ pub mod calendar;
 pub mod collector;
 pub mod db;
 pub mod engine;
+pub mod games;
 pub mod ingest;
 pub mod ingest_client;
 pub mod interpreters;
