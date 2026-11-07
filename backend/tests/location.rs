@@ -7,7 +7,7 @@ mod common;
 use common::*;
 use life_tracker::interpreters::INTERPRETERS;
 use life_tracker::privacy::Zones;
-use life_tracker::{admin, api, engine};
+use life_tracker::{admin, api, engine, location};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -158,6 +158,26 @@ impl App {
 
     async fn locations(&self, date: &str) -> Value {
         self.get(&format!("/v1/days/{date}/locations")).await
+    }
+
+    /// La carte du jour à une heure fixée, pour le séjour en cours.
+    async fn locations_at(&self, date: &str, now: &str) -> Value {
+        self.settled().await;
+        let day = location::day(&self.db.app, date.parse().unwrap(), now.parse().unwrap())
+            .await
+            .unwrap();
+        serde_json::to_value(day).unwrap()
+    }
+
+    /// Le dernier contact de l'iPhone, que chaque envoi met à l'heure réelle.
+    async fn seen_at(&self, at: &str) {
+        sqlx::query(
+            "UPDATE core.sources SET last_seen_at = $1::text::timestamptz WHERE name = 'iphone'",
+        )
+        .bind(at)
+        .execute(&self.db.owner)
+        .await
+        .unwrap();
     }
 
     async fn records(&self, kind: &str) -> i64 {
@@ -380,26 +400,27 @@ async fn the_day_map_has_its_cut_and_simplified_trace_and_its_places() {
         "coupée au silence de 40 min, simplifiée à 5 m, sans le point des antennes"
     );
     assert_eq!(
-        day["visits"],
+        day["places"],
         json!([
-            {"lat": 43.201, "lon": 5.285, "arrival": "2026-10-20T08:12:00Z",
+            {"origin": "visit", "lat": 43.201, "lon": 5.285, "arrival": "2026-10-20T08:12:00Z",
              "departure": "2026-10-20T08:48:00Z", "arrival_time": "10:12", "departure_time": "10:48",
              "arrived_before": false, "departed_after": false, "duration_s": 2160,
-             "horizontal_accuracy": 35.0},
-            {"lat": 43.3, "lon": 5.35, "arrival": "2026-10-20T20:00:00Z",
+             "ongoing": false, "horizontal_accuracy": 35.0},
+            {"origin": "visit", "lat": 43.3, "lon": 5.35, "arrival": "2026-10-20T20:00:00Z",
              "departure": "2026-10-21T06:00:00Z", "arrival_time": "22:00", "departure_time": "08:00",
              "arrived_before": false, "departed_after": true, "duration_s": 36000,
-             "horizontal_accuracy": 20.0},
-        ])
+             "ongoing": false, "horizontal_accuracy": 20.0},
+        ]),
+        "les points du lot ne restent nulle part 15 min"
     );
 
     let next = app.locations("2026-10-21").await;
     assert_eq!(next["covered"], true);
     assert_eq!(next["segments"], json!([]));
-    assert_eq!(next["visits"][0]["arrived_before"], true);
+    assert_eq!(next["places"][0]["arrived_before"], true);
     let quiet = app.locations("2026-10-22").await;
     assert_eq!(
-        (&quiet["covered"], &quiet["point_count"], &quiet["visits"]),
+        (&quiet["covered"], &quiet["point_count"], &quiet["places"]),
         (&json!(true), &json!(0), &json!([])),
         "un jour suivi sans point : sans déplacement"
     );
@@ -464,4 +485,186 @@ async fn the_mcp_sees_places_through_the_zone_and_never_a_point() {
     }
     let (status, _) = app.as_mcp(&format!("/v1/days/{DAY}/locations")).await;
     assert_eq!(status, 401, "la carte du jour est réservée à la session");
+}
+
+/// Des points à l'heure dite, en `HH:MM` UTC du jour donné.
+fn points(date: &str, at: &[(&str, f64, f64)]) -> Value {
+    let features: Vec<Value> = at
+        .iter()
+        .map(|(time, lat, lon)| point(&format!("{date}T{time}:00Z"), *lat, *lon))
+        .collect();
+    json!({ "locations": features })
+}
+
+/// Un trajet : des points à plus de 150 m les uns des autres.
+const MOVING: [(f64, f64); 3] = [(43.32, 5.38), (43.34, 5.40), (43.36, 5.42)];
+
+#[tokio::test]
+async fn hourly_points_make_stays_the_night_before_included() {
+    let app = App::new().await;
+    // La nuit à (43.4, 5.4) depuis 22:00 à Paris la veille, un trajet, la matinée à (43.3, 5.35)
+    // avec un peu de bruit, puis un départ.
+    let mut at = vec![
+        ("21:00", 43.4, 5.4),
+        ("22:00", 43.4003, 5.4),
+        ("23:00", 43.4, 5.4004),
+    ];
+    let night_before = points("2026-11-01", &at);
+    at = vec![
+        ("01:00", 43.4, 5.4),
+        ("04:00", 43.4002, 5.4002),
+        ("06:00", 43.4, 5.4),
+        ("07:00", MOVING[0].0, MOVING[0].1),
+        ("07:10", MOVING[1].0, MOVING[1].1),
+        ("07:20", MOVING[2].0, MOVING[2].1),
+        ("08:00", 43.3, 5.35),
+        ("09:00", 43.3005, 5.35),
+        ("10:00", 43.3, 5.3505),
+        ("11:00", 43.2995, 5.35),
+        ("11:30", 43.25, 5.30),
+        ("11:40", 43.22, 5.28),
+    ];
+    let day = points("2026-11-02", &at);
+    assert_eq!(app.post(&night_before).await.0, 200);
+    assert_eq!(app.post(&day).await.0, 200);
+
+    let places = app.locations("2026-11-02").await["places"].clone();
+    assert_eq!(
+        places,
+        json!([
+            {"origin": "points", "lat": 43.400083, "lon": 5.4001,
+             "arrival": "2026-11-01T21:00:00Z", "departure": "2026-11-02T07:00:00Z",
+             "arrival_time": "22:00", "departure_time": "08:00",
+             "arrived_before": true, "departed_after": false, "duration_s": 36000,
+             "ongoing": false, "horizontal_accuracy": null},
+            {"origin": "points", "lat": 43.3, "lon": 5.350125,
+             "arrival": "2026-11-02T08:00:00Z", "departure": "2026-11-02T11:30:00Z",
+             "arrival_time": "09:00", "departure_time": "12:30",
+             "arrived_before": false, "departed_after": false, "duration_s": 12600,
+             "ongoing": false, "horizontal_accuracy": null},
+        ]),
+        "le départ est le premier point du trajet qui suit"
+    );
+    // La veille voit la nuit partir le lendemain.
+    let before = app.locations("2026-11-01").await["places"].clone();
+    assert_eq!(before.as_array().unwrap().len(), 1);
+    assert_eq!(before[0]["departed_after"], true);
+    assert_eq!(before[0]["arrived_before"], false);
+    assert_eq!(before[0]["departure"], "2026-11-02T07:00:00Z");
+
+    // Une visite iOS sur la matinée : le séjour détecté s'efface devant elle.
+    let morning = visit(43.3, 5.35, "2026-11-02T07:55:00Z", "2026-11-02T11:05:00Z");
+    assert_eq!(app.post(&json!({"locations": [morning]})).await.0, 200);
+    let places = app.locations("2026-11-02").await["places"].clone();
+    let origins: Vec<(&str, &str)> = places
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (
+                p["origin"].as_str().unwrap(),
+                p["arrival"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        origins,
+        [
+            ("points", "2026-11-01T21:00:00Z"),
+            ("visit", "2026-11-02T07:55:00Z")
+        ]
+    );
+}
+
+#[tokio::test]
+async fn an_isolated_point_then_a_move_is_no_stay() {
+    let app = App::new().await;
+    let at = [
+        ("09:00", 43.3, 5.35),
+        ("09:20", MOVING[0].0, MOVING[0].1),
+        ("09:21", MOVING[1].0, MOVING[1].1),
+        ("09:22", MOVING[2].0, MOVING[2].1),
+    ];
+    assert_eq!(app.post(&points("2026-11-02", &at)).await.0, 200);
+    assert_eq!(app.locations("2026-11-02").await["places"], json!([]));
+    // Même aujourd'hui : le dernier point n'a que 3 min, je repars peut-être.
+    app.seen_at("2026-11-02T09:24:00Z").await;
+    let today = app.locations_at("2026-11-02", "2026-11-02T09:25:00Z").await;
+    assert_eq!(today["places"], json!([]));
+}
+
+#[tokio::test]
+async fn the_last_stay_is_ongoing_today_while_the_iphone_answers() {
+    let app = App::new().await;
+    let at = [
+        ("11:00", MOVING[0].0, MOVING[0].1),
+        ("12:00", 43.3, 5.35),
+        ("13:00", 43.3, 5.35),
+        ("14:00", 43.3, 5.35),
+    ];
+    assert_eq!(app.post(&points("2026-11-04", &at)).await.0, 200);
+    app.seen_at("2026-11-04T14:30:00Z").await;
+
+    let today = app.locations_at("2026-11-04", "2026-11-04T15:00:00Z").await;
+    assert_eq!(
+        today["places"],
+        json!([
+            {"origin": "points", "lat": 43.3, "lon": 5.35,
+             "arrival": "2026-11-04T12:00:00Z", "departure": null,
+             "arrival_time": "13:00", "departure_time": null,
+             "arrived_before": false, "departed_after": false, "duration_s": 10800,
+             "ongoing": true, "horizontal_accuracy": null},
+        ])
+    );
+
+    // L'iPhone se tait depuis plus de 70 min : le séjour s'arrête à son dernier point.
+    app.seen_at("2026-11-04T13:49:00Z").await;
+    let silent = app.locations_at("2026-11-04", "2026-11-04T15:00:00Z").await;
+    assert_eq!(silent["places"][0]["ongoing"], false);
+    assert_eq!(silent["places"][0]["departure"], "2026-11-04T14:00:00Z");
+    assert_eq!(silent["places"][0]["duration_s"], 7200);
+
+    // Un autre jour que celui de maintenant : jamais en cours.
+    app.seen_at("2026-11-05T09:30:00Z").await;
+    let later = app.locations_at("2026-11-04", "2026-11-05T10:00:00Z").await;
+    assert_eq!(later["places"][0]["ongoing"], false);
+    assert_eq!(later["places"][0]["departure_time"], "15:00");
+
+    // Un point ailleurs 2 h 30 après le dernier : trop tard pour dater le départ, le séjour finit
+    // toujours à son dernier point.
+    let far = points("2026-11-04", &[("16:30", MOVING[2].0, MOVING[2].1)]);
+    assert_eq!(app.post(&far).await.0, 200);
+    let after = app.locations_at("2026-11-04", "2026-11-05T10:00:00Z").await;
+    assert_eq!(after["places"][0]["departure"], "2026-11-04T14:00:00Z");
+    assert_eq!(after["places"][0]["duration_s"], 7200);
+}
+
+#[tokio::test]
+async fn a_single_point_becomes_an_ongoing_stay_after_ten_minutes() {
+    let app = App::new().await;
+    let at = [
+        ("13:40", MOVING[0].0, MOVING[0].1),
+        ("13:50", MOVING[1].0, MOVING[1].1),
+        ("14:00", 43.3, 5.35),
+    ];
+    assert_eq!(app.post(&points("2026-11-04", &at)).await.0, 200);
+    app.seen_at("2026-11-04T14:20:00Z").await;
+    let early = app.locations_at("2026-11-04", "2026-11-04T14:05:00Z").await;
+    assert_eq!(early["places"], json!([]), "5 min : peut-être un feu rouge");
+
+    let settled = app.locations_at("2026-11-04", "2026-11-04T14:30:00Z").await;
+    assert_eq!(
+        settled["places"],
+        json!([
+            {"origin": "points", "lat": 43.3, "lon": 5.35,
+             "arrival": "2026-11-04T14:00:00Z", "departure": null,
+             "arrival_time": "15:00", "departure_time": null,
+             "arrived_before": false, "departed_after": false, "duration_s": 1800,
+             "ongoing": true, "horizontal_accuracy": null},
+        ])
+    );
+    // Sans nouvelle de l'iPhone depuis ce point, rien n'est en cours.
+    app.seen_at("2026-11-04T13:59:00Z").await;
+    let unheard = app.locations_at("2026-11-04", "2026-11-04T14:30:00Z").await;
+    assert_eq!(unheard["places"], json!([]));
 }

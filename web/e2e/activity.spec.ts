@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
+import { kilometreMarkers } from '../src/kilometres'
 import { addDays, apiSession, checkLayout, DESKTOP, fullShot, GARMIN_TOKEN, login, parisToday, send } from './helpers'
 
 // La carte Activité (Garmin) et le calendrier à six métriques. Des jours que les autres fichiers
@@ -20,14 +21,19 @@ function parisNoon(date: string): string {
   return `${date}T12:00:00${offset || '+00:00'}`
 }
 
-/** Une boucle fictive : un ovale d'environ 1,6 km sur 0,9. */
+/**
+ * Un parcours fictif : les sept huitièmes d'un ovale d'environ 1,6 km sur 0,9 (3,6 km de trace, trois
+ * repères kilométriques), une allure qui varie d'un tronçon à l'autre (de 13 à 31 s entre deux points).
+ */
 function loop(): [number, number, number][] {
+  let seconds = 0
   return Array.from({ length: 80 }, (_, i) => {
-    const angle = (i / 79) * 2 * Math.PI
+    const angle = (i / 79) * 1.75 * Math.PI
+    if (i > 0) seconds += Math.round(22 + 9 * Math.sin(3 * angle))
     return [
       Math.round((48.85 + 0.004 * Math.sin(angle)) * 1e6) / 1e6,
       Math.round((2.35 + 0.011 * (1 - Math.cos(angle))) * 1e6) / 1e6,
-      i * 22,
+      seconds,
     ]
   })
 }
@@ -110,16 +116,143 @@ test('la carte Activité : pas, calories, sommeil et séances, avec le parcours'
   await expect(workouts.nth(0)).toContainText('FC max176 bpm')
   await expect(workouts.nth(1)).toContainText('Marche')
   await expect(workouts.nth(1)).toContainText('4,5 km/h')
-  // Une carte pour la séance avec GPS seulement, tracé, départ et arrivée.
+  // Une carte pour la séance avec GPS seulement, tracé et repères kilométriques.
   await expect(card.getByTestId('route-map')).toHaveCount(1)
   // La carte ne se monte qu'à l'approche : les filtres du jour la poussent sous l'écran d'un iPhone.
   await card.getByTestId('route-map').scrollIntoViewIfNeeded()
   const map = card.locator('.route-map')
   await expect(map).toHaveAttribute('data-state', 'ready')
   await expect(map).toHaveAccessibleName('Parcours : course de 07:30')
-  await expect(map.locator('.leaflet-overlay-pane path')).toHaveCount(3)
+  // Un liseré sous la trace, puis un morceau par suite de tronçons de même allure.
+  expect(await map.locator('.leaflet-overlay-pane path').count()).toBeGreaterThan(3)
+  // Un repère à chaque kilomètre de la trace, numéroté et nommé, ni départ ni arrivée.
+  const kilometres = kilometreMarkers(loop()).map(({ km }) => km)
+  expect(kilometres).toEqual([1, 2, 3])
+  const markers = map.locator('.route-km [role="img"]')
+  await expect(markers).toHaveText(kilometres.map(String))
+  for (const km of kilometres) await expect(map.getByRole('img', { name: `Kilomètre ${km}`, exact: true })).toHaveCount(1)
+  // La légende : les bornes de l'échelle, en allure de course, la plus lente d'abord.
+  const legend = card.getByTestId('pace-legend')
+  await expect(legend).toHaveText(/^Couleur de la trace selon l’allure : Lent \d+:\d\d \/kmRapide \d+:\d\d \/km$/)
+  const [slow, fast] = (await legend.locator('strong').allTextContents()).map((text) => {
+    const [m, s] = text.split(' ')[0].split(':').map(Number)
+    return m * 60 + s
+  })
+  expect(slow).toBeGreaterThan(fast)
   await expect(card.getByRole('link', { name: '© les contributeurs d’OpenStreetMap' })).toBeVisible()
   await checkLayout(page)
+})
+
+/** Le zoom de la carte, lu dans l'adresse de ses tuiles : `null` tant que deux zooms se mêlent. */
+const zoomLevel = (page: Page) =>
+  page.locator('.route-map img.leaflet-tile').evaluateAll((tiles) => {
+    const levels = new Set(tiles.map((tile) => Number(new URL((tile as HTMLImageElement).src).pathname.split('/')[1])))
+    return levels.size === 1 ? [...levels][0] : null
+  })
+
+test('les boutons de zoom : zoomer, dézoomer, recentrer, et le glisser au toucher une fois zoomé', async ({ page, request }) => {
+  await seed(request, await apiSession(request))
+  await offlineTiles(page)
+  await openDay(page, DAY)
+  const figure = page.getByTestId('route-map')
+  await figure.scrollIntoViewIfNeeded()
+  const map = figure.locator('.route-map')
+  await expect(map).toHaveAttribute('data-state', 'ready')
+  const zoomIn = figure.getByRole('button', { name: 'Zoomer', exact: true })
+  const zoomOut = figure.getByRole('button', { name: 'Dézoomer' })
+  const recenter = figure.getByRole('button', { name: 'Recentrer' })
+  await expect(zoomIn).toBeEnabled()
+  await expect(zoomOut).toBeEnabled()
+  // La vue d'origine : rien à recentrer, et au toucher, un doigt fait défiler la page.
+  await expect(recenter).toHaveCount(0)
+  const touch = await page.evaluate(() => window.matchMedia('(pointer: coarse)').matches)
+  expect(touch).toBe(true)
+  await expect(map).not.toHaveClass(/leaflet-touch-drag/)
+  const home = await zoomLevel(page)
+  expect(home).not.toBeNull()
+
+  await zoomIn.click()
+  await expect.poll(() => zoomLevel(page)).toBe(home! + 1)
+  await expect(recenter).toBeVisible()
+  // Zoomée : le doigt déplace la carte.
+  await expect(map).toHaveClass(/leaflet-touch-drag/)
+  await checkLayout(page)
+
+  await recenter.click()
+  await expect(recenter).toHaveCount(0)
+  await expect.poll(() => zoomLevel(page)).toBe(home)
+  await expect(map).not.toHaveClass(/leaflet-touch-drag/)
+
+  // Dézoomer : la vue change aussi, mais le doigt fait toujours défiler la page.
+  await zoomOut.click()
+  await expect.poll(() => zoomLevel(page)).toBe(home! - 1)
+  await expect(recenter).toBeVisible()
+  await expect(map).not.toHaveClass(/leaflet-touch-drag/)
+
+  // Au plus près (19), « Zoomer » se grise.
+  for (let zoom = home! - 1; zoom < 19; zoom++) {
+    await zoomIn.click()
+    await expect.poll(() => zoomLevel(page)).toBe(zoom + 1)
+  }
+  await expect(zoomIn).toBeDisabled()
+  await expect(zoomOut).toBeEnabled()
+})
+
+/**
+ * Les cartes du jour, colonne par colonne (par leur bord gauche), et l'écart vertical entre deux cartes
+ * qui se suivent dans une colonne.
+ */
+const columnGaps = (page: Page) =>
+  page.locator('.cards > *').evaluateAll((cards) => {
+    const columns = new Map<number, DOMRect[]>()
+    for (const card of cards) {
+      const rect = card.getBoundingClientRect()
+      const left = Math.round(rect.left)
+      columns.set(left, [...(columns.get(left) ?? []), rect])
+    }
+    return [...columns.values()].map((rects) =>
+      rects.sort((a, b) => a.top - b.top).slice(1).map((rect, i) => rect.top - rects[i].bottom),
+    )
+  })
+
+test('la page du jour en maçonnerie : deux colonnes sur Mac, sans trou entre les cartes', async ({ page, request }) => {
+  await seed(request, await apiSession(request))
+  await offlineTiles(page)
+  await page.setViewportSize(DESKTOP)
+  await openDay(page, DAY)
+  await page.getByTestId('route-map').scrollIntoViewIfNeeded()
+  await expect(page.locator('.route-map')).toHaveAttribute('data-state', 'ready')
+  await expect(page.locator('.cards')).toHaveAttribute('data-masonry', '')
+  // L'ordre du DOM reste celui de la lecture.
+  await expect(page.locator('.cards > .card').first()).toHaveClass(/card-coffee/)
+  const gap = await page.locator('.cards').evaluate((el) => parseFloat(getComputedStyle(el).columnGap))
+  expect(gap).toBe(20)
+  const check = async () => {
+    const columns = await columnGaps(page)
+    expect(columns).toHaveLength(2)
+    for (const gaps of columns) {
+      for (const between of gaps) {
+        expect(between).toBeGreaterThanOrEqual(gap - 0.5)
+        expect(between).toBeLessThan(gap + 1)
+      }
+    }
+  }
+  await check()
+  // Une carte en moins : les autres se replacent, toujours sans trou.
+  await page.getByRole('group', { name: 'Métriques affichées' }).getByRole('button', { name: 'Écoutes' }).click()
+  await expect(page.getByTestId('music')).toHaveCount(0)
+  await check()
+
+  // Sur iPhone, une seule colonne, au même écart.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect.poll(async () => (await columnGaps(page)).length).toBe(1)
+  // Les cartes se remesurent à la nouvelle largeur une image plus tard (ResizeObserver) : on attend.
+  await expect(async () => {
+    for (const between of (await columnGaps(page))[0]) {
+      expect(between).toBeGreaterThanOrEqual(gap - 0.5)
+      expect(between).toBeLessThan(gap + 1)
+    }
+  }).toPass({ timeout: 5_000 })
 })
 
 test('un jour sans données Garmin le dit, sans zéro', async ({ page }) => {
@@ -175,6 +308,13 @@ for (const colorScheme of ['light', 'dark'] as const) {
         await page.waitForTimeout(300) // la fin du fondu de la carte
         await checkLayout(page)
         await shot('jour-activite')
+
+        // La carte zoomée d'un cran, ses boutons et « Recentrer ».
+        const figure = page.getByTestId('route-map')
+        await figure.getByRole('button', { name: 'Zoomer', exact: true }).click()
+        await expect(figure.getByRole('button', { name: 'Recentrer' })).toBeVisible()
+        await page.waitForTimeout(400) // la fin du zoom
+        await figure.screenshot({ path: `${SHOTS}/${width}-${colorScheme}-carte-zoomee.png` })
 
         await page.goto(`/mois/${DAY.slice(0, 7)}`)
         await expect(page.locator(`.cell[data-date="${DAY}"] .day-dot[data-metric="workout"]`)).toHaveCount(1)

@@ -1,6 +1,8 @@
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { SourcesHealth, Workout } from './api'
-import { integerText, isEmpty, kmText, sleepHeartRate, sleepSpan, sleepStages, sleepText, workoutFigures, workoutType } from './activity'
+import { integerText, isEmpty, kmText, sleepHeartRate, sleepSpan, sleepStages, sleepText, speedText, workoutFigures, workoutType } from './activity'
+import { PACE_CLASSES } from './pace'
+import type { PaceScale } from './RouteMap'
 import type { useActivity } from './useActivity'
 
 // Leaflet et ses tuiles ne se chargent qu'à l'approche d'une carte : le reste de l'app n'en paie rien.
@@ -22,7 +24,7 @@ interface Props {
  * Une carte du jour (séance, déplacements), montée quand elle approche de l'écran ; d'ici là, un cadre
  * de même taille. `children` est la carte chargée à part (React.lazy) : rien ne se charge avant.
  */
-export function MapFigure({ testId, children }: { testId: string; children: ReactNode }) {
+export function MapFigure({ testId, children, legend }: { testId: string; children: ReactNode; legend?: ReactNode }) {
   const frame = useRef<HTMLDivElement>(null)
   const [near, setNear] = useState(false)
   useEffect(() => {
@@ -43,6 +45,7 @@ export function MapFigure({ testId, children }: { testId: string; children: Reac
         {near && <Suspense fallback={null}>{children}</Suspense>}
       </div>
       <figcaption className="route-credit">
+        {legend}
         <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
           © les contributeurs d’OpenStreetMap
         </a>
@@ -51,10 +54,31 @@ export function MapFigure({ testId, children }: { testId: string; children: Reac
   )
 }
 
+/** Sous la carte : « Lent 7:12 /km ▬▬▬ Rapide 5:01 /km », les bornes de l'échelle de couleurs. */
+function PaceLegend({ scale, type }: { scale: PaceScale; type: string }) {
+  return (
+    <span className="pace-legend" data-testid="pace-legend">
+      <span className="visually-hidden">Couleur de la trace selon l’allure : </span>
+      <span>
+        Lent <strong>{speedText(scale.slow, type)}</strong>
+      </span>
+      <span className="pace-scale" aria-hidden="true">
+        {Array.from({ length: PACE_CLASSES }, (_, i) => (
+          <span key={i} />
+        ))}
+      </span>
+      <span>
+        Rapide <strong>{speedText(scale.fast, type)}</strong>
+      </span>
+    </span>
+  )
+}
+
 function WorkoutRow({ workout }: { workout: Workout }) {
   const { details } = workout
   const type = workoutType(details.type)
   const figures = workoutFigures(details)
+  const [pace, setPace] = useState<PaceScale | null>(null)
   return (
     <li className="workout" data-testid="workout">
       <div className="workout-head">
@@ -72,8 +96,8 @@ function WorkoutRow({ workout }: { workout: Workout }) {
         </dl>
       )}
       {workout.has_track && (
-        <MapFigure testId="route-map">
-          <RouteMap activityId={details.activity_id} label={`Parcours : ${type.toLowerCase()} de ${workout.time}`} />
+        <MapFigure testId="route-map" legend={pace && <PaceLegend scale={pace} type={details.type} />}>
+          <RouteMap activityId={details.activity_id} label={`Parcours : ${type.toLowerCase()} de ${workout.time}`} onPace={setPace} />
         </MapFigure>
       )}
     </li>

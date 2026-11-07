@@ -33,7 +33,7 @@ use tracing::{error, info, warn};
 
 use super::lastfm::network_reason;
 use super::{backoff, load_state, rate_limit_wait, report_status, save_state};
-use crate::geo::douglas_peucker;
+use crate::geo::douglas_peucker_timed;
 use crate::ingest_client::{IngestClient, IngestFailure, RecordOutcome, http_client};
 use crate::source_status::{Reason, SourceStatus, State as Health};
 
@@ -48,8 +48,10 @@ const ACTIVITIES_PATH: &str = "/activitylist-service/activities/search/activitie
 const DOWNLOAD_PATH: &str = "/download-service/files/activity";
 /// Un fichier d'une séance de plusieurs heures pèse quelques Mo : au-delà, ce n'est pas une séance.
 const MAX_DOWNLOAD_BYTES: usize = 32 * 1024 * 1024;
-/// La trace garde ses virages à 5 m près, et 1 000 points au plus : quelques dizaines de ko.
+/// La trace garde ses virages à 5 m près, un point toutes les 15 s au moins, et 1 000 points au plus :
+/// quelques dizaines de ko.
 pub const TRACK_TOLERANCE_M: f64 = 5.0;
+pub const TRACK_STEP_S: f64 = 15.0;
 pub const MAX_TRACK_POINTS: usize = 1000;
 
 /// Le premier passage remonte aussi loin : tout l'historique (juin 2026) y tient.
@@ -547,14 +549,22 @@ pub fn fit_points(fit: &[u8]) -> Option<Vec<[f64; 3]>> {
     Some(points)
 }
 
-/// La trace simplifiée : 5 m de tolérance, doublée tant qu'il reste plus de `cap` points. Les
-/// coordonnées au millionième, les secondes entières : la même trace donne la même charge utile.
+/// La trace simplifiée : Douglas–Peucker à 5 m, plus un point toutes les 15 s au moins pour l'allure
+/// (`geo::douglas_peucker_timed`). Le pas passe à la durée ÷ `cap` pour une très longue séance. Tant
+/// qu'il reste plus de `cap` points, la tolérance double et le pas grandit d'un quart. Les coordonnées
+/// au millionième, les secondes entières : la même trace donne la même charge utile.
 pub fn simplify(points: &[[f64; 3]], tolerance: f64, cap: usize) -> Vec<Value> {
+    let duration = match (points.first(), points.last()) {
+        (Some(first), Some(last)) => last[2] - first[2],
+        _ => 0.0,
+    };
     let mut tolerance = tolerance;
-    let mut kept = douglas_peucker(points, tolerance);
+    let mut step = TRACK_STEP_S.max(duration / cap as f64);
+    let mut kept = douglas_peucker_timed(points, tolerance, step);
     while kept.len() > cap {
         tolerance *= 2.0;
-        kept = douglas_peucker(points, tolerance);
+        step *= 1.25;
+        kept = douglas_peucker_timed(points, tolerance, step);
     }
     kept.iter()
         .map(|[lat, lon, seconds]| {
@@ -1616,10 +1626,27 @@ mod tests {
             points.push([45.006, -1.0 + f64::from(i) * 1e-5, f64::from(600 + i)]);
         }
         let kept = simplify(&points, TRACK_TOLERANCE_M, MAX_TRACK_POINTS);
-        assert_eq!(kept.len(), 3, "le départ, le virage, l'arrivée");
+        // Le départ, le virage, l'arrivée, et un point toutes les 15 s entre eux.
+        assert_eq!(kept.len(), 81, "{kept:?}");
         assert_eq!(kept[0], json!([45.0, -1.0, 0]));
-        assert!((599..=600).contains(&kept[1][2].as_i64().unwrap()));
-        assert_eq!(kept[2], json!([45.006, -0.99401, 1199]));
+        assert_eq!(kept[80], json!([45.006, -0.99401, 1199]));
+        let gaps = kept
+            .windows(2)
+            .map(|w| w[1][2].as_i64().unwrap() - w[0][2].as_i64().unwrap());
+        assert!(
+            gaps.clone().all(|gap| gap <= 15),
+            "un point toutes les 15 s"
+        );
+        // Une très longue séance : le pas grandit pour tenir sous le plafond.
+        let long: Vec<[f64; 3]> = (0..36_000)
+            .map(|i| [45.0 + f64::from(i) * 1e-6, -1.0, f64::from(i)])
+            .collect();
+        let kept = simplify(&long, TRACK_TOLERANCE_M, MAX_TRACK_POINTS);
+        assert!(
+            (700..=MAX_TRACK_POINTS).contains(&kept.len()),
+            "{}",
+            kept.len()
+        );
         // Un zigzag de 20 m tous les points : la tolérance double jusqu'à tenir sous le plafond.
         let zigzag: Vec<[f64; 3]> = (0..5000)
             .map(|i| {

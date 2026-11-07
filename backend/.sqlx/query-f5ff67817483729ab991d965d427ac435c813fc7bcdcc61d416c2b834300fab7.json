@@ -1,0 +1,63 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT e.occurred_at AS \"occurred_at!\", e.source_id AS \"source_id!\",\n                  to_char(e.occurred_at AT TIME ZONE (SELECT timezone FROM core.settings), 'HH24:MI') AS \"time!\",\n                  (e.details->>'point_lat')::float8 AS \"lat!\",\n                  (e.details->>'point_lon')::float8 AS \"lon!\"\n           FROM derived.live_events e\n           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND e.metric = 'location.point'\n             AND e.occurred_at >= $1 AND e.occurred_at < $2\n             AND COALESCE((e.details->>'horizontal_accuracy')::float8, 0) <= $3\n           ORDER BY e.occurred_at, e.seq, e.ordinal",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "occurred_at!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "source_id!",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "source_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "time!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "lat!",
+        "type_info": "Float8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "lon!",
+        "type_info": "Float8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Timestamptz",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "f5ff67817483729ab991d965d427ac435c813fc7bcdcc61d416c2b834300fab7"
+}

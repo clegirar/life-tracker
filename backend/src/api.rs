@@ -1405,7 +1405,7 @@ async fn get_day_locations(
     Path(date): Path<String>,
 ) -> Result<Json<location::DayLocations>, ApiError> {
     let date = parse_day(&date).ok_or(ApiError::InvalidDate)?;
-    Ok(Json(location::day(&state.pool, date).await?))
+    Ok(Json(location::day(&state.pool, date, Utc::now()).await?))
 }
 
 /// La trace simplifiée d'une séance, pour sa carte.

@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT s.last_seen_at,\n                      (SELECT max(e.occurred_at) FROM derived.live_events e\n                       WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n                         AND e.metric = 'location.point' AND e.source_id = s.id\n                         AND COALESCE((e.details->>'horizontal_accuracy')::float8, 0) <= $2) AS latest\n               FROM core.sources s WHERE s.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "last_seen_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "core.sources",
+            "name": "last_seen_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "latest",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int2",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      true,
+      null
+    ]
+  },
+  "hash": "d8426427195bd63e9582aa193165bda1faa082fb9ded0694d8ad78b9b07b022e"
+}

@@ -467,20 +467,28 @@ export interface LocationSegment {
   points: [number, number][]
 }
 
-/** Un lieu où je suis resté (visite iOS), qui touche ce jour-là. */
-export interface LocationVisit {
+/**
+ * Un lieu où je suis resté, qui touche ce jour-là : une visite iOS (`visit`), ou un séjour détecté dans
+ * les points (`points`), calculé à la lecture et que le calendrier ne compte pas.
+ */
+export interface LocationPlace {
+  origin: 'visit' | 'points'
   lat: number
   lon: number
   arrival: string
-  departure: string
+  /** Nul pour un séjour en cours. */
+  departure: string | null
   /** Heures de Paris de l'arrivée et du départ, même un autre jour. */
   arrival_time: string
-  departure_time: string
+  departure_time: string | null
   /** Arrivé avant ce jour (la veille ou plus tôt). */
   arrived_before: boolean
   /** Reparti après ce jour. */
   departed_after: boolean
+  /** Jusqu'au départ, ou jusqu'à la lecture pour un séjour en cours. */
   duration_s: number
+  /** J'y suis encore : aujourd'hui seulement, tant que l'iPhone donne des nouvelles. */
+  ongoing: boolean
   horizontal_accuracy: number | null
 }
 
@@ -491,7 +499,8 @@ export interface DayLocations {
   covered: boolean
   point_count: number
   segments: LocationSegment[]
-  visits: LocationVisit[]
+  /** Par arrivée. */
+  places: LocationPlace[]
 }
 
 export const fetchDayLocations = (date: string) => read<DayLocations>(`/v1/days/${date}/locations`)
