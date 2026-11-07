@@ -297,7 +297,7 @@ describe("l'iPhone (Overland)", () => {
       status_reported_at: null,
       metrics: [
         { metric: 'location.point', label: 'Position', last_at: iso(-15 * MIN) },
-        { metric: 'place.visit', label: 'Lieux', last_at: iso(-3 * HOUR) },
+        { metric: 'place.visit', label: 'Déplacements', last_at: iso(-3 * HOUR) },
       ],
       ...overrides,
     })

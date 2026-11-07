@@ -1000,7 +1000,7 @@ Puis, par le MCP, `inventory` : le nombre de « Vidéos YouTube » tombe à ≈1
 
 ## Mise à jour : position de l'iPhone (Overland)
 
-À faire une fois, sur le NAS déjà en service. La PR du backend part en production à la fusion, migration comprise (`20261108120000_location.sql`, par le service `migrate` : deux types, deux métriques, pas de `rebuild`). `compose.yaml` ne change pas, et aucun secret ne va dans `secrets/` : le token de la source vit dans Overland, sur l'iPhone. La métrique « Lieux » apparaît dans les filtres du calendrier dès le déploiement, vide jusqu'au premier lieu. Je ne lance rien de tout cela depuis le dépôt.
+À faire une fois, sur le NAS déjà en service. La PR du backend part en production à la fusion, migration comprise (`20261108120000_location.sql`, par le service `migrate` : deux types, deux métriques, pas de `rebuild`). `compose.yaml` ne change pas, et aucun secret ne va dans `secrets/` : le token de la source vit dans Overland, sur l'iPhone. La métrique « Déplacements » apparaît dans les filtres du calendrier dès le déploiement, vide jusqu'au premier lieu. Je ne lance rien de tout cela depuis le dépôt.
 
 1. Après le déploiement de la version, sur le NAS, en root dans le dossier en `700` :
 
@@ -1042,7 +1042,7 @@ Puis, par le MCP, `inventory` : le nombre de « Vidéos YouTube » tombe à ≈1
    sudo docker compose run --rm -T admin rebuild </dev/null   # 0 différence
    ```
 
-**Retour arrière.** Couper la position seule : `admin revoke-source iphone` ; Overland reçoit alors un 401, garde ses points et l'affiche. Le journal garde ce qui est entré. Revenir à une image d'avant : la migration ajoute des registres que l'ancienne version ignore, sauf le calendrier, qui montre alors « Lieux » comme une somme vide ; rien n'est perdu.
+**Retour arrière.** Couper la position seule : `admin revoke-source iphone` ; Overland reçoit alors un 401, garde ses points et l'affiche. Le journal garde ce qui est entré. Revenir à une image d'avant : la migration ajoute des registres que l'ancienne version ignore, sauf le calendrier, qui montre alors « Déplacements » comme une somme vide ; rien n'est perdu.
 
 ## Vérifier les critères « Terminé quand »
 

@@ -220,7 +220,7 @@ test('la case du mois : le nombre de lieux, par arrivée, dans sa couleur', asyn
   await expect(cell.locator('.cell-value[data-metric="place.visit"]')).toHaveText('3')
   await expect(cell.locator('.cell-value')).toHaveClass(/heat-location/)
   await expect(cell).toHaveAccessibleName(/3 lieux/)
-  await expect(page.getByRole('group', { name: 'Métriques affichées' }).getByRole('button', { name: 'Lieux' })).toHaveClass(/heat-location/)
+  await expect(page.getByRole('group', { name: 'Métriques affichées' }).getByRole('button', { name: 'Déplacements' })).toHaveClass(/heat-location/)
 })
 
 test("la page d'état : dernier envoi, dernière position et dernier lieu, puis le silence", async ({ page, request }) => {

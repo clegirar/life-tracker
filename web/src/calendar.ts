@@ -99,7 +99,9 @@ export function valueText(metric: MonthMetric, value: number | null): string {
   if (value === null) return `${label} : pas de données`
   if (metric.unit === 'min') return hoursText(value)
   if (metric.unit && PLAIN_UNITS.has(metric.unit)) return `${NUMBER.format(value)} ${metric.unit}`
-  // Le premier mot porte le pluriel : « 1 vidéo YouTube », « 3 vidéos YouTube », « 1 lieu ».
+  // « Déplacements » compte des lieux : « 1 lieu », « 3 lieux ».
+  if (metric.unit === 'lieu') return plural(Math.round(value), 'lieu', 'lieux')
+  // Le premier mot porte le pluriel : « 1 vidéo YouTube », « 3 vidéos YouTube ».
   const [head, ...rest] = label.split(' ')
   const one = [/[sx]$/.test(head) ? head.slice(0, -1) : head, ...rest].join(' ')
   return plural(Math.round(value), one, label)

@@ -55,7 +55,7 @@ describe('les textes', () => {
     expect(valueText(METRICS[0], 0)).toBe('0 café')
     expect(valueText(METRICS[0], 3)).toBe('3 cafés')
     expect(valueText(METRICS[1], 1)).toBe('1 écoute')
-    const places = { metric: 'place.visit', label: 'Lieux', unit: 'lieu' }
+    const places = { metric: 'place.visit', label: 'Déplacements', unit: 'lieu' }
     expect(valueText(places, 1)).toBe('1 lieu')
     expect(valueText(places, 3)).toBe('3 lieux')
   })

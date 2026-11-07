@@ -170,7 +170,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
         // Le jour, deux pastilles : le café et l'activité.
         await page.goBack()
         await expect(page.getByTestId('music')).toBeVisible()
-        for (const name of ['Écoutes', 'Vidéos YouTube', 'Twitch', 'Jeux', 'Lieux']) await chip(page, name).click()
+        for (const name of ['Écoutes', 'Vidéos YouTube', 'Twitch', 'Jeux', 'Déplacements']) await chip(page, name).click()
         await expect(page.getByTestId('music')).toHaveCount(0)
         await expect(page.getByTestId('activity').getByTestId('steps')).toBeVisible()
         await page.waitForTimeout(200) // la fin du filtre

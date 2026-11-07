@@ -135,9 +135,9 @@ test('sept pastilles : toutes choisies par défaut, et « Activité » coche les
   await page.goto(`/mois/${DAY.slice(0, 7)}`)
   const filters = page.getByRole('group', { name: 'Métriques affichées' })
   // Dans l'ordre d'affichage du registre ; les quatre métriques Garmin sous une pastille, les succès sans pastille.
-  await expect(filters.locator('.chip')).toHaveText(['Cafés', 'Écoutes', 'Activité', 'Vidéos YouTube', 'Twitch', 'Jeux', 'Lieux'])
+  await expect(filters.locator('.chip')).toHaveText(['Cafés', 'Écoutes', 'Activité', 'Vidéos YouTube', 'Twitch', 'Jeux', 'Déplacements'])
   await expect(filters.getByRole('button', { name: 'Activité' })).toHaveClass(/heat-steps/)
-  for (const name of ['Cafés', 'Écoutes', 'Activité', 'Vidéos YouTube', 'Twitch', 'Jeux', 'Lieux']) {
+  for (const name of ['Cafés', 'Écoutes', 'Activité', 'Vidéos YouTube', 'Twitch', 'Jeux', 'Déplacements']) {
     await expect(filters.getByRole('button', { name })).toHaveAttribute('aria-pressed', 'true')
   }
   const cell = page.locator(`.cell[data-date="${DAY}"]`)
@@ -147,7 +147,7 @@ test('sept pastilles : toutes choisies par défaut, et « Activité » coche les
   }
   await expect(cell).toHaveAccessibleName(/8\s412 pas.*2 séances.*7 h 13.*2\s350 kcal/)
   // Activité seule : ses quatre points, sans les autres.
-  for (const name of ['Cafés', 'Écoutes', 'Vidéos YouTube', 'Twitch', 'Jeux', 'Lieux']) await filters.getByRole('button', { name }).click()
+  for (const name of ['Cafés', 'Écoutes', 'Vidéos YouTube', 'Twitch', 'Jeux', 'Déplacements']) await filters.getByRole('button', { name }).click()
   for (const metric of garmin) {
     await expect(cell.locator(`.day-dot[data-metric="${metric}"]`)).toHaveCount(1)
   }

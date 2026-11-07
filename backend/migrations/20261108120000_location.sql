@@ -23,7 +23,7 @@ VALUES
    NULL, NULL, NULL,
    'Un point de position de l''iPhone (Overland), lu par la seule carte du jour ; détails : coordonnées, précision, altitude, vitesse, mouvement',
    NULL, '{}'),
-  ('place.visit', 'Lieux', 'rich_event', 'lieu', 'déplacements', 'count', '{}', false,
+  ('place.visit', 'Déplacements', 'rich_event', 'lieu', 'déplacements', 'count', '{}', false,
    NULL, NULL, NULL,
    'Un lieu où je suis resté, détecté par iOS, à son arrivée ; détails : coordonnées, arrivée, départ, durée en secondes',
    100, '{visit_lat,visit_lon,arrival,departure,duration_s}');
