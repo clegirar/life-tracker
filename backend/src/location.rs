@@ -17,7 +17,8 @@
 //! maximale de points consécutifs (précision de `MAX_ACCURACY_M` au plus) qui restent à moins de
 //! `STAY_RADIUS_M` de leur centre courant, et dont le premier et le dernier sont à `MIN_STAY_SECONDS`
 //! ou plus l'un de l'autre ; Overland, qui écarte les points à l'arrêt, en envoie un en s'arrêtant puis
-//! un par heure. Arrivée et départ sont le premier et le dernier point ; ses points peuvent venir des
+//! un par heure. L'arrivée est le premier point ; le départ, le premier point qui suit le séjour s'il
+//! vient dans les `MAX_DEPARTURE_GAP_SECONDS`, sinon son dernier point ; ses points peuvent venir des
 //! jours voisins (lus par tranches d'un jour, jusqu'à `MAX_VISIT_DAYS`), d'où `arrived_before` et
 //! `departed_after`. Un séjour qui recouvre dans le temps une visite iOS s'efface devant elle, qui a de
 //! meilleures heures. C'est un calcul à la lecture, qui croise des enregistrements : rien n'entre au
@@ -54,6 +55,10 @@ const MAX_VISIT_DAYS: i32 = 7;
 const STAY_RADIUS_M: f64 = 150.0;
 /// … pendant 15 min au moins.
 const MIN_STAY_SECONDS: i64 = 15 * 60;
+/// Un séjour terminé part au premier point qui le suit, s'il vient dans les 2 h : Overland en note un
+/// dès que je bouge, bien plus près du départ que le dernier point horaire. Au-delà, le téléphone était
+/// éteint ou hors suivi, et le séjour finit à son dernier point.
+const MAX_DEPARTURE_GAP_SECONDS: i64 = 2 * 60 * 60;
 /// Un séjour n'est en cours que si l'iPhone s'est manifesté depuis moins de 70 min : avec un point par
 /// heure à l'arrêt, plus de marge qu'un envoi manqué.
 const ONGOING_SILENCE_SECONDS: i64 = 70 * 60;
@@ -328,7 +333,11 @@ async fn with_stays(
         let run = &points[range.clone()];
         let (first, last) = (&run[0], &run[run.len() - 1]);
         let is_ongoing = ongoing.as_ref() == Some(&range);
-        let end = if is_ongoing { now } else { last.at };
+        let leaving = points
+            .get(range.end)
+            .filter(|next| (next.at - last.at).num_seconds() <= MAX_DEPARTURE_GAP_SECONDS)
+            .unwrap_or(last);
+        let end = if is_ongoing { now } else { leaving.at };
         let touches = end >= day.start && first.at < day.end;
         let covered_by_visit = places[..visits]
             .iter()
@@ -343,11 +352,11 @@ async fn with_stays(
             lat: round(run.iter().map(|p| p.lat).sum::<f64>() / n),
             lon: round(run.iter().map(|p| p.lon).sum::<f64>() / n),
             arrival: first.at,
-            departure: (!is_ongoing).then_some(last.at),
+            departure: (!is_ongoing).then_some(leaving.at),
             arrival_time: first.time.clone(),
-            departure_time: (!is_ongoing).then(|| last.time.clone()),
+            departure_time: (!is_ongoing).then(|| leaving.time.clone()),
             arrived_before: first.at < day.start,
-            departed_after: !is_ongoing && last.at >= day.end,
+            departed_after: !is_ongoing && leaving.at >= day.end,
             duration_s: (end - first.at).num_seconds(),
             ongoing: is_ongoing,
             horizontal_accuracy: None,

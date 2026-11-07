@@ -533,23 +533,24 @@ async fn hourly_points_make_stays_the_night_before_included() {
         places,
         json!([
             {"origin": "points", "lat": 43.400083, "lon": 5.4001,
-             "arrival": "2026-11-01T21:00:00Z", "departure": "2026-11-02T06:00:00Z",
-             "arrival_time": "22:00", "departure_time": "07:00",
-             "arrived_before": true, "departed_after": false, "duration_s": 32400,
+             "arrival": "2026-11-01T21:00:00Z", "departure": "2026-11-02T07:00:00Z",
+             "arrival_time": "22:00", "departure_time": "08:00",
+             "arrived_before": true, "departed_after": false, "duration_s": 36000,
              "ongoing": false, "horizontal_accuracy": null},
             {"origin": "points", "lat": 43.3, "lon": 5.350125,
-             "arrival": "2026-11-02T08:00:00Z", "departure": "2026-11-02T11:00:00Z",
-             "arrival_time": "09:00", "departure_time": "12:00",
-             "arrived_before": false, "departed_after": false, "duration_s": 10800,
+             "arrival": "2026-11-02T08:00:00Z", "departure": "2026-11-02T11:30:00Z",
+             "arrival_time": "09:00", "departure_time": "12:30",
+             "arrived_before": false, "departed_after": false, "duration_s": 12600,
              "ongoing": false, "horizontal_accuracy": null},
-        ])
+        ]),
+        "le départ est le premier point du trajet qui suit"
     );
     // La veille voit la nuit partir le lendemain.
     let before = app.locations("2026-11-01").await["places"].clone();
     assert_eq!(before.as_array().unwrap().len(), 1);
     assert_eq!(before[0]["departed_after"], true);
     assert_eq!(before[0]["arrived_before"], false);
-    assert_eq!(before[0]["departure"], "2026-11-02T06:00:00Z");
+    assert_eq!(before[0]["departure"], "2026-11-02T07:00:00Z");
 
     // Une visite iOS sur la matinée : le séjour détecté s'efface devant elle.
     let morning = visit(43.3, 5.35, "2026-11-02T07:55:00Z", "2026-11-02T11:05:00Z");
@@ -628,6 +629,14 @@ async fn the_last_stay_is_ongoing_today_while_the_iphone_answers() {
     let later = app.locations_at("2026-11-04", "2026-11-05T10:00:00Z").await;
     assert_eq!(later["places"][0]["ongoing"], false);
     assert_eq!(later["places"][0]["departure_time"], "15:00");
+
+    // Un point ailleurs 2 h 30 après le dernier : trop tard pour dater le départ, le séjour finit
+    // toujours à son dernier point.
+    let far = points("2026-11-04", &[("16:30", MOVING[2].0, MOVING[2].1)]);
+    assert_eq!(app.post(&far).await.0, 200);
+    let after = app.locations_at("2026-11-04", "2026-11-05T10:00:00Z").await;
+    assert_eq!(after["places"][0]["departure"], "2026-11-04T14:00:00Z");
+    assert_eq!(after["places"][0]["duration_s"], 7200);
 }
 
 #[tokio::test]
