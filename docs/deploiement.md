@@ -944,7 +944,7 @@ Puis, par le MCP, `inventory` : le nombre de « Vidéos YouTube » tombe à ≈1
 
 ## Mise à jour : Steam
 
-À faire une fois, sur le NAS déjà en service. La PR part en production à la fusion, migration comprise (`20261107120000_steam.sql`, par le service `migrate` : deux types, trois métriques, pas de `rebuild`) : le connecteur Steam ne démarre que lorsque ses trois variables sont dans `secrets/collector.env`, donc rien ne change pour les autres connecteurs d'ici là. Les métriques « Jeux » et « Succès » apparaissent dans les filtres du calendrier dès le déploiement, vides jusqu'au premier passage. Je ne lance rien de tout cela depuis le dépôt, et je tape moi-même chaque secret.
+À faire une fois, sur le NAS déjà en service. La PR part en production à la fusion, migration comprise (`20261107120000_steam.sql`, par le service `migrate` : deux types, quatre métriques, pas de `rebuild`) : le connecteur Steam ne démarre que lorsque ses trois variables sont dans `secrets/collector.env`, donc rien ne change pour les autres connecteurs d'ici là. La métrique « Jeux » apparaît dans les filtres du calendrier dès le déploiement, vide jusqu'au premier passage ; les succès ne sont que dans la carte Steam du jour. Je ne lance rien de tout cela depuis le dépôt, et je tape moi-même chaque secret.
 
 1. **Avant la fusion**, recopier `compose.yaml` comme à l'étape 4 de « Mise à jour vers l'étape 5 » : son contrôle de santé vérifie aussi `steam-state.json`.
 
