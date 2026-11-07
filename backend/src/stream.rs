@@ -6,6 +6,8 @@
 //! `duration` (`read::measured`) : l'union des segments, coupée aux minuits de Paris, si bien que deux
 //! streams regardés en même temps ne comptent qu'une fois dans le total, et chacun en entier pour sa
 //! chaîne.
+//!
+//! `measured_day` en est la partie générique, que la carte Steam (`games`) reprend avec `game.play`.
 
 use chrono::NaiveDate;
 use serde::Serialize;
@@ -17,19 +19,35 @@ use crate::read::{self, DayDiscovery, Period};
 const METRIC: &str = "stream.watch";
 const LEVEL: &str = "channel";
 
+/// Le temps d'un élément un jour, par la forme `duration`.
 #[derive(Serialize)]
-pub struct Channel {
-    /// Le login, pour le lien `https://www.twitch.tv/<login>`, construit par la web app.
-    key: String,
-    name: String,
-    /// L'union des segments de la chaîne ce jour-là.
-    minutes: i64,
-    /// `live`, `vod`, `clip`, dans cet ordre.
-    contents: Vec<String>,
-    /// Heure de Paris, `HH:MM`, du début du premier segment, qui peut être la veille.
-    first_time: String,
-    /// Heure de Paris, `HH:MM`, de la fin du dernier segment, qui peut être le lendemain.
-    last_time: String,
+pub struct MeasuredItem {
+    /// La clé de l'élément : le login pour Twitch (le lien `https://www.twitch.tv/<login>` est construit
+    /// par la web app), l'appid pour Steam.
+    pub key: String,
+    pub name: String,
+    /// L'union des intervalles de l'élément ce jour-là.
+    pub minutes: i64,
+    /// `details.content` des intervalles : pour Twitch, `live`, `vod`, `clip`, dans cet ordre.
+    pub contents: Vec<String>,
+    /// Heure de Paris, `HH:MM`, du début du premier intervalle, qui peut être la veille.
+    pub first_time: String,
+    /// Heure de Paris, `HH:MM`, de la fin du dernier intervalle, qui peut être le lendemain.
+    pub last_time: String,
+}
+
+/// Le temps d'une métrique de forme `duration` un jour de Paris, en tout et par élément d'un niveau.
+pub struct MeasuredDay {
+    /// L'union de tous les intervalles : ce qui se chevauche compte une fois.
+    pub minutes: i64,
+    /// La somme des temps de chaque élément (et du temps sans élément).
+    pub summed_minutes: i64,
+    /// Les intervalles qui touchent ce jour-là, commencés la veille compris.
+    pub segments: i64,
+    /// Par temps décroissant, puis par nom.
+    pub items: Vec<MeasuredItem>,
+    /// Le temps des intervalles sans élément à ce niveau.
+    pub unknown_minutes: i64,
 }
 
 #[derive(Serialize)]
@@ -43,7 +61,7 @@ pub struct DayStream {
     /// Les segments qui touchent ce jour-là, commencés la veille compris.
     segments: i64,
     /// Par temps décroissant, puis par nom.
-    channels: Vec<Channel>,
+    channels: Vec<MeasuredItem>,
     /// Le temps des segments dont l'extension n'a pas su la chaîne.
     unknown_minutes: i64,
     /// Les chaînes regardées ce jour-là pour la première fois.
@@ -52,13 +70,34 @@ pub struct DayStream {
 
 /// Le fuseau en sous-requête et la génération fixée, comme toutes les lectures (voir `api::get_day`).
 pub async fn day(pool: &PgPool, date: NaiveDate) -> Result<DayStream, sqlx::Error> {
+    let measured = measured_day(pool, METRIC, LEVEL, date).await?;
+    let discoveries = read::day_discoveries(pool, METRIC, &[LEVEL], date).await?;
+    Ok(DayStream {
+        date,
+        minutes: measured.minutes,
+        summed_minutes: measured.summed_minutes,
+        segments: measured.segments,
+        channels: measured.items,
+        unknown_minutes: measured.unknown_minutes,
+        discoveries,
+    })
+}
+
+/// La partie commune des cartes de forme `duration` (Twitch, Steam) : le temps du jour, en tout et
+/// par élément du niveau `level`, avec les heures de chaque élément.
+pub async fn measured_day(
+    pool: &PgPool,
+    metric: &str,
+    level: &str,
+    date: NaiveDate,
+) -> Result<MeasuredDay, sqlx::Error> {
     let period = Period {
         from: date,
         to: date,
     };
-    let total = read::measured(pool, METRIC, period, None, None, false).await?;
-    let by_channel = read::measured(pool, METRIC, period, Some(LEVEL), None, true).await?;
-    // Les segments qui touchent le jour, par chaîne : leurs contenus et leurs heures.
+    let total = read::measured(pool, metric, period, None, None, false).await?;
+    let by_item = read::measured(pool, metric, period, Some(level), None, true).await?;
+    // Les intervalles qui touchent le jour, par élément : leurs contenus et leurs heures.
     let rows = sqlx::query!(
         r#"WITH spans AS (
              SELECT i.item_key, e.details->>'content' AS content, e.occurred_at,
@@ -82,19 +121,17 @@ pub async fn day(pool: &PgPool, date: NaiveDate) -> Result<DayStream, sqlx::Erro
            WHERE ended_at > ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
            GROUP BY item_key"#,
         date,
-        LEVEL,
-        METRIC,
+        level,
+        metric,
         MAX_MEASURED_MS,
     )
     .fetch_all(pool)
     .await?;
-    let discoveries = read::day_discoveries(pool, METRIC, &[LEVEL], date).await?;
 
-    let minutes = |seconds: f64| (seconds / 60.0).round() as i64;
     let mut unknown_seconds = 0.0;
     let mut summed_seconds = 0.0;
-    let mut channels = Vec::new();
-    for measured in by_channel {
+    let mut items = Vec::new();
+    for measured in by_item {
         summed_seconds += measured.seconds;
         let Some(key) = measured.item_key else {
             unknown_seconds += measured.seconds;
@@ -108,7 +145,7 @@ pub async fn day(pool: &PgPool, date: NaiveDate) -> Result<DayStream, sqlx::Erro
         };
         let mut contents = row.contents.clone().unwrap_or_default();
         contents.sort_by_key(|c| ["live", "vod", "clip"].iter().position(|k| k == c));
-        channels.push(Channel {
+        items.push(MeasuredItem {
             name: measured.name.unwrap_or_else(|| key.clone()),
             key,
             minutes: minutes(measured.seconds),
@@ -117,19 +154,22 @@ pub async fn day(pool: &PgPool, date: NaiveDate) -> Result<DayStream, sqlx::Erro
             last_time: row.last_time.clone(),
         });
     }
-    channels.sort_by(|a, b| {
+    items.sort_by(|a, b| {
         b.minutes
             .cmp(&a.minutes)
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
             .then_with(|| a.key.cmp(&b.key))
     });
-    Ok(DayStream {
-        date,
+    Ok(MeasuredDay {
         minutes: minutes(total.iter().map(|d| d.seconds).sum()),
         summed_minutes: minutes(summed_seconds),
         segments: rows.iter().map(|r| r.segments).sum(),
-        channels,
+        items,
         unknown_minutes: minutes(unknown_seconds),
-        discoveries,
     })
+}
+
+/// Des secondes en minutes entières, arrondies.
+pub fn minutes(seconds: f64) -> i64 {
+    (seconds / 60.0).round() as i64
 }

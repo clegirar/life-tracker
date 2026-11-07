@@ -26,6 +26,11 @@
   --video: #8944ab;
   /* Twitch : un fuchsia, entre le violet de YouTube et le rouge des écoutes, loin des deux. */
   --twitch: #b4198f;
+  /*
+   * Steam : un vert olive, dans le seul creux du cercle des teintes, entre l'orange des calories et le vert
+   * des pas. Le bleu de Steam est déjà celui des séances.
+   */
+  --steam: #5f7a00;
   --segment-on: #ffffff;
   --check: #c98500;
   /* La barre latérale : un cran sous le fond de page, comme la barre de Réglages sur Mac. */
@@ -80,6 +85,7 @@
     --workout: #64d2ff;
     --video: #da8fff;
     --twitch: #ff6fd8;
+    --steam: #bfe04d;
     --segment-on: #636366;
     --check: #ffcc4d;
     --sidebar-bg: #121214;
@@ -409,6 +415,11 @@ button:disabled {
 }
 
 .card-twitch {
+  flex: 2 1 420px;
+  min-width: 0;
+}
+
+.card-steam {
   flex: 2 1 420px;
   min-width: 0;
 }
@@ -1207,6 +1218,10 @@ button:disabled {
 
 .heat-twitch {
   --heat: var(--twitch);
+}
+
+.heat-steam {
+  --heat: var(--steam);
 }
 
 .heat-neutral {
@@ -2183,6 +2198,54 @@ button:disabled {
 
 .card-twitch .video-link:focus-visible {
   outline-color: var(--twitch);
+}
+
+/* ─── La carte Steam ─────────────────────────────────────────────────────── */
+
+/* Les lignes des jeux reprennent celles des chaînes Twitch (lien pleine largeur, flèche), dans sa couleur. */
+.card-title-steam,
+.card-steam .more {
+  color: var(--steam);
+}
+
+.card-steam .video-link:focus-visible {
+  outline-color: var(--steam);
+}
+
+.subsection-count-steam {
+  color: var(--steam);
+}
+
+/* Les succès du jour, sous le jeu : une ligne chacun, le nom puis l'heure, alignés sur le texte. */
+.game-achievements {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.game-achievements li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.game-trophy {
+  flex-shrink: 0;
+  align-self: center;
+  color: var(--steam);
+}
+
+.game-achievement-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.game-achievement-time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
 }
 
 /* ─── Le retour de Google (/autorisation) ────────────────────────────────── */

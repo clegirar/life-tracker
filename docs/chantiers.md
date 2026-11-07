@@ -11,6 +11,7 @@ Le [POC](poc.md) est validé depuis le 4 nov. 2026. Chaque chantier a sa section
 | Page Sources | Construite le 6 nov. 2026 (PR #20), sans action sur le NAS |
 | YouTube | En cours depuis le 5 nov. 2026 : backend construit, web app en cours |
 | Twitch | En cours depuis le 6 nov. 2026 : backend en production (#17), extension Firefox et web app construites, essai sur le vrai Twitch concluant ; restent la fusion, la signature et l'installation |
+| Steam | En cours depuis le 6 nov. 2026 : backend, web app et MCP construits (branche `feat/steam`) ; essai de l'étape 0 en partie fait, mise en service à suivre |
 | Twitch : import de l'historique (export RGPD) | À faire, quand je le demanderai (l'export est demandé à Twitch) |
 | Ouvrir la web app sur Internet | À faire, quand je le demanderai |
 
@@ -198,6 +199,46 @@ Non essayés : popout, clips.twitch.tv, page d'une chaîne hors ligne qui lit un
 - La carte de la page d'état passe en « silence » quand l'extension est désactivée, et revient.
 - Ni token ni donnée personnelle dans le dépôt ou les logs.
 - L'affichage est vérifié à la largeur d'un iPhone et sur Mac, en clair et en sombre.
+
+## Steam
+
+Ouvert le 6 nov. 2026, à ma demande. Suivre Steam : les heures jouées par jeu, le temps joué chaque jour sur chaque jeu, et les succès ; et pouvoir demander à Claude « combien d'heures sur X ce mois-ci ». Les choix sont au journal des décisions de [l'architecture](architecture.md), 6 nov. 2026, et dans la fiche Steam.
+
+**Accès.** L'API Web de Steam, avec une clé personnelle (steamcommunity.com/dev/apikey) et mon identifiant Steam 64 bits, dans un connecteur du collecteur avec sa source `steam`, toutes les 15 min. `IPlayerService/GetOwnedGames` donne pour chaque jeu son `appid`, son nom, `playtime_forever` (minutes depuis toujours) et `rtime_last_played` ; `ISteamUserStats/GetPlayerAchievements` donne, jeu par jeu, chaque succès avec sa date de déblocage. Une clé Steam n'expire pas.
+
+**Historique.** Il n'y en a pas, jour par jour : Steam ne donne que des compteurs cumulés. Le temps d'un jour se déduit de l'écart entre deux relevés successifs ; avant la mise en service, on n'aura que le total par jeu. Les succès, eux, arrivent avec leurs vraies dates, tout l'historique compris.
+
+**Ce qui compte.** Le temps que Steam compte pour chaque jeu, hors ligne compris une fois synchronisé. L'écart entre deux relevés est placé juste avant la fin de la partie (`rtime_last_played` s'il tombe entre les deux relevés, sinon l'heure du relevé), en tranches d'une heure au plus, donc à quelques minutes près ; une partie à cheval sur minuit se répartit entre les deux jours. Les succès débloqués seulement, sans leur description.
+
+**Mes choix** (à corriger si besoin) : seuil de silence de 6 h, comme Last.fm (le collecteur passe toutes les 15 min, qu'il y ait une partie ou non) ; pas de seuil de fraîcheur sur les métriques (une semaine sans jouer est normale) ; pas de découverte de jeu (un jeu acheté n'est pas découvert le jour où il est joué), revu le 7 nov. 2026 : un jeu joué pour la première fois après la mise en service est une découverte, un jeu déjà joué avant ne l'est jamais ; profil et « Détails des jeux » publics, nécessaires aux succès seulement ; un jeu jamais joué n'apparaît pas.
+
+**Étapes** :
+
+0. **Essai, avant tout code** (en partie fait le 6 nov. 2026, quelques `curl` avec ma clé, jamais dans le dépôt ; structure seulement) :
+   - `GetOwnedGames` rend la liste (`appid`, `name`, `playtime_forever` en minutes, `rtime_last_played` en secondes Unix, 0 pour jamais, `playtime_disconnected` pour le hors-ligne, et des champs écartés : icône, compteurs par système, `content_descriptorids`) **même avec un profil privé**, pour ma propre clé ;
+   - `GetPlayerAchievements` (`l=french`) : profil privé, `{"playerstats": {"error": "Profile is not public", "success": false}}` (d'où la raison `profile_private`) ; jeu sans succès, `success` sans liste `achievements` ; jeu avec succès, chaque succès avec `apiname`, `achieved` (1 ou 0), `unlocktime`, `name` (traduit si le jeu l'est, en anglais sinon) et `description` (écartée) ;
+   - **reste à faire** : une partie d'une demi-heure avec un relevé toutes les 5 min, pour savoir si le compteur avance pendant la partie ou seulement à la fin, et si `rtime_last_played` en marque le début ou la fin. Le placement ci-dessus en dépend ; le journal garde les valeurs brutes, un rejeu le corrigera s'il le faut.
+1. **Backend**, sur la branche `feat/steam` : la migration, les interprètes, le connecteur, la route `/games`, les tests et les docs.
+2. **Web et MCP** : la carte du jour, la page d'état (consigne pour un profil privé), la fiche Sources, les tests de bout en bout, les captures iPhone et Mac, en clair et en sombre.
+3. **Une seule PR**, `feat: tracker Steam, temps de jeu et succès`, qui emporte aussi la piste Beeper et la carte YouTube sans « Nouvelles chaînes ». Elle demande des actions sur le NAS : `compose.yaml` à recopier avant la fusion, la source, la clé (`docs/deploiement.md`, « Mise à jour : Steam »).
+
+**Construit le 6 nov. 2026, backend** : migration `20261107120000_steam.sql` (types `steam.playtime` et `steam.achievement` ; métriques `game.play`, de forme `duration`, sa référence `game.total_playtime` et `game.achievement`), interprètes `steam_playtime` et `steam_achievement`, connecteur `collector::steam` (`STEAM_API_KEY`, `STEAM_ID`, `STEAM_TOKEN`, état `steam-state.json`), la raison `profile_private` dans le vocabulaire de l'état (contrat et `source_status.rs`), `GET /v1/days/{date}/games` sur la partie générique de la carte Twitch (`stream::measured_day`), le contrôle de santé du collecteur et le runbook. Testé contre un Steam simulé par `backend/tests/steam.rs` (points de départ, partie de 40 min, minuit, écart de 3 h en tranches, jeu acheté entre deux passages, état perdu, succès, profil privé, 401, 429, logs du vrai binaire, contrat, rejeu). Écarts : pas de `STEAM_SOURCE`, puisque le connecteur n'annule rien ; un écart de plus de deux semaines entre deux relevés ne compte aucun temps (point de départ) ; une liste de jeux sans `games` donne aussi `profile_private`. Restent la web app et le MCP (étape 2), puis l'essai de l'étape 0 et la mise en service.
+
+**Construit le 6 nov. 2026, web app** : carte Steam du jour (`SteamCard.tsx`, `steam.ts`, `useSteam.ts`, `fetchDayGames`), montrée si « Jeux » ou « Succès » est choisi (depuis le 7 nov. 2026, si « Jeux » l'est, les succès n'ayant plus de filtre) : le temps de jeu du jour (jamais un zéro pour un jour à succès seul), le nombre de succès, puis chaque jeu avec son temps du jour, ses heures, son total Steam à la fin du jour (« 151 h au total ») et ses succès du jour avec leur heure ; un jeu qui n'a qu'un succès est listé sans temps ; chaque ligne ouvre la page du jeu sur le magasin Steam. Journée vide dite comme pour Twitch (« Pas de données Steam à cette date », « Pas encore de données pour ce jour… », « Pas de jeu ce jour-là »), alerte si le collecteur se tait. Couleur `--steam`, un vert olive (`#5f7a00`, `#bfe04d` en sombre). Page d'état : « Dernière partie », « Dernier succès », la consigne du profil privé et celle de la clé refusée (`STEAM_API_KEY`). Fiche Sources : l'arrivée par le collecteur, la clé d'API Web (sans échéance) et le token de la source. MCP : aucun code, un cas de bout en bout (`cumulative_duration`, `top`, `occurrences`). Testé par `web/e2e/steam.spec.ts` et `mcp/test/e2e.test.ts`, captures iPhone et Mac, clair et sombre. Restent l'essai de l'étape 0 et la mise en service.
+
+**Revu le 7 nov. 2026, à ma demande** : les succès sortent des filtres et du calendrier (`game.achievement` passe à l'agrégat `none` : ni case, ni pastille, ni place dans `day_summary` ; la carte Steam, montrée si « Jeux » est choisi, garde leur nombre et leur liste par jeu ; le MCP les lit toujours par `occurrences` et `top`). Les jeux joués pour la première fois deviennent des découvertes (`game.play` avec `discovery = true`) : une section « Découvertes » dans la carte Steam, absente un jour sans nouveau jeu (ni titre ni « aucune »), et `discoveries` dans `GET /v1/days/{date}/games`. Pour qu'un jeu déjà joué avant le suivi n'en soit pas une, l'interprète déclare « déjà joué » (`game.known`, forme `declaration`, comme `music.known`) tout point de départ qui a déjà du temps : premier relevé à plus de zéro, état perdu, écart de plus de deux semaines. Un jeu à zéro au premier passage, ou acheté ensuite, devient une découverte à sa première partie. `read::day_discoveries` exclut désormais toute déclaration qui s'applique à la métrique, comme `read::discoveries` le faisait déjà. Testé par `backend/tests/steam.rs` (jeu déjà joué, jeu à zéro puis joué, jeu acheté, état perdu), `web/e2e/steam.spec.ts` (un jour à découverte, un jour sans : pas de section) et `mcp/test/e2e.test.ts`.
+
+**Terminé quand**
+
+- Après une vraie partie, le calendrier, la carte du jour et le MCP (`cumulative_duration`, `top`) montrent le bon temps sur le bon jeu, à quelques minutes près.
+- Une partie à cheval sur minuit est répartie entre les deux jours.
+- Le total d'heures de chaque jeu correspond à celui affiché par Steam.
+- L'historique des succès est arrivé avec ses vraies dates, et un nouveau succès apparaît au passage suivant.
+- Le NAS arrêté puis relancé ne crée aucun doublon.
+- `admin rebuild` ne donne aucune différence.
+- La carte d'état passe en alerte quand la clé est révoquée, puis revient.
+- Aucune clé ni donnée personnelle dans le dépôt ou dans les logs.
+- La carte est vérifiée aux largeurs iPhone et Mac, en clair et en sombre.
 
 ## Twitch : import de l'historique (export RGPD)
 

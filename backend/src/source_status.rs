@@ -24,6 +24,9 @@ pub enum Reason {
     ConsentRequired,
     /// L'accord donné au service a expiré, ou va expirer : la page d'état propose de le renouveler.
     ConsentExpired,
+    /// Le profil du service n'est pas public : Steam ne donne les succès que d'un profil dont les
+    /// « Détails des jeux » sont publics. Le reste de la collecte continue.
+    ProfilePrivate,
     RateLimited,
     ServiceUnavailable,
     /// L'API d'ingestion a refusé ou n'a pas répondu.

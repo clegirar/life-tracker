@@ -1,9 +1,12 @@
 // Les métriques affichées : un seul choix pour le mois, l'année et le jour, gardé d'une visite à
 // l'autre. Une seule : ses chiffres dans le mois, son intensité dans l'année. Plusieurs : des points
 // façon Calendrier d'Apple dans les deux vues, un par métrique active ce jour-là.
+//
+// Le choix porte toujours sur des métriques ; seules les pastilles des filtres en regroupent
+// certaines (`METRIC_GROUPS`), cochées et décochées ensemble.
 
 import { useCallback, useState } from 'react'
-import type { MonthDay } from './api'
+import type { MonthDay, MonthMetric } from './api'
 
 const STORAGE_KEY = 'calendar.metrics'
 
@@ -17,10 +20,57 @@ const TONES: Record<string, string> = {
   workout: 'heat-workout',
   'video.watch': 'heat-video',
   'stream.watch': 'heat-twitch',
+  'game.play': 'heat-steam',
 }
 
 /** La classe qui pose `--heat`, la couleur de la métrique : chiffres, points, pastilles, filtres et rampes. */
 export const metricTone = (metric: string) => TONES[metric] ?? 'heat-neutral'
+
+/** Des métriques qui n'ont qu'une pastille dans les filtres, à la place de la première présente. */
+interface MetricGroup {
+  label: string
+  /** La couleur de la pastille : celle du titre de la carte du jour qui les montre. */
+  tone: string
+  metrics: string[]
+}
+
+// Garmin : une seule pastille « Activité » pour les quatre blocs de sa carte (à ma demande, 7 nov. 2026).
+const METRIC_GROUPS: MetricGroup[] = [
+  { label: 'Activité', tone: 'heat-steps', metrics: ['steps', 'workout', 'sleep', 'calories.burned'] },
+]
+
+const groupOf = (metric: string) => METRIC_GROUPS.find((group) => group.metrics.includes(metric))
+
+/** Une pastille des filtres : une métrique, ou un groupe, avec les métriques qu'elle coche. */
+export interface MetricChip {
+  /** La clé React et l'appui : la première métrique de la pastille. */
+  id: string
+  label: string
+  tone: string
+  metrics: string[]
+}
+
+/** Les pastilles, dans l'ordre du registre ; un groupe prend la place de sa première métrique présente. */
+export function metricChips(metrics: MonthMetric[]): MetricChip[] {
+  const chips: MetricChip[] = []
+  for (const metric of metrics) {
+    const group = groupOf(metric.metric)
+    if (!group) {
+      chips.push({ id: metric.metric, label: metric.label, tone: metricTone(metric.metric), metrics: [metric.metric] })
+      continue
+    }
+    const chip = chips.find((c) => groupOf(c.id) === group)
+    if (chip) chip.metrics.push(metric.metric)
+    else chips.push({ id: metric.metric, label: group.label, tone: group.tone, metrics: [metric.metric] })
+  }
+  return chips
+}
+
+/** Les métriques qu'une pastille coche ensemble : son groupe, réduit à celles du registre, ou elle seule. */
+function chipMembers(metric: string, available: string[]): string[] {
+  const group = groupOf(metric)
+  return group ? available.filter((m) => group.metrics.includes(m)) : [metric]
+}
 
 /** Ce qu'une journée dit en mode points : pas de données du tout, ou les métriques actives (valeur > 0). */
 export interface DayActivity {
@@ -46,18 +96,21 @@ export function visibleDots(active: string[], max: number): { dots: string[]; mo
 /**
  * Le choix gardé, réduit aux métriques connues et dans leur ordre. Jamais choisi (`null`) : toutes.
  * Vide : aucune, la vue invite à en choisir une. Des métriques toutes disparues du registre : toutes.
+ * Un groupe dont une seule métrique est gardée (un choix d'avant les groupes) compte en entier.
  */
 export function effectiveSelection(stored: string[] | null, available: string[]): string[] {
   if (stored === null) return available
   if (stored.length === 0) return []
   const kept = available.filter((metric) => stored.includes(metric))
-  return kept.length > 0 ? kept : available
+  if (kept.length === 0) return available
+  return available.filter((metric) => chipMembers(metric, available).some((m) => kept.includes(m)))
 }
 
-/** Ajoute ou retire une métrique, la dernière comprise. */
+/** Ajoute ou retire la pastille d'une métrique (elle seule, ou tout son groupe), la dernière comprise. */
 export function toggleMetric(current: string[], metric: string, available: string[]): string[] {
-  if (current.includes(metric)) return current.filter((m) => m !== metric)
-  return available.filter((m) => m === metric || current.includes(m))
+  const members = chipMembers(metric, available)
+  if (members.some((m) => current.includes(m))) return current.filter((m) => !members.includes(m))
+  return available.filter((m) => members.includes(m) || current.includes(m))
 }
 
 /** « Tout cocher » ou « Tout décocher ». */

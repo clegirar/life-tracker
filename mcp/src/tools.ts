@@ -85,7 +85,7 @@ const key = z
 
 /** Les outils et ce qui les rend applicables, d'après le registre. */
 function toolsFor(m: RegistryMetric): string[] {
-  const tools = ['occurrences', 'day_summary', 'completeness'];
+  const tools = inCalendar(m) ? ['occurrences', 'day_summary', 'completeness'] : ['occurrences', 'completeness'];
   if (m.item_levels.length > 0) {
     tools.push('search', 'top', 'last_time');
   }
@@ -104,6 +104,11 @@ function toolsFor(m: RegistryMetric): string[] {
 
 function displayable(m: RegistryMetric): boolean {
   return m.shape !== 'declaration' && m.shape !== 'reference';
+}
+
+/** Une métrique qui a une valeur du jour, donc sa case dans le calendrier et dans `day_summary` (pas les succès Steam). */
+function inCalendar(m: RegistryMetric): boolean {
+  return displayable(m) && m.daily_aggregation !== 'none';
 }
 
 /** Un résultat compact : JSON sans espaces, borné en taille. */
@@ -413,7 +418,7 @@ export function buildServer(backend: Backend): McpServer {
         const month = await backend.get<Month>(`/v1/months/${day.slice(0, 7)}`);
         const signals = month.days.find((d) => d.date === day);
         const metrics: Json[] = [];
-        for (const m of inventory.metrics.filter(displayable)) {
+        for (const m of inventory.metrics.filter(inCalendar)) {
           const entry: Json = { metric: m.metric, label: m.label, value: signals?.values[m.metric] ?? null };
           if (m.shape === 'measure') {
             // Une mesure du jour (pas, sommeil…) : sa valeur et ses détails, sans heure (midi est une convention).

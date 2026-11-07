@@ -129,27 +129,34 @@ test('un jour sans données Garmin le dit, sans zéro', async ({ page }) => {
   await expect(card.getByTestId('steps')).toHaveCount(0)
 })
 
-test('huit métriques : toutes choisies par défaut, et Pas seule montre ses chiffres', async ({ page, request }) => {
+test('six pastilles : toutes choisies par défaut, et « Activité » coche les quatre métriques Garmin ensemble', async ({ page, request }) => {
   await seed(request, await apiSession(request))
   await login(page)
   await page.goto(`/mois/${DAY.slice(0, 7)}`)
   const filters = page.getByRole('group', { name: 'Métriques affichées' })
-  // Dans l'ordre d'affichage du registre.
-  await expect(filters.locator('.chip')).toHaveText(['Cafés', 'Écoutes', 'Pas', 'Séances', 'Sommeil', 'Calories brûlées', 'Vidéos YouTube', 'Twitch'])
-  for (const name of ['Cafés', 'Écoutes', 'Pas', 'Calories brûlées', 'Sommeil', 'Séances', 'Vidéos YouTube', 'Twitch']) {
+  // Dans l'ordre d'affichage du registre ; les quatre métriques Garmin sous une pastille, les succès sans pastille.
+  await expect(filters.locator('.chip')).toHaveText(['Cafés', 'Écoutes', 'Activité', 'Vidéos YouTube', 'Twitch', 'Jeux'])
+  await expect(filters.getByRole('button', { name: 'Activité' })).toHaveClass(/heat-steps/)
+  for (const name of ['Cafés', 'Écoutes', 'Activité', 'Vidéos YouTube', 'Twitch', 'Jeux']) {
     await expect(filters.getByRole('button', { name })).toHaveAttribute('aria-pressed', 'true')
   }
   const cell = page.locator(`.cell[data-date="${DAY}"]`)
-  for (const metric of ['steps', 'calories.burned', 'sleep', 'workout']) {
+  const garmin = ['steps', 'calories.burned', 'sleep', 'workout']
+  for (const metric of garmin) {
     await expect(cell.locator(`.day-dot[data-metric="${metric}"]`)).toHaveCount(1)
   }
   await expect(cell).toHaveAccessibleName(/8\s412 pas.*2 séances.*7 h 13.*2\s350 kcal/)
-  for (const name of ['Cafés', 'Écoutes', 'Calories brûlées', 'Sommeil', 'Séances', 'Vidéos YouTube', 'Twitch']) await filters.getByRole('button', { name }).click()
-  await expect(cell.locator('.cell-value[data-metric="steps"]')).toHaveText('8,4 k')
-  await expect(page.locator(`.cell[data-date="${NO_DATA}"] .cell-value`)).toHaveText(' ')
-  await filters.getByRole('button', { name: 'Sommeil' }).click()
-  await filters.getByRole('button', { name: 'Pas', exact: true }).click()
-  await expect(cell.locator('.cell-value[data-metric="sleep"]')).toHaveText('7,2 h')
+  // Activité seule : ses quatre points, sans les autres.
+  for (const name of ['Cafés', 'Écoutes', 'Vidéos YouTube', 'Twitch', 'Jeux']) await filters.getByRole('button', { name }).click()
+  for (const metric of garmin) {
+    await expect(cell.locator(`.day-dot[data-metric="${metric}"]`)).toHaveCount(1)
+  }
+  await expect(cell.locator('.day-dot')).toHaveCount(4)
+  // Décochée : les quatre partent ensemble.
+  await filters.getByRole('button', { name: 'Activité' }).click()
+  await expect(filters.getByRole('button', { name: 'Activité' })).toHaveAttribute('aria-pressed', 'false')
+  await expect(cell.locator('.day-dot')).toHaveCount(0)
+  await expect(page.getByTestId('no-metric')).toBeVisible()
 })
 
 for (const colorScheme of ['light', 'dark'] as const) {

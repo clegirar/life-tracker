@@ -181,6 +181,18 @@ pub static INTERPRETERS: &[Interpreter] = &[
         schema_version: 1,
         interpret: twitch_watch,
     },
+    Interpreter {
+        kind: "steam.playtime",
+        version: 1,
+        schema_version: 1,
+        interpret: steam_playtime,
+    },
+    Interpreter {
+        kind: "steam.achievement",
+        version: 1,
+        schema_version: 1,
+        interpret: steam_achievement,
+    },
 ];
 
 /// Un café : un événement à l'heure de l'enveloppe. La charge utile, attendue vide, est ignorée.
@@ -844,6 +856,196 @@ fn twitch_watch(record: &Record) -> Result<Vec<Output>, InterpretError> {
         }),
         items,
         ..Event::at_envelope(record, "stream.watch")
+    })])
+}
+
+// ─── Steam ───────────────────────────────────────────────────────────────────
+//
+// Steam ne donne que des compteurs cumulés. Chaque relevé porte le relevé précédent du même jeu, que le
+// connecteur garde dans son état : l'interprète tire le temps joué de l'écart, sans mémoire. Les deux
+// valeurs brutes restent au journal, et un rejeu peut toujours les placer autrement.
+
+/// Le nom d'un jeu ou d'un succès : largement de quoi tenir.
+const MAX_STEAM_NAME_BYTES: usize = 200;
+/// L'identifiant d'un succès dans son jeu (`apiname`) : un nom technique, court.
+const MAX_STEAM_APINAME_BYTES: usize = 128;
+/// Au-delà de cet écart entre deux relevés, le temps n'est pas compté : le relevé ne sert que de point
+/// de départ. Un jeu rendu à la bibliothèque avec des années de jeu ne devient pas des milliers
+/// d'heures d'un seul coup ; deux semaines de jeu entre deux relevés restent comptées.
+const MAX_STEAM_DELTA_MINUTES: i64 = 14 * 24 * 60;
+
+/// Un appid de Steam : un entier positif.
+fn steam_appid(payload: &Value, error: &'static str) -> Result<u64, InterpretError> {
+    payload
+        .get("appid")
+        .and_then(Value::as_u64)
+        .filter(|id| *id > 0)
+        .ok_or(InterpretError(error))
+}
+
+/// Un nom facultatif : absent, `null` ou vide, rien ; autre chose qu'un texte, ou trop long, une erreur.
+fn steam_name<'a>(
+    payload: &'a Value,
+    field: &str,
+    error: &'static str,
+) -> Result<Option<&'a str>, InterpretError> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) if text.trim().len() <= MAX_STEAM_NAME_BYTES => {
+            Ok(Some(text.trim()).filter(|t| !t.is_empty()))
+        }
+        Some(_) => Err(InterpretError(error)),
+    }
+}
+
+/// Un compteur en minutes : un entier positif ou nul.
+fn steam_minutes(value: Option<&Value>) -> Option<i64> {
+    value
+        .and_then(Value::as_i64)
+        .filter(|m| (0..=i64::from(i32::MAX)).contains(m))
+}
+
+/// Le jeu d'un événement, sous son appid, affiché sous son nom (l'appid s'il manque).
+fn game_item(appid: u64, name: Option<&str>) -> Item {
+    let key = appid.to_string();
+    let display = name.map_or_else(|| key.clone(), str::to_owned);
+    Item {
+        level: "game",
+        position: 0,
+        item_key: key,
+        display,
+    }
+}
+
+/// `{appid, name, playtime_forever, playtime_disconnected, rtime_last_played, previous}` : un relevé du
+/// compteur d'un jeu, à l'heure du relevé. Il donne toujours le total d'heures du jeu
+/// (`game.total_playtime`, en minutes). Avec un relevé précédent (`{playtime_forever, observed_at}`) et
+/// un écart positif, il donne aussi le temps joué entre les deux (`game.play`) :
+///
+/// - la fin de la partie est `rtime_last_played` s'il tombe entre le relevé précédent (exclu) et
+///   celui-ci (inclus), sinon l'heure du relevé ;
+/// - l'écart est placé juste avant cette fin, découpé en tranches de `MAX_MEASURED_MS` au plus, mises
+///   bout à bout, chacune avec `details.played_ms`.
+///
+/// Une partie hors ligne, synchronisée plus tard, se place donc à la fin. Un écart négatif ou nul ne
+/// donne aucun temps, un écart de plus de deux semaines non plus (point de départ).
+///
+/// Un point de départ qui a déjà du temps (sans relevé précédent et à plus de zéro, ou après un écart
+/// de plus de deux semaines) donne aussi `game.known` : le jeu a été joué avant le suivi, sa première
+/// partie comptée n'est pas une découverte. Un premier relevé à zéro n'en donne pas : la première
+/// partie qui suit en est une.
+fn steam_playtime(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    let payload = &record.payload;
+    let appid = steam_appid(payload, "steam.playtime: invalid appid")?;
+    let name = steam_name(payload, "name", "steam.playtime: invalid name")?;
+    let total = steam_minutes(payload.get("playtime_forever"))
+        .ok_or(InterpretError("steam.playtime: invalid playtime_forever"))?;
+    match payload.get("playtime_disconnected") {
+        None | Some(Value::Null) => {}
+        value => {
+            steam_minutes(value).ok_or(InterpretError(
+                "steam.playtime: invalid playtime_disconnected",
+            ))?;
+        }
+    }
+    let last_played = match payload.get("rtime_last_played") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_i64()
+                .filter(|s| *s >= 0)
+                .and_then(|s| DateTime::from_timestamp(s, 0))
+                .ok_or(InterpretError("steam.playtime: invalid rtime_last_played"))?,
+        )
+        .filter(|at| at.timestamp() > 0),
+    };
+    let previous = match payload.get("previous") {
+        None | Some(Value::Null) => None,
+        Some(previous) => {
+            let minutes = steam_minutes(previous.get("playtime_forever"))
+                .ok_or(InterpretError("steam.playtime: invalid previous"))?;
+            let at = previous
+                .get("observed_at")
+                .and_then(Value::as_str)
+                .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
+                .map(|at| at.with_timezone(&Utc))
+                .filter(|at| *at < record.occurred_at)
+                .ok_or(InterpretError("steam.playtime: invalid previous"))?;
+            Some((minutes, at))
+        }
+    };
+
+    let mut outputs = vec![Output::Event(Event {
+        value: Some(total.to_string()),
+        details: json!({}),
+        items: vec![game_item(appid, name)],
+        ..Event::at_envelope(record, "game.total_playtime")
+    })];
+    // Un point de départ qui a déjà du temps de jeu (premier relevé, état perdu, jeu revenu avec plus de
+    // deux semaines d'écart) : joué hors de notre vue, donc déjà connu, et jamais une découverte.
+    let known = Output::Event(Event {
+        details: json!({}),
+        items: vec![game_item(appid, name)],
+        ..Event::at_envelope(record, "game.known")
+    });
+    let Some((before, since)) = previous else {
+        if total > 0 {
+            outputs.push(known);
+        }
+        return Ok(outputs);
+    };
+    let delta = total - before;
+    if delta > MAX_STEAM_DELTA_MINUTES {
+        outputs.push(known);
+        return Ok(outputs);
+    }
+    if delta <= 0 {
+        return Ok(outputs);
+    }
+    let end = last_played
+        .filter(|at| *at > since && *at <= record.occurred_at)
+        .unwrap_or(record.occurred_at);
+    let mut remaining = delta * 60_000;
+    let mut start = end - chrono::TimeDelta::milliseconds(remaining);
+    while remaining > 0 {
+        let played = remaining.min(MAX_MEASURED_MS);
+        outputs.push(Output::Event(Event {
+            details: json!({ "played_ms": played }),
+            items: vec![game_item(appid, name)],
+            occurred_at: start,
+            ..Event::at_envelope(record, "game.play")
+        }));
+        start += chrono::TimeDelta::milliseconds(played);
+        remaining -= played;
+    }
+    Ok(outputs)
+}
+
+/// `{appid, game_name, apiname, name}` : un succès débloqué, à sa date de déblocage (l'enveloppe).
+/// Éléments : le jeu, sous son appid, et le succès, sous `<appid>:<apiname>`, affiché sous son nom
+/// (son identifiant s'il manque).
+fn steam_achievement(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    let payload = &record.payload;
+    let appid = steam_appid(payload, "steam.achievement: invalid appid")?;
+    let game_name = steam_name(payload, "game_name", "steam.achievement: invalid game_name")?;
+    let apiname = payload
+        .get("apiname")
+        .and_then(Value::as_str)
+        .filter(|a| {
+            !a.is_empty() && a.len() <= MAX_STEAM_APINAME_BYTES && !a.chars().any(char::is_control)
+        })
+        .ok_or(InterpretError("steam.achievement: invalid apiname"))?;
+    let name = steam_name(payload, "name", "steam.achievement: invalid name")?;
+    Ok(vec![Output::Event(Event {
+        items: vec![
+            game_item(appid, game_name),
+            Item::single(
+                "achievement",
+                format!("{appid}:{apiname}"),
+                name.unwrap_or(apiname),
+            ),
+        ],
+        ..Event::at_envelope(record, "game.achievement")
     })])
 }
 
@@ -1647,6 +1849,215 @@ mod tests {
         ] {
             let err = twitch_watch(&record(payload.clone())).unwrap_err();
             assert!(err.0.starts_with("twitch.watch: invalid"), "{payload}");
+        }
+    }
+
+    /// Un relevé Steam observé le 13 oct. 2026 à 07:42:10 UTC (l'enveloppe de `record`).
+    fn playtime(total: i64, last_played: Value, previous: Value) -> Record {
+        record(
+            json!({"appid": 620, "name": " Jeu Fictif ", "playtime_forever": total,
+            "playtime_disconnected": 0, "rtime_last_played": last_played, "previous": previous}),
+        )
+    }
+
+    fn plays(outputs: &[Output]) -> Vec<(DateTime<Utc>, i64)> {
+        outputs
+            .iter()
+            .filter_map(|o| match o {
+                Output::Event(e) if e.metric == "game.play" => {
+                    Some((e.occurred_at, e.details["played_ms"].as_i64().unwrap()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn at(text: &str) -> DateTime<Utc> {
+        text.parse().unwrap()
+    }
+
+    fn metrics(outputs: &[Output]) -> Vec<&str> {
+        outputs
+            .iter()
+            .map(|o| match o {
+                Output::Event(e) => e.metric,
+                _ => panic!("un événement attendu"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_first_steam_reading_gives_the_total_and_marks_a_played_game_known() {
+        let outputs = steam_playtime(&playtime(125, json!(1_700_000_000), Value::Null)).unwrap();
+        assert_eq!(metrics(&outputs), ["game.total_playtime", "game.known"]);
+        for output in &outputs {
+            let Output::Event(event) = output else {
+                panic!()
+            };
+            assert_eq!(event.occurred_at, at("2026-10-13T07:42:10Z"));
+            assert_eq!(
+                event.items,
+                vec![Item::single("game", "620".to_owned(), "Jeu Fictif")]
+            );
+            assert_eq!(event.details, json!({}));
+        }
+        let Output::Event(total) = &outputs[0] else {
+            panic!()
+        };
+        assert_eq!(total.value.as_deref(), Some("125"));
+        let Output::Event(known) = &outputs[1] else {
+            panic!()
+        };
+        assert_eq!(known.value, None);
+        // Un jeu jamais lancé au premier relevé n'est pas connu : sa première partie sera une découverte.
+        let outputs = steam_playtime(&playtime(0, Value::Null, Value::Null)).unwrap();
+        assert_eq!(metrics(&outputs), ["game.total_playtime"]);
+    }
+
+    #[test]
+    fn steam_play_time_ends_at_the_last_played_time_within_the_window() {
+        // Relevé précédent à 07:00, dernière partie à 07:30 : 40 min de 06:50 à 07:30.
+        let last = at("2026-10-13T07:30:00Z").timestamp();
+        let previous = json!({"playtime_forever": 85, "observed_at": "2026-10-13T07:00:00Z"});
+        let outputs = steam_playtime(&playtime(125, json!(last), previous.clone())).unwrap();
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(plays(&outputs), [(at("2026-10-13T06:50:00Z"), 40 * 60_000)]);
+        let Output::Event(event) = &outputs[1] else {
+            panic!()
+        };
+        assert_eq!(event.details, json!({"played_ms": 2_400_000}));
+        assert_eq!(event.items[0].item_key, "620");
+        // Une dernière partie hors de la fenêtre (avant le relevé précédent, ou jamais) : l'heure du relevé.
+        for last in [
+            json!(at("2026-10-13T06:00:00Z").timestamp()),
+            json!(0),
+            Value::Null,
+        ] {
+            let outputs = steam_playtime(&playtime(125, last, previous.clone())).unwrap();
+            assert_eq!(plays(&outputs), [(at("2026-10-13T07:02:10Z"), 40 * 60_000)]);
+        }
+    }
+
+    #[test]
+    fn a_long_steam_gap_is_split_into_chunks_back_to_back() {
+        let previous = json!({"playtime_forever": 0, "observed_at": "2026-10-13T01:00:00Z"});
+        let outputs = steam_playtime(&playtime(150, Value::Null, previous)).unwrap();
+        assert_eq!(
+            plays(&outputs),
+            [
+                (at("2026-10-13T05:12:10Z"), MAX_MEASURED_MS),
+                (at("2026-10-13T06:12:10Z"), MAX_MEASURED_MS),
+                (at("2026-10-13T07:12:10Z"), 30 * 60_000),
+            ]
+        );
+    }
+
+    #[test]
+    fn no_steam_play_without_a_positive_plausible_gap() {
+        for (total, before) in [(100, 100), (90, 100)] {
+            let previous =
+                json!({"playtime_forever": before, "observed_at": "2026-10-01T00:00:00Z"});
+            let outputs = steam_playtime(&playtime(total, Value::Null, previous)).unwrap();
+            assert_eq!(
+                metrics(&outputs),
+                ["game.total_playtime"],
+                "{total} après {before}"
+            );
+        }
+        // Plus de deux semaines d'un coup : joué hors de notre vue, un point de départ déjà connu.
+        let previous = json!({"playtime_forever": 0, "observed_at": "2026-10-01T00:00:00Z"});
+        let outputs = steam_playtime(&playtime(
+            MAX_STEAM_DELTA_MINUTES + 1,
+            Value::Null,
+            previous,
+        ))
+        .unwrap();
+        assert_eq!(metrics(&outputs), ["game.total_playtime", "game.known"]);
+        let previous = json!({"playtime_forever": 0, "observed_at": "2026-10-01T00:00:00Z"});
+        let outputs =
+            steam_playtime(&playtime(MAX_STEAM_DELTA_MINUTES, Value::Null, previous)).unwrap();
+        assert_eq!(plays(&outputs).len(), 14 * 24);
+    }
+
+    #[test]
+    fn an_unusable_steam_reading_is_an_error_that_cites_nothing() {
+        let ok = json!({"appid": 620, "name": "Jeu", "playtime_forever": 10,
+            "playtime_disconnected": 0, "rtime_last_played": 0,
+            "previous": {"playtime_forever": 5, "observed_at": "2026-10-13T07:00:00Z"}});
+        assert!(steam_playtime(&record(ok.clone())).is_ok());
+        let with = |field: &str, value: Value| {
+            let mut payload = ok.clone();
+            payload[field] = value;
+            payload
+        };
+        for payload in [
+            json!({}),
+            json!(null),
+            with("appid", json!(0)),
+            with("appid", json!("620")),
+            with("name", json!(3)),
+            with("name", json!("x".repeat(201))),
+            with("playtime_forever", json!(-1)),
+            with("playtime_forever", json!(1.5)),
+            with("playtime_forever", Value::Null),
+            with("playtime_disconnected", json!(-1)),
+            with("rtime_last_played", json!(-5)),
+            with("rtime_last_played", json!("1700000000")),
+            with("previous", json!(5)),
+            with("previous", json!({"playtime_forever": 5})),
+            with(
+                "previous",
+                json!({"playtime_forever": 5, "observed_at": "hier"}),
+            ),
+            // Un relevé précédent qui n'est pas avant celui-ci.
+            with(
+                "previous",
+                json!({"playtime_forever": 5, "observed_at": "2026-10-13T07:42:10Z"}),
+            ),
+        ] {
+            let err = steam_playtime(&record(payload.clone())).unwrap_err();
+            assert!(err.0.starts_with("steam.playtime: invalid"), "{payload}");
+        }
+    }
+
+    #[test]
+    fn a_steam_achievement_has_its_game_and_its_key_within_the_game() {
+        let event = single_event(
+            steam_achievement(&record(json!({"appid": 620, "game_name": "Jeu Fictif",
+                "apiname": "ACH_FICTIF", "name": " Succès fictif ", "description": "écartée"})))
+            .unwrap(),
+        );
+        assert_eq!(event.metric, "game.achievement");
+        assert_eq!(event.occurred_at, at("2026-10-13T07:42:10Z"));
+        assert_eq!(
+            event.items,
+            vec![
+                Item::single("game", "620".to_owned(), "Jeu Fictif"),
+                Item::single("achievement", "620:ACH_FICTIF".to_owned(), "Succès fictif"),
+            ]
+        );
+        assert_eq!(event.details, json!({}));
+        // Sans noms : l'appid et l'identifiant.
+        let event = single_event(
+            steam_achievement(&record(
+                json!({"appid": 7, "game_name": null, "apiname": "1",
+                "name": ""}),
+            ))
+            .unwrap(),
+        );
+        assert_eq!(event.items[0].display, "7");
+        assert_eq!(event.items[1].display, "1");
+        for payload in [
+            json!({}),
+            json!({"appid": 7, "apiname": ""}),
+            json!({"appid": 7, "apiname": 3}),
+            json!({"appid": 7, "apiname": "a".repeat(129)}),
+            json!({"appid": 7, "apiname": "a\nb"}),
+            json!({"appid": -7, "apiname": "a"}),
+            json!({"appid": 7, "apiname": "a", "name": ["x"]}),
+        ] {
+            let err = steam_achievement(&record(payload.clone())).unwrap_err();
+            assert!(err.0.starts_with("steam.achievement: invalid"), "{payload}");
         }
     }
 }

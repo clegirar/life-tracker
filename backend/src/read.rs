@@ -1272,10 +1272,12 @@ pub struct DayDiscovery {
 
 /// Les éléments d'une métrique vus ce jour-là pour la première fois de la vie, aux niveaux donnés et
 /// dans leur ordre, puis par première heure : aucune occurrence vivante du même niveau et de la même clé
-/// avant minuit, heure de Paris. Sans les marquages « déjà connu », que seule la musique a, et qu'elle
-/// lit à part (`api::first_listens`). Le coût suit le jour demandé, pas l'historique : une recherche
-/// d'index par élément, d'où le `LIMIT 1` latéral, qu'un `NOT EXISTS` ferait devenir un parcours de
-/// tous les éléments.
+/// avant minuit, heure de Paris, et aucune déclaration « déjà connu » vivante du même niveau et de la
+/// même clé (les métriques `declaration` qui s'appliquent à celle-ci, comme `discoveries` ; pour Steam,
+/// `game.known`). La musique, qui montre aussi ses éléments marqués, lit les siens à part
+/// (`api::first_listens`). Le coût suit le jour demandé, pas l'historique : une recherche d'index par
+/// élément, d'où les `LIMIT 1` latéraux, qu'un `NOT EXISTS` ferait devenir un parcours de tous les
+/// éléments.
 pub async fn day_discoveries(
     pool: &PgPool,
     metric: &str,
@@ -1307,7 +1309,15 @@ pub async fn day_discoveries(
                AND x.occurred_at < w.day_start
              LIMIT 1
            ) earlier ON true
-           WHERE earlier.found IS NULL
+           LEFT JOIN LATERAL (
+             SELECT 1 AS found FROM derived.live_event_items k
+             WHERE k.generation = w.generation
+               AND k.metric IN (SELECT m.metric FROM core.metrics m
+                                WHERE m.applies_to = $2 AND m.shape = 'declaration')
+               AND k.level = w.level AND k.item_key = w.item_key
+             LIMIT 1
+           ) known ON true
+           WHERE earlier.found IS NULL AND known.found IS NULL
            ORDER BY array_position($3, w.level), w.first_at, w.item_key"#,
         date,
         metric,

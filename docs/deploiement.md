@@ -12,12 +12,12 @@ Runbook de l'étape 4, joué sur le NAS (voir « Ce qui reste à vérifier »). 
 | `migrate` | Une fois à chaque `up`, puis s'arrête (état « arrêté » normal) | `secrets/migrate.env` (`tracker_owner`) | `data` |
 | `backend` | API et interprètes | `secrets/backend.env` (`tracker_app`, zones de confidentialité du MCP) | `data`, `front`, `collect` |
 | `web` | nginx : app statique et proxy de `/v1` et `/health` | aucun secret | `front`, `edge` |
-| `collector` | Interroge Last.fm, Garmin et YouTube, écrit par l'API d'ingestion ; un état par connecteur (`state.json`, `garmin-state.json`, `youtube-state.json`) dans le volume `life-tracker-prod-collector-state` | `secrets/collector.env` (clés, utilisateur, un token par source) | `collect`, `egress` |
+| `collector` | Interroge Last.fm, Garmin, YouTube et Steam, écrit par l'API d'ingestion ; un état par connecteur (`state.json`, `garmin-state.json`, `youtube-state.json`, `steam-state.json`) dans le volume `life-tracker-prod-collector-state` | `secrets/collector.env` (clés, utilisateur, un token par source) | `collect`, `egress` |
 | `admin` | Profil `admin`, lancé à la main | `secrets/admin.env` (`tracker_admin`) | `data` |
 | `apple-import` | Profil `import`, lancé à la main : l'import de l'export Apple | Le token sur l'entrée standard, l'archive en lecture seule | `collect` |
 | `mcp` | Serveur MCP (étape 9) : OAuth et outils en lecture seule ; jetons OAuth hachés dans le volume `life-tracker-prod-mcp-state` | `secrets/mcp.env` (jeton de service, haché du secret de connexion) | `read`, `mcp-edge` |
 
-`web` publie un port, sur `127.0.0.1:18080` par défaut, et `mcp` le sien, sur `127.0.0.1:18443` (Tailscale Funnel). `read` relie le seul MCP au backend, sans sortie ; `mcp-edge` ne porte que le port publié du MCP, sans NAT sortant : le MCP ne joint ni la base ni Internet. `data`, `front` et `collect` n'ont aucune sortie, et `data` n'a aucune adresse côté hôte. `egress` est la seule sortie vers Internet, et seul le collecteur y est : il ne voit pas la base, et le backend ne voit pas Internet. Docker ne filtre pas par destination : le collecteur pourrait joindre autre chose que Last.fm, ce que limitent l'absence de secret de base, `read_only` et l'absence de tout port entrant. Il ne connaît que ce qu'il envoie déjà.
+`web` publie un port, sur `127.0.0.1:18080` par défaut, et `mcp` le sien, sur `127.0.0.1:18443` (Tailscale Funnel). `read` relie le seul MCP au backend, sans sortie ; `mcp-edge` ne porte que le port publié du MCP, sans NAT sortant : le MCP ne joint ni la base ni Internet. `data`, `front` et `collect` n'ont aucune sortie, et `data` n'a aucune adresse côté hôte. `egress` est la seule sortie vers Internet, et seul le collecteur y est : il ne voit pas la base, et le backend ne voit pas Internet. Docker ne filtre pas par destination : le collecteur pourrait joindre autre chose que ses services (Last.fm, Garmin, Google, Steam), ce que limitent l'absence de secret de base, `read_only` et l'absence de tout port entrant. Il ne connaît que ce qu'il envoie déjà.
 
 ## Ce que je fais à la main
 
@@ -942,6 +942,62 @@ Puis, par le MCP, `inventory` : le nombre de « Vidéos YouTube » tombe à ≈1
 
 **Retour arrière.** Couper Twitch seul : `admin revoke-source twitch` ; l'extension voit alors un 401, s'arrête d'envoyer et affiche « ! ». Le journal garde ce qui est entré. Revenir à une image d'avant : la migration ajoute des registres que l'ancienne version ignore, sauf le calendrier, qui montre alors la métrique comme une somme vide ; rien n'est perdu.
 
+## Mise à jour : Steam
+
+À faire une fois, sur le NAS déjà en service. La PR part en production à la fusion, migration comprise (`20261107120000_steam.sql`, par le service `migrate` : deux types, trois métriques, pas de `rebuild`) : le connecteur Steam ne démarre que lorsque ses trois variables sont dans `secrets/collector.env`, donc rien ne change pour les autres connecteurs d'ici là. Les métriques « Jeux » et « Succès » apparaissent dans les filtres du calendrier dès le déploiement, vides jusqu'au premier passage. Je ne lance rien de tout cela depuis le dépôt, et je tape moi-même chaque secret.
+
+1. **Avant la fusion**, recopier `compose.yaml` comme à l'étape 4 de « Mise à jour vers l'étape 5 » : son contrôle de santé vérifie aussi `steam-state.json`.
+
+2. **La clé et le profil.**
+   - Une clé d'API Web neuve, pour le NAS seulement, sur steamcommunity.com/dev/apikey (le nom de domaine demandé n'est qu'indicatif : `localhost` suffit, jamais le nom du NAS). Si la clé de l'essai du 6 nov. 2026 est passée ailleurs que sur le NAS, la révoquer sur la même page avant d'en créer une autre (une seule clé par compte). Une clé Steam n'expire pas. Elle va dans le gestionnaire de mots de passe et dans `secrets/collector.env`, nulle part ailleurs.
+   - L'identifiant Steam 64 bits du compte (17 chiffres, `7656…`), visible dans l'URL du profil ou sur la page de la clé.
+   - **Profil public, et « Détails des jeux » public** (Steam, Modifier le profil, Paramètres de confidentialité) : sans eux, la liste des jeux et leurs compteurs arrivent quand même avec ma propre clé, mais pas les succès ; la carte d'état passe à « À faire » (`profile_private`) et les relevés continuent.
+   - Le collecteur joint `api.steampowered.com` par le réseau `egress`.
+
+3. Après le déploiement de la version, sur le NAS, en root dans le dossier en `700` :
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   sudo docker compose logs migrate | tail -3   # « migrations à jour »
+   TOKEN=$(sudo docker compose run --rm -T admin create-source steam --silence-threshold "6 hours" --label "Steam" </dev/null)
+   [ "${#TOKEN}" = 64 ] && echo "token ok" || echo "ÉCHEC : ne pas continuer"
+   for kind in steam.playtime steam.achievement; do
+     sudo docker compose run --rm -T admin grant-kind steam "$kind" </dev/null
+   done
+   read -rs STEAM_API_KEY   # la clé neuve, sans écho
+   read -r STEAM_ID         # l'identifiant 64 bits
+   (umask 077; printf 'STEAM_API_KEY=%s\nSTEAM_ID=%s\nSTEAM_TOKEN=%s\n' "$STEAM_API_KEY" "$STEAM_ID" "$TOKEN" >> secrets/collector.env)
+   unset TOKEN STEAM_API_KEY STEAM_ID
+   ls -l secrets/collector.env   # -rw-------
+   sudo docker compose up -d collector
+   ```
+
+   Il faut les trois ensemble : un seul manquant empêche le collecteur de démarrer, les autres connecteurs compris (« Steam demande STEAM_API_KEY, STEAM_ID et STEAM_TOKEN ensemble »). Seulement `steam.playtime` et `steam.achievement` : le connecteur n'annule rien.
+
+4. **Le premier passage** pose un point de départ par jeu déjà joué (son total d'heures, sans temps compté) et envoie l'historique des succès, à leurs vraies dates : un appel par jeu joué, une seconde entre deux, donc une ou deux minutes pour quelques dizaines de jeux. Il n'y a pas de temps par jour avant la mise en service : Steam ne donne que des totaux. Ensuite, un passage tous les quarts d'heure n'envoie que les jeux dont le compteur a changé, et leurs nouveaux succès.
+
+   ```sh
+   sudo docker compose logs collector | grep "steam pass completed" | tail -2   # games, readings, achievements, accepted ; profile_private false
+   sudo docker compose ps collector                                           # healthy
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select status from core.sources where name = 'steam'" </dev/null   # ok, next_run_at, last_collected_at
+   ```
+
+   « clé Steam refusée : révoquée ou invalide » : la clé est mauvaise ; aucun signal de vie ne part, la carte d'état le dit (`key_rejected`) et le silence de 6 h alerte. `profile_private` : le profil ou ses « Détails des jeux » sont privés ; les succès en attente partent au premier passage après leur ouverture. Les logs ne donnent que des nombres : jamais la clé, l'identifiant, un appid ni un nom de jeu.
+
+5. Vérifier les critères du chantier Steam dans [les chantiers](chantiers.md) : après une vraie partie, la carte du jour, le calendrier et le MCP (`cumulative_duration` et `top` sur `game.play`, niveau `game`) ; le total d'heures de chaque jeu face à celui de Steam ; puis le rejeu :
+
+   ```sh
+   sudo docker compose run --rm -T admin coverage game.play </dev/null
+   sudo docker compose run --rm -T admin rebuild </dev/null   # 0 différence
+   ```
+
+6. **Remplacer la clé** (révoquée, ou passée par un autre endroit que le NAS) : révoquer l'ancienne sur steamcommunity.com/dev/apikey et en créer une autre (une seule clé par compte), remplacer la ligne `STEAM_API_KEY=` de `secrets/collector.env` (en root, éditeur sans sauvegarde, ou `sed -i` avec la clé lue par `read -rs`), puis `sudo docker compose up -d collector`.
+
+**Perdre `steam-state.json`** ne crée aucun doublon (chaque relevé a une clé qui ne dépend que du jeu et de son compteur, chaque succès la sienne), mais le temps joué depuis le dernier relevé de chaque jeu n'est pas compté : le passage suivant repose un point de départ.
+
+**Retour arrière.** Couper Steam seul : retirer les trois lignes `STEAM_*` de `secrets/collector.env`, puis `sudo docker compose up -d collector`. Le journal garde ce qui est entré ; `admin revoke-source steam` coupe le token, et révoquer la clé sur steamcommunity.com coupe l'accès à Steam. Revenir à une image d'avant : la migration ajoute des registres que l'ancienne version ignore, sauf le calendrier, qui montre alors les métriques comme des sommes vides ; rien n'est perdu.
+
 ## Vérifier les critères « Terminé quand »
 
 **Un café saisi depuis l'iPhone, par la web app comme par le raccourci, apparaît.**
@@ -1167,7 +1223,7 @@ Si le changement touche un interprète, ensuite : `sudo docker compose run --rm 
 
 **Panne de la base.** `/health` répond 503 et le backend passe `unhealthy`, sans redémarrer : `restart` ne réagit qu'à la fin d'un processus. Il reprend seul au retour de la base. Lectures et écritures répondent 500 entre-temps, et l'app le traite comme une erreur passagère.
 
-**Collecteur.** Chaque connecteur réessaie seul (1, 2, 4… jusqu'à 30 min ; le délai demandé par une réponse 429), sans jamais avancer son curseur, et la panne de l'un n'arrête pas l'autre. `unhealthy` : un connecteur configuré n'a fait aucun passage réussi depuis 6 h, sans redémarrage. Effacer son volume ne coûte qu'un rattrapage en doublons ignorés, à une réserve près pour Garmin : une révision survenue entre-temps ne peut plus annuler la version d'avant (voir l'architecture, 4 nov. 2026). Remplacer la clé : modifier `secrets/collector.env`, puis `sudo docker compose up -d collector`. Une écoute qui arrive sur Last.fm plus de 48 h après sa date n'entre pas d'elle-même ; effacer le volume la rattrape.
+**Collecteur.** Chaque connecteur réessaie seul (1, 2, 4… jusqu'à 30 min ; le délai demandé par une réponse 429), sans jamais avancer son curseur, et la panne de l'un n'arrête pas l'autre. `unhealthy` : un connecteur configuré n'a fait aucun passage réussi depuis 6 h, sans redémarrage. Effacer son volume ne coûte qu'un rattrapage en doublons ignorés, à deux réserves près : pour Garmin, une révision survenue entre-temps ne peut plus annuler la version d'avant (voir l'architecture, 4 nov. 2026) ; pour Steam, le temps joué depuis le dernier relevé de chaque jeu n'est pas compté, le passage suivant repose un point de départ (voir l'architecture, 6 nov. 2026). Remplacer la clé : modifier `secrets/collector.env`, puis `sudo docker compose up -d collector`. Une écoute qui arrive sur Last.fm plus de 48 h après sa date n'entre pas d'elle-même ; effacer le volume la rattrape.
 
 **Logs.** `sudo docker compose logs <service>`. Rotation par taille : 3 fichiers de 10 Mo par service. Docker ne sait pas purger par âge : la règle des 30 jours est un ordre de grandeur, et un service peu bavard garde ses logs plus longtemps. Le backend ne journalise aucune donnée personnelle, et nginx n'écrit pas de journal d'accès.
 

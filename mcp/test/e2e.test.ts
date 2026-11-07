@@ -15,6 +15,7 @@ const iosToken = process.env.LT_MCP_TEST_IOS_TOKEN ?? '';
 const lastfmToken = process.env.LT_MCP_TEST_LASTFM_TOKEN ?? '';
 const garminToken = process.env.LT_MCP_TEST_GARMIN_TOKEN ?? '';
 const twitchToken = process.env.LT_MCP_TEST_TWITCH_TOKEN ?? '';
+const steamToken = process.env.LT_MCP_TEST_STEAM_TOKEN ?? '';
 const skip = backendUrl === undefined ? 'sans backend : lancer mcp/test.sh' : false;
 
 const EXPECTED_TOOLS = [
@@ -83,6 +84,35 @@ const TWITCH = [
   segment('t-b2', '2026-10-16T21:00:00+02:00', 'beta', 30),
 ];
 
+// Steam, tel que l'envoie le collecteur : des relevés du compteur de chaque jeu, avec le précédent. Le
+// 17 oct. (UTC+2), le point de départ à 20:00 (120 min), puis 160 min à 21:00, la partie finie à 20:55 :
+// 40 min de 20:15 à 20:55. Un succès à 20:50.
+const steamReading = (minutes: number, at: string, lastPlayed: string | null, previous: { minutes: number; at: string } | null) => ({
+  key: `playtime:4242:${minutes}`,
+  kind: 'steam.playtime',
+  schema_version: 1,
+  occurred_at: at,
+  payload: {
+    appid: 4242,
+    name: 'Jeu Fictif',
+    playtime_forever: minutes,
+    playtime_disconnected: 0,
+    rtime_last_played: lastPlayed === null ? null : Date.parse(lastPlayed) / 1000,
+    previous: previous && { playtime_forever: previous.minutes, observed_at: previous.at },
+  },
+});
+const STEAM = [
+  steamReading(120, '2026-10-17T20:00:00+02:00', null, null),
+  steamReading(160, '2026-10-17T21:00:00+02:00', '2026-10-17T20:55:00+02:00', { minutes: 120, at: '2026-10-17T20:00:00+02:00' }),
+  {
+    key: 'achievement:4242:ACH_FICTIF',
+    kind: 'steam.achievement',
+    schema_version: 1,
+    occurred_at: '2026-10-17T20:50:00+02:00',
+    payload: { appid: 4242, game_name: 'Jeu Fictif', apiname: 'ACH_FICTIF', name: 'Succès fictif' },
+  },
+];
+
 async function ingest(token: string, records: unknown[]): Promise<void> {
   const response = await fetch(`${backendUrl}/v1/records`, {
     method: 'POST',
@@ -109,7 +139,9 @@ async function settled(): Promise<void> {
       events('workout') === 1 &&
       events('workout.track') === 1 &&
       events('sleep') === 1 &&
-      events('stream.watch') === 5
+      events('stream.watch') === 5 &&
+      events('game.play') === 1 &&
+      events('game.achievement') === 1
     ) {
       return;
     }
@@ -157,6 +189,7 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
     ]);
     await ingest(garminToken, GARMIN);
     await ingest(twitchToken, TWITCH);
+    await ingest(steamToken, STEAM);
     await settled();
     h = await startServer({ backendUrl, serviceToken });
     const tokens = await login(h);
@@ -338,6 +371,35 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
     assert.deepEqual((discoveries.items as { name: string }[]).map((d) => d.name), ['Alpha', 'Beta']);
   });
 
+  test('Steam : le temps de jeu déduit des relevés, le classement par minutes, les succès, pas de fausse découverte', async () => {
+    const inventory = await call('inventory');
+    type Inventoried = { metric: string; shape: string; tools: string[]; events: number };
+    const play = (inventory.metrics as Inventoried[]).find((m) => m.metric === 'game.play');
+    assert.equal(play?.shape, 'duration');
+    assert.equal(play?.events, 1);
+    for (const tool of ['cumulative_duration', 'top', 'search']) {
+      assert.ok(play?.tools.includes(tool), tool);
+    }
+    const total = await call('cumulative_duration', { metric: 'game.play', from: '2026-10-17', to: '2026-10-17' });
+    assert.equal(total.total_minutes, 40, 'l’écart entre les deux relevés');
+    const top = await call('top', { metric: 'game.play', level: 'game', from: '2026-10-01', to: '2026-10-31' });
+    assert.deepEqual(
+      (top.items as { key: string; name: string; minutes: number }[]).map((i) => [i.key, i.name, i.minutes]),
+      [['4242', 'Jeu Fictif', 40]],
+    );
+    const achievements = await call('occurrences', { metric: 'game.achievement', from: '2026-10-17', to: '2026-10-17', form: 'first_last' });
+    assert.equal((achievements.days as { first: string }[])[0]?.first, '20:50');
+    // Sans valeur du jour, les succès n'ont ni case du calendrier ni place dans `day_summary`.
+    const achievement = (inventory.metrics as Inventoried[]).find((m) => m.metric === 'game.achievement');
+    assert.ok(achievement?.tools.includes('occurrences'));
+    assert.ok(!achievement?.tools.includes('day_summary'));
+    // Le premier relevé avait déjà 120 min : un jeu joué avant le suivi, déjà connu, jamais une découverte.
+    assert.ok(play?.tools.includes('discoveries'));
+    const found = await call('discoveries', { metric: 'game.play', level: 'game', from: '2026-10-01', to: '2026-10-31' });
+    assert.deepEqual(found.items, []);
+    assert.equal(found.marked_known, 1);
+  });
+
   test('Garmin : détails du jour, séances par lieu, parcours coupé à la zone de confidentialité', async () => {
     const outputs: string[] = [];
     const tool = async (name: string, args: Record<string, unknown>) => {
@@ -351,7 +413,7 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
     const metrics = day.metrics as Entry[];
     assert.deepEqual(
       metrics.map((m) => m.metric),
-      ['coffee', 'music.listen', 'steps', 'workout', 'sleep', 'calories.burned', 'video.watch', 'stream.watch'],
+      ['coffee', 'music.listen', 'steps', 'workout', 'sleep', 'calories.burned', 'video.watch', 'stream.watch', 'game.play'],
       'l’ordre d’affichage du registre',
     );
     const steps = metrics.find((m) => m.metric === 'steps');

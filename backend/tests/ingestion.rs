@@ -12,6 +12,8 @@ const ALL: &[&str] = &[
     "lastfm.scrobble",
     "lastfm.track_info",
     "twitch.watch",
+    "steam.playtime",
+    "steam.achievement",
 ];
 const COFFEE: &[&str] = &["coffee.cup"];
 

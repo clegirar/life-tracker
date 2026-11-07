@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT ON (i.item_key) i.item_key AS \"key!\", e.value::bigint AS total\n           FROM derived.live_events e\n           JOIN derived.event_items i\n             ON i.generation = e.generation AND i.seq = e.seq AND i.ordinal = e.ordinal AND i.level = $2\n           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND e.metric = $3\n             AND i.metric = $3 AND i.item_key = ANY($4)\n             AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n           ORDER BY i.item_key, e.occurred_at DESC, e.seq DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "key!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.event_items",
+            "name": "item_key"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "total",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date",
+        "Text",
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "b9aeab66d2d297e594f65c3b1c243fed70e0ed2697ed311ad96564633365fed3"
+}

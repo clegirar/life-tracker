@@ -60,23 +60,47 @@ test('le jour suit les filtres, et le mois aussi : un seul choix', async ({ page
   await expect(cell(page, DAY).locator('.day-dot[data-metric="music.listen"]')).toHaveCount(0)
   await page.goBack()
 
-  // Décocher les pas ne masque que leur bloc de la carte Activité.
-  await chip(page, 'Pas').click()
+  // « Activité » coche et décoche les quatre métriques Garmin ensemble : la carte entière part.
+  await chip(page, 'Activité').click()
+  await expect(chip(page, 'Activité')).toHaveAttribute('aria-pressed', 'false')
   const activity = page.getByTestId('activity')
-  await expect(activity.getByTestId('steps')).toHaveCount(0)
-  await expect(activity.getByTestId('calories')).toBeVisible()
-  await expect(activity.getByTestId('workouts')).toBeVisible()
-  // Plus aucune des quatre : plus de carte.
-  for (const name of ['Calories brûlées', 'Sommeil', 'Séances']) await chip(page, name).click()
   await expect(activity).toHaveCount(0)
   await expect(page.locator('.card-coffee')).toBeVisible()
   await checkLayout(page)
 
   // Le choix survit au rechargement.
   await page.reload()
-  await expect(chip(page, 'Pas')).toHaveAttribute('aria-pressed', 'false')
+  await expect(chip(page, 'Activité')).toHaveAttribute('aria-pressed', 'false')
   await expect(page.getByTestId('music')).toHaveCount(0)
+  await expect(activity).toHaveCount(0)
   await expect(page.locator('.card-coffee')).toBeVisible()
+
+  // Recochée : les quatre blocs reviennent.
+  await chip(page, 'Activité').click()
+  await expect(activity.getByTestId('steps')).toBeVisible()
+  await expect(activity.getByTestId('calories')).toBeVisible()
+  await expect(activity.getByTestId('workouts')).toBeVisible()
+})
+
+test('un ancien choix d’une partie des métriques Garmin allume « Activité » et montre ses quatre blocs', async ({ page, request }) => {
+  await seed(request)
+  await login(page)
+  // Un choix gardé d'avant la pastille : le café et le sommeil seulement.
+  await page.evaluate(() => window.localStorage.setItem('calendar.metrics', JSON.stringify(['coffee', 'sleep'])))
+  await page.goto(`/jour/${DAY}`)
+  const activity = page.getByTestId('activity')
+  await expect(chip(page, 'Activité')).toHaveAttribute('aria-pressed', 'true')
+  await expect(chip(page, 'Écoutes')).toHaveAttribute('aria-pressed', 'false')
+  await expect(activity.getByTestId('steps')).toBeVisible()
+  await expect(activity.getByTestId('calories')).toBeVisible()
+  // Un appui éteint les quatre, un autre les rallume.
+  await chip(page, 'Activité').click()
+  await expect(activity).toHaveCount(0)
+  const stored = () => page.evaluate(() => window.localStorage.getItem('calendar.metrics'))
+  await expect.poll(stored).toBe('["coffee"]')
+  await chip(page, 'Activité').click()
+  await expect(activity.getByTestId('steps')).toBeVisible()
+  await expect.poll(stored).toBe('["coffee","steps","workout","sleep","calories.burned"]')
 })
 
 test('tout décocher vide la vue et invite à choisir, sur le jour, le mois et l’année', async ({ page, request }) => {
@@ -85,7 +109,7 @@ test('tout décocher vide la vue et invite à choisir, sur le jour, le mois et l
 
   await expect(toggleAll(page)).toHaveText('Tout décocher')
   await toggleAll(page).click()
-  for (const name of ['Cafés', 'Écoutes', 'Pas']) await expect(chip(page, name)).toHaveAttribute('aria-pressed', 'false')
+  for (const name of ['Cafés', 'Écoutes', 'Activité']) await expect(chip(page, name)).toHaveAttribute('aria-pressed', 'false')
   await expect(toggleAll(page)).toHaveText('Tout cocher')
   await expect(page.getByTestId('no-metric')).toHaveText('Choisis au moins une métrique.')
   await expect(page.locator('.cards > *')).toHaveCount(0)
@@ -143,12 +167,12 @@ for (const colorScheme of ['light', 'dark'] as const) {
         await checkLayout(page)
         await shot('mois-filtres')
 
-        // Le jour, trois métriques : le café, les pas et les calories.
+        // Le jour, deux pastilles : le café et l'activité.
         await page.goBack()
         await expect(page.getByTestId('music')).toBeVisible()
-        for (const name of ['Écoutes', 'Séances', 'Sommeil', 'Vidéos YouTube', 'Twitch']) await chip(page, name).click()
+        for (const name of ['Écoutes', 'Vidéos YouTube', 'Twitch', 'Jeux']) await chip(page, name).click()
         await expect(page.getByTestId('music')).toHaveCount(0)
-        await expect(page.getByTestId('activity').getByTestId('workouts')).toHaveCount(0)
+        await expect(page.getByTestId('activity').getByTestId('steps')).toBeVisible()
         await page.waitForTimeout(200) // la fin du filtre
         await checkLayout(page)
         await shot('jour-filtres')

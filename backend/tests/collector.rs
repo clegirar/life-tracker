@@ -927,7 +927,10 @@ fn collect_never_receives_a_database_url_and_requires_a_connector() {
     };
     let none = run(&[]);
     assert!(
-        none.contains("LASTFM_API_KEY") && none.contains("GARMIN_API_KEY"),
+        none.contains("LASTFM_API_KEY")
+            && none.contains("GARMIN_API_KEY")
+            && none.contains("YOUTUBE_CLIENT_ID")
+            && none.contains("STEAM_API_KEY"),
         "{none}"
     );
     let half = run(&[("GARMIN_API_KEY", "cle-fictive")]);
@@ -935,4 +938,13 @@ fn collect_never_receives_a_database_url_and_requires_a_connector() {
     assert!(!half.contains("cle-fictive"), "{half}");
     let half = run(&[("LASTFM_API_KEY", "cle-fictive"), ("LASTFM_USER", "u")]);
     assert!(half.contains("COLLECTOR_TOKEN"), "{half}");
+    let half = run(&[
+        ("STEAM_API_KEY", "cle-fictive"),
+        ("STEAM_ID", "76500000000000001"),
+    ]);
+    assert!(half.contains("STEAM_TOKEN"), "{half}");
+    assert!(
+        !half.contains("cle-fictive") && !half.contains("76500000000000001"),
+        "{half}"
+    );
 }

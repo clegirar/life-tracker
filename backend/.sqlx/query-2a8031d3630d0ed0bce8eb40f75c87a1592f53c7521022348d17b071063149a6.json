@@ -1,0 +1,73 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT g.item_key AS \"game_key!\", g.display AS \"game_name!\",\n                  a.item_key AS \"key!\", a.display AS \"name!\",\n                  to_char(e.occurred_at AT TIME ZONE (SELECT timezone FROM core.settings), 'HH24:MI') AS \"time!\"\n           FROM derived.live_events e\n           JOIN derived.event_items g\n             ON g.generation = e.generation AND g.seq = e.seq AND g.ordinal = e.ordinal AND g.level = $2\n           JOIN derived.event_items a\n             ON a.generation = e.generation AND a.seq = e.seq AND a.ordinal = e.ordinal\n            AND a.level = 'achievement'\n           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n             AND e.metric = $3\n             AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n             AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n           ORDER BY e.occurred_at, a.item_key",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "game_key!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.event_items",
+            "name": "item_key"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "game_name!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.event_items",
+            "name": "display"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "key!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.event_items",
+            "name": "item_key"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "name!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "derived.event_items",
+            "name": "display"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "time!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "2a8031d3630d0ed0bce8eb40f75c87a1592f53c7521022348d17b071063149a6"
+}

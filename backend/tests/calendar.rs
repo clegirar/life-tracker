@@ -346,9 +346,10 @@ async fn days_before_a_metric_starts_have_no_data_and_no_alert() {
             "sleep",
             "calories.burned",
             "video.watch",
-            "stream.watch"
+            "stream.watch",
+            "game.play"
         ],
-        "ni déclarations ni références, dans l'ordre d'affichage du registre"
+        "ni déclarations, ni références, ni métriques sans valeur du jour (les succès Steam), dans l'ordre d'affichage du registre"
     );
     assert_eq!(month["metrics"][0]["label"], "Cafés");
 }

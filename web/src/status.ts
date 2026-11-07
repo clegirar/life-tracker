@@ -30,6 +30,7 @@ const isGarmin = (name: string) => /^garmin\b/.test(name)
 const isLastfm = (name: string) => /^lastfm\b/.test(name)
 const isYoutube = (name: string) => /^youtube\b/.test(name)
 const isTwitch = (name: string) => /^twitch\b/.test(name)
+const isSteam = (name: string) => /^steam\b/.test(name)
 
 /** Comment une source dit son échéance. */
 interface ExpiryPolicy {
@@ -182,13 +183,27 @@ const GARMIN_KEY_STEPS = [
 const GARMIN_RUNBOOK = 'Le détail : `docs/deploiement.md`, « Mise à jour : Garmin Connect », étape 6.'
 
 /** La variable de la clé, par connecteur. */
-const KEY_VARIABLE: [RegExp, string][] = [[/^lastfm\b/, 'LASTFM_API_KEY']]
+const KEY_VARIABLE: [RegExp, string][] = [
+  [/^lastfm\b/, 'LASTFM_API_KEY'],
+  [/^steam\b/, 'STEAM_API_KEY'],
+]
 
 function keyRejected(name: string): Guidance {
   if (isGarmin(name)) {
     return { title: 'Garmin refuse la clé : elle a expiré ou a été révoquée.', steps: GARMIN_KEY_STEPS, note: GARMIN_RUNBOOK }
   }
   const variable = KEY_VARIABLE.find(([pattern]) => pattern.test(name))?.[1]
+  if (isSteam(name)) {
+    return {
+      title: 'Steam refuse la clé du collecteur : elle a été révoquée, ou le compte a changé.',
+      steps: [
+        "Sur steamcommunity.com/dev/apikey, révoque l'ancienne clé puis crée-en une nouvelle : Steam n'en donne qu'une par compte.",
+        `Sur le NAS, dans \`secrets/collector.env\`, remplace \`${variable}\` par la nouvelle clé.`,
+        'Relance le collecteur : `sudo docker compose up -d collector`.',
+      ],
+      note: "Rien n'est perdu : le total de chaque jeu reprend au relevé suivant, et le temps d'entre-temps se compte à la fin.",
+    }
+  }
   return {
     title: 'Le service refuse la clé du collecteur : elle a expiré ou a été révoquée.',
     steps: [
@@ -274,6 +289,16 @@ function byReason(source: SourceStatus, reason: ReportedStatus['reason'], now: n
     case 'consent_required':
     case 'consent_expired':
       return consent(source, reason)
+    case 'profile_private':
+      return {
+        title: 'Le profil Steam est privé : Steam ne donne ni les jeux ni les succès.',
+        steps: [
+          'Sur steamcommunity.com, ouvre ton profil, puis Modifier le profil, Paramètres de confidentialité.',
+          'Passe « Mon profil » et « Détails des jeux » en Public.',
+          "La collecte reprend seule à la prochaine passe, dans un quart d'heure au plus.",
+        ],
+        note: "Rien n'est perdu : le temps joué pendant ce temps se compte à la reprise, et les succès gardent leur date.",
+      }
     case 'rate_limited':
       return {
         title: "Le service limite les appels pour l'instant.",
@@ -312,7 +337,7 @@ function silence(source: SourceStatus): Guidance {
       note: "Firefox simplement fermé ? Rien n'est perdu : ce qu'il n'a pas pu envoyer part à sa réouverture.",
     }
   }
-  const service = isLastfm(source.name) ? 'avec Last.fm ' : ''
+  const service = isLastfm(source.name) ? 'avec Last.fm ' : isSteam(source.name) ? 'avec Steam ' : ''
   return {
     title: `Aucun contact réussi ${service}depuis plus de ${threshold} : des données peuvent manquer.`,
     steps: [
@@ -345,6 +370,8 @@ const LAST_OF: Record<string, string> = {
   workout: 'Dernière séance',
   'video.watch': 'Dernière vidéo',
   'stream.watch': 'Dernier visionnage',
+  'game.play': 'Dernière partie',
+  'game.achievement': 'Dernier succès',
 }
 
 export function metricLine(metric: SourceStatus['metrics'][number], now: number): Line {

@@ -101,6 +101,14 @@ export const TRACKERS: TrackerSheet[] = [
       "L'extension Firefox du Mac mesure la lecture en segments de 60 s au plus et les envoie à l'API d'ingestion chaque minute. Elle bat toutes les 15 min tant que Firefox est ouvert.",
     keys: [sourceToken('twitch')],
   },
+  {
+    id: 'steam',
+    title: 'Steam',
+    source: /^steam\b/,
+    arrival:
+      "Le collecteur du NAS interroge l'API Web de Steam tous les quarts d'heure pour le compte de `STEAM_ID` : le total de chaque jeu, dont l'écart entre deux relevés donne le temps joué, et les succès avec leur date. Le profil et ses « Détails des jeux » doivent être publics.",
+    keys: [{ name: "Clé d'API Web Steam (`STEAM_API_KEY`)", expiry: NO_EXPIRY }, sourceToken('steam')],
+  },
 ]
 
 export const OTHER_KEYS: KeyGroup[] = [

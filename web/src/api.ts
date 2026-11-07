@@ -283,6 +283,7 @@ export interface ReportedStatus {
     | 'key_rejected'
     | 'consent_required'
     | 'consent_expired'
+    | 'profile_private'
     | 'rate_limited'
     | 'service_unavailable'
     | 'ingest_failed'
@@ -405,3 +406,52 @@ export interface DayStream {
 }
 
 export const fetchDayStream = (date: string) => read<DayStream>(`/v1/days/${date}/stream`)
+
+/** Un succès débloqué ce jour-là. */
+export interface GameAchievement {
+  /** `<appid>:<apiname>`. */
+  key: string
+  name: string
+  /** Heure de Paris du déblocage. */
+  time: string
+}
+
+/** Un jeu de la journée : joué, ou seulement un succès débloqué. */
+export interface DayGame {
+  /** L'appid Steam. */
+  key: string
+  name: string
+  /** L'union de ses parties ce jour-là ; 0 pour un jeu qui n'a qu'un succès. */
+  minutes: number
+  /** Heure de Paris du premier début, qui peut tomber la veille ; `null` sans partie ce jour-là. */
+  first_time: string | null
+  /** Heure de Paris de la dernière fin, qui peut tomber le lendemain ; `null` sans partie. */
+  last_time: string | null
+  /** Le total de Steam à la fin de ce jour ; `null` tant qu'aucun relevé ne le donne. */
+  total_minutes: number | null
+  achievements: GameAchievement[]
+}
+
+export interface DayGames {
+  date: string
+  /** L'union de toutes les parties du jour. */
+  minutes: number
+  /** Les tranches de jeu qui touchent ce jour-là ; 0 : aucune partie reçue. */
+  segments: number
+  /** Les succès débloqués ce jour-là. */
+  achievements: number
+  /** Les jeux joués par temps décroissant puis par nom, puis ceux qui n'ont qu'un succès. */
+  games: DayGame[]
+  /** Les jeux joués ce jour-là pour la première fois, par première heure ; jamais un jeu déjà joué avant le suivi. */
+  discoveries: GameDiscovery[]
+}
+
+/** Un jeu joué pour la première fois ce jour-là. */
+export interface GameDiscovery {
+  level: 'game'
+  /** L'appid Steam. */
+  key: string
+  name: string
+}
+
+export const fetchDayGames = (date: string) => read<DayGames>(`/v1/days/${date}/games`)
