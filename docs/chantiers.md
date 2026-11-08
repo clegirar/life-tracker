@@ -13,7 +13,7 @@ Le [POC](poc.md) est validé depuis le 4 nov. 2026. Chaque chantier a sa section
 | Twitch | En production depuis le 6 nov. 2026 (#17, #19), extension signée et installée, vérifiée le 7 nov. ; restent le rattrapage hors ligne, le silence de la page d'état et l'affichage sur les vrais appareils |
 | Steam | En production depuis le 7 nov. 2026 (v0.12.0, corrigé en v0.12.1) ; restent une vraie partie (prévue le 14-15 nov.), les totaux, les succès au bon jour, minuit et l'affichage sur les vrais appareils |
 | Déplacements (iPhone, Overland) | Backend et web app construits le 7 nov. 2026 (branche `feat/position-iphone`) ; restent la mise en service et une vraie journée |
-| GitHub | Backend et web app construits le 7 nov. 2026 (branche `feat/github`) ; restent la mise en service et une vraie journée |
+| GitHub | En production depuis le 8 nov. 2026 (v0.15.0), vérifié le même jour ; restent la carte d'état avec un token refusé et un commit poussé tard |
 | Twitch : import de l'historique (export RGPD) | À faire, quand je le demanderai (l'export est demandé à Twitch) |
 | Ouvrir la web app sur Internet | À faire, quand je le demanderai |
 
@@ -308,7 +308,16 @@ Ouvert le 7 nov. 2026, à ma demande. Suivre mon activité GitHub jour par jour 
 
 **Construit le 7 nov. 2026, web app et MCP** : carte GitHub du jour (`GithubCard.tsx`, `github.ts`, `useGithub.ts`, `fetchDayGithub`), montrée si la pastille « GitHub » est choisie : commits et lignes du jour (`+43 −3`, « Lignes inconnues pour 1 commit » plutôt qu'un zéro), une phrase pour PR, fusions, reviews, issues et commentaires, puis chaque dépôt avec ses lignes (icône, titre, heure, détail), chacune ouvrant l'objet sur github.com ; « Découvertes » seulement s'il y en a ; journées vides dites comme Steam. Couleur `--github`, un vert olive (`#5c7a00`, `#b5e048` en sombre) : le vert des contributions de GitHub est déjà celui des pas. Filtres : une seule pastille « GitHub », qui coche ensemble commits et pull requests (à ma demande, 8 nov. 2026, comme « Activité » pour Garmin) ; pluriels corrigés dans le calendrier. Page d'état : « Dernier commit », « Dernière activité », l'échéance du token (orange à 14 jours) et les consignes de `key_rejected`, `sso_required` et `rate_limited`. Fiche Sources : l'arrivée par le collecteur, le token d'accès personnel (échéance vivante) et le token de la source. MCP : aucun code, un cas de bout en bout (`occurrences` par jour et par dépôt, `top`, lignes sans titre, `day_summary`, `discoveries`). Testé par `web/e2e/github.spec.ts` et `mcp/test/e2e.test.ts`, captures iPhone et Mac, clair et sombre.
 
-**Reste à vérifier sur le NAS** : si `history(since:)` filtre bien par date de commit (sinon un vieux commit poussé tard sans rebase serait manqué) ; la durée du premier passage ; une organisation SAML.
+**Revu le 8 nov. 2026, à ma demande** : une seule pastille « GitHub » dans les filtres, qui coche ensemble commits et pull requests (`METRIC_GROUPS`, comme « Activité »), puisque la carte du jour montre tout.
+
+**Vérifié le 8 nov. 2026**, sur le NAS (v0.15.0) :
+
+- Token classique sans échéance, à mon choix : `GITHUB_TOKEN_EXPIRES_ON` est facultative, la page d'état n'affiche alors pas d'échéance.
+- Premier passage complet en quelques minutes : 155 appels, 143 dépôts (94 lus, les forks écartés), 2 029 commits, 1 566 faits de PR (822 ouvertes et 742 fusionnées à l'essai, plus les deux du jour), 307 reviews, 218 issues, 216 commentaires ; 4 336 acceptés, 0 doublon, 0 rejet, 0 recherche tronquée, aucune organisation SAML refusée. Collecteur `healthy`. Logs : des nombres seulement.
+- Une vraie semaine par le MCP (`occurrences` `daily` et `top` sur `code.commit`, du 1er au 8 nov.) : 41 commits, chaque jour égal à `git log` de life-tracker plus l'API GitHub pour l'autre dépôt privé, à l'heure de Paris.
+- `admin rebuild` sans différence ; affichage vérifié sur l'iPhone et le Mac, en clair et en sombre.
+
+Restent la carte d'état avec un token refusé, puis revenue, et un commit poussé tard (vérifie aussi que `history(since:)` filtre par date de commit).
 
 **Terminé quand**
 
