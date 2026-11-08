@@ -15,9 +15,11 @@ import type { useMusic } from './useMusic'
 import { addDays, dayTitle, emptyLabel, longDate, parisInstant, parisTime } from './time'
 import type { useCoffee } from './useCoffee'
 import type { useSteam } from './useSteam'
+import type { useGithub } from './useGithub'
 import type { useTwitch } from './useTwitch'
 import type { useVideo } from './useVideo'
 import { SteamCard } from './SteamCard'
+import { GithubCard } from './GithubCard'
 import { useMasonry } from './useMasonry'
 import { TwitchCard } from './TwitchCard'
 import { VideoCard } from './VideoCard'
@@ -43,6 +45,7 @@ interface Props {
   video: ReturnType<typeof useVideo>
   twitch: ReturnType<typeof useTwitch>
   steam: ReturnType<typeof useSteam>
+  github: ReturnType<typeof useGithub>
   locations: ReturnType<typeof useLocations>
 }
 
@@ -81,6 +84,7 @@ export function DayPage({
   video,
   twitch,
   steam,
+  github,
   locations,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -281,6 +285,8 @@ export function DayPage({
         {shows('stream.watch') && <TwitchCard date={date} today={today} state={twitch} health={music.health} calendarDay={calendarDay} />}
         {/* Les succès n'ont pas de filtre : la carte les montre avec le temps de jeu. */}
         {shows('game.play') && <SteamCard date={date} today={today} state={steam} health={music.health} calendarDay={calendarDay} />}
+        {/* Reviews, issues et commentaires n'ont pas de filtre : la carte les montre avec les commits et les pull requests. */}
+        {(shows('code.commit') || shows('code.pull_request')) && <GithubCard date={date} today={today} state={github} health={music.health} calendarDay={calendarDay} />}
         {/* La trace n'a pas de filtre (`location.point` est hors du calendrier) : elle suit les lieux. */}
         {shows('place.visit') && <LocationCard date={date} today={today} state={locations} health={music.health} />}
       </div>

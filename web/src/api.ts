@@ -284,6 +284,7 @@ export interface ReportedStatus {
     | 'consent_required'
     | 'consent_expired'
     | 'profile_private'
+    | 'sso_required'
     | 'rate_limited'
     | 'service_unavailable'
     | 'ingest_failed'
@@ -455,6 +456,98 @@ export interface GameDiscovery {
 }
 
 export const fetchDayGames = (date: string) => read<DayGames>(`/v1/days/${date}/games`)
+
+/** Un commit du jour, à sa date d'auteur. */
+export interface GithubCommit {
+  sha: string
+  /** Heure de Paris. */
+  time: string
+  /** La première ligne du message ; jamais le corps. */
+  title: string | null
+  /** `null` quand GitHub ne les donne pas (très gros commit) : lignes inconnues, jamais zéro. */
+  additions: number | null
+  deletions: number | null
+  url: string | null
+}
+
+/** Une pull request ouverte, ou fusionnée (avec ses lignes), ce jour-là. */
+export interface GithubPullRequest {
+  action: 'opened' | 'merged'
+  number: number | null
+  title: string | null
+  time: string
+  url: string | null
+  additions: number | null
+  deletions: number | null
+}
+
+export interface GithubReview {
+  state: 'approved' | 'changes_requested' | 'commented' | 'dismissed' | null
+  number: number | null
+  title: string | null
+  time: string
+  url: string | null
+}
+
+export interface GithubIssue {
+  number: number | null
+  title: string | null
+  time: string
+  url: string | null
+}
+
+export interface GithubComment {
+  target: 'issue' | 'pull_request' | 'commit' | null
+  /** `null` pour un commentaire de commit. */
+  number: number | null
+  title: string | null
+  time: string
+  url: string | null
+}
+
+/** Un dépôt de la journée : chaque liste par heure. */
+export interface GithubRepo {
+  /** L'id GraphQL du dépôt, qui survit à un renommage. */
+  key: string
+  /** `propriétaire/nom`. */
+  name: string
+  url: string
+  commits: GithubCommit[]
+  /** Les lignes des commits du jour qui les connaissent. */
+  additions: number
+  deletions: number
+  pull_requests: GithubPullRequest[]
+  reviews: GithubReview[]
+  issues: GithubIssue[]
+  comments: GithubComment[]
+}
+
+/** Un dépôt sur lequel j'ai commité ce jour-là pour la première fois. */
+export interface RepoDiscovery {
+  level: 'repo'
+  key: string
+  name: string
+}
+
+export interface DayGithub {
+  date: string
+  commits: number
+  /** Les lignes des commits du jour, sans ceux dont GitHub ne les donne pas. */
+  additions: number
+  deletions: number
+  /** Les pull requests ouvertes ce jour-là. */
+  pull_requests: number
+  /** Les pull requests fusionnées ce jour-là. */
+  merged: number
+  reviews: number
+  issues: number
+  comments: number
+  /** Par commits décroissants, puis par nom. */
+  repos: GithubRepo[]
+  discoveries: RepoDiscovery[]
+}
+
+export const fetchDayGithub = (date: string) => read<DayGithub>(`/v1/days/${date}/github`)
 
 /** Un morceau de la trace du jour : les points se suivent sans silence de plus de 15 min. */
 export interface LocationSegment {

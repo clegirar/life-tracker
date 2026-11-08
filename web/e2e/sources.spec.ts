@@ -85,7 +85,7 @@ test('les fiches, les autres clés et les échéances vivantes, sans aucune vale
 
   // Une fiche par tracker, dans l'ordre, puis les autres clés.
   const trackers = page.getByRole('region', { name: 'Trackers' }).getByRole('article')
-  await expect(trackers.getByRole('heading', { level: 3 })).toHaveText(['Café', 'Musique', 'Garmin Connect', 'YouTube', 'Twitch', 'Steam', 'Position (iPhone)'])
+  await expect(trackers.getByRole('heading', { level: 3 })).toHaveText(['Café', 'Musique', 'Garmin Connect', 'YouTube', 'Twitch', 'Steam', 'GitHub', 'Position (iPhone)'])
   const others = page.getByRole('region', { name: 'Autres clés à gérer' }).getByRole('article')
   await expect(others.getByRole('heading', { level: 3 })).toHaveText([
     'Claude (serveur MCP)',

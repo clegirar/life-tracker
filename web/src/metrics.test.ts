@@ -77,6 +77,9 @@ describe('les couleurs', () => {
   it('une métrique nouvelle prend la teinte neutre', () => {
     expect(metricTone('music.listen')).toBe('heat-music')
     expect(metricTone('the')).toBe('heat-neutral')
+    // Les deux métriques de GitHub prennent la couleur de sa carte, comme ses pastilles.
+    expect(metricTone('code.commit')).toBe('heat-github')
+    expect(metricTone('code.pull_request')).toBe('heat-github')
   })
 })
 

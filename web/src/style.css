@@ -31,6 +31,12 @@
    */
   --steam: #1769d6;
   /*
+   * GitHub : sa marque est en noir et blanc, et le vert de son graphe de contributions est déjà celui des
+   * pas. Un vert-jaune olive, seule teinte libre de la roue (entre l'orange des calories et le vert des
+   * pas), lisible en texte sur fond clair.
+   */
+  --github: #5c7a00;
+  /*
    * Déplacements (iPhone) : un vert d'eau, entre le vert des pas et le bleu des séances, loin des deux ;
    * lisible en texte sur fond clair, et sur les tuiles d'OpenStreetMap.
    */
@@ -107,6 +113,7 @@
     --video: #da8fff;
     --twitch: #ff6fd8;
     --steam: #4ea1ff;
+    --github: #b5e048;
     --location: #3ad6b4;
     --segment-on: #636366;
     --check: #ffcc4d;
@@ -1248,6 +1255,10 @@ button:disabled {
 
 .heat-location {
   --heat: var(--location);
+}
+
+.heat-github {
+  --heat: var(--github);
 }
 
 .heat-neutral {
@@ -2470,6 +2481,116 @@ button:disabled {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
+}
+
+/* ─── La carte GitHub ────────────────────────────────────────────────────── */
+
+/* Les lignes reprennent celles des jeux Steam (lien pleine largeur, flèche), dans sa couleur. */
+.card-title-github,
+.card-github .more {
+  color: var(--github);
+}
+
+.card-github .video-link:focus-visible,
+.gh-repo-link:focus-visible {
+  outline: 2px solid var(--github);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.subsection-count-github {
+  color: var(--github);
+}
+
+/* Le reste du jour, en une phrase sous les chiffres : pull requests, reviews, issues, commentaires. */
+.gh-summary {
+  margin-top: 8px;
+  font-size: 15px;
+  line-height: 20px;
+  color: var(--muted);
+}
+
+/* Les lignes du jour : le plus et le moins de GitHub, en vert et en rouge ; le moins passe dessous s'il ne tient pas. */
+.gh-day-lines {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 8px;
+}
+
+.gh-add {
+  color: var(--state-ok);
+}
+
+.gh-del {
+  color: var(--error);
+}
+
+.gh-lines-unknown {
+  color: var(--muted);
+}
+
+.stat-value.gh-lines-unknown {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+/* Le dépôt : son nom ouvre sa page ; une cible de 44 px, même pour un nom court. */
+.gh-repo-title {
+  margin-bottom: 0;
+}
+
+.gh-repo-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  min-width: 44px;
+  margin: -10px 0 -9px;
+  color: inherit;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  transition: opacity 120ms var(--ease-out);
+}
+
+.gh-repo-link:active {
+  opacity: 0.5;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .gh-repo-link:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+}
+
+.gh-repo-summary {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Le pictogramme de l'objet, en tête de ligne, aligné sur la première ligne du titre. */
+.gh-row {
+  justify-content: flex-start;
+}
+
+.gh-row .row-text {
+  flex: 1;
+}
+
+.gh-icon {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 7px;
+  color: var(--github);
+}
+
+.gh-lines {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* ─── La carte Déplacements (iPhone) ─────────────────────────────────────── */

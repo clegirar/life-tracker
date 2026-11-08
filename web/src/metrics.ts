@@ -22,6 +22,8 @@ const TONES: Record<string, string> = {
   'stream.watch': 'heat-twitch',
   'game.play': 'heat-steam',
   'place.visit': 'heat-location',
+  'code.commit': 'heat-github',
+  'code.pull_request': 'heat-github',
 }
 
 /** La classe qui pose `--heat`, la couleur de la métrique : chiffres, points, pastilles, filtres et rampes. */

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
-import { API_URL, checkLayout, DESKTOP, fullShot, GARMIN_TOKEN, IPHONE_TOKEN, LASTFM_TOKEN, login, openMenu, PASSWORD, STEAM_TOKEN, TWITCH_TOKEN, USER } from './helpers'
+import { API_URL, checkLayout, DESKTOP, fullShot, GARMIN_TOKEN, GITHUB_TOKEN, IPHONE_TOKEN, LASTFM_TOKEN, login, openMenu, PASSWORD, STEAM_TOKEN, TWITCH_TOKEN, USER } from './helpers'
 
 // La page d'état des trackers. Les états entrent comme ceux des connecteurs, par la vraie route
 // `PUT /v1/sources/me/status` et le token de la source ; seul le silence se simule dans la base jetable.
@@ -40,11 +40,12 @@ const inMinutes = (minutes: number) => new Date(Date.now() + minutes * 60_000).t
 
 /** Les autres fichiers retrouvent des sources sans état ni silence. */
 async function restore(request: APIRequestContext) {
-  sql("UPDATE core.sources SET status = NULL, status_reported_at = NULL WHERE name IN ('garmin', 'lastfm', 'youtube', 'twitch', 'steam')")
+  sql("UPDATE core.sources SET status = NULL, status_reported_at = NULL WHERE name IN ('garmin', 'lastfm', 'youtube', 'twitch', 'steam', 'github')")
   await heartbeat(request, LASTFM_TOKEN)
   await heartbeat(request, GARMIN_TOKEN)
   await heartbeat(request, TWITCH_TOKEN)
   await heartbeat(request, STEAM_TOKEN)
+  await heartbeat(request, GITHUB_TOKEN)
   await heartbeat(request, IPHONE_TOKEN)
 }
 
@@ -80,6 +81,7 @@ test('une carte par tracker : fonctionne, à faire, en panne, silencieux, et le 
   await heartbeat(request, LASTFM_TOKEN)
   await heartbeat(request, TWITCH_TOKEN)
   await heartbeat(request, STEAM_TOKEN)
+  await heartbeat(request, GITHUB_TOKEN)
   await heartbeat(request, IPHONE_TOKEN)
   await login(page)
   await expect(page.getByTestId('menu-dot')).toHaveCount(0)
@@ -87,7 +89,7 @@ test('une carte par tracker : fonctionne, à faire, en panne, silencieux, et le 
   await expect(page.getByTestId('status-dot')).toHaveCount(0)
   // Pas de ligne de résumé : le titre est seul, les pastilles des cartes disent l'état.
   await expect(page.locator('.status-page .subtitle')).toHaveCount(0)
-  await expect(page.getByTestId('status-word')).toHaveText(['Fonctionne', 'Fonctionne', 'Fonctionne', 'Fonctionne', 'Fonctionne', 'Fonctionne', 'Fonctionne'])
+  await expect(page.getByTestId('status-word')).toHaveText(['Fonctionne', 'Fonctionne', 'Fonctionne', 'Fonctionne', 'Fonctionne', 'Fonctionne', 'Fonctionne', 'Fonctionne'])
 
   const garmin = card(page, 'Garmin Connect')
   await expect(garmin.getByTestId('status-word')).toHaveText('Fonctionne')
@@ -117,7 +119,9 @@ test('une carte par tracker : fonctionne, à faire, en panne, silencieux, et le 
   await expect(iphone.getByTestId('status-word')).toHaveText('Fonctionne')
   await expect(iphone).toContainText("Dernier envoi de l'iPhoneà l'instant")
   await expect(iphone).not.toContainText('Dernière passe')
-  await expect(page.getByRole('article')).toHaveCount(7)
+  // GitHub : le collecteur du NAS, sa passe (le détail : github.spec.ts).
+  await expect(card(page, 'GitHub').getByTestId('status-word')).toHaveText('Fonctionne')
+  await expect(page.getByRole('article')).toHaveCount(8)
   await checkLayout(page)
 
   // Clé refusée : à faire, avec la marche à suivre, et le point du menu.

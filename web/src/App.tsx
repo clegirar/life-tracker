@@ -20,6 +20,7 @@ import { useLocations } from './useLocations'
 import { useMusic } from './useMusic'
 import { useSourcesStatus } from './useSourcesStatus'
 import { useSteam } from './useSteam'
+import { useGithub } from './useGithub'
 import { useTwitch } from './useTwitch'
 import { useVideo } from './useVideo'
 import { useYear } from './useYear'
@@ -62,6 +63,7 @@ export function App() {
   const video = useVideo(date, onSessionLost, auth === 'in')
   const twitch = useTwitch(date, onSessionLost, auth === 'in')
   const steam = useSteam(date, onSessionLost, auth === 'in')
+  const github = useGithub(date, onSessionLost, auth === 'in')
   const locations = useLocations(date, onSessionLost, auth === 'in')
   // Le mois affiché, ou celui du jour : la page du jour y lit si sa journée est incomplète.
   const calendar = useMonth(shownMonth ?? monthOf(date), onSessionLost, auth === 'in', shownMonth)
@@ -179,6 +181,7 @@ export function App() {
         video={video}
         twitch={twitch}
         steam={steam}
+        github={github}
         locations={locations}
       />
     )
@@ -209,6 +212,7 @@ export function App() {
           video.reset()
           twitch.reset()
           steam.reset()
+          github.reset()
           locations.reset()
           calendar.reset()
           year.reset()

@@ -60,6 +60,18 @@ describe('les textes', () => {
     expect(valueText(places, 3)).toBe('3 lieux')
   })
 
+  it('accordent les commits et les pull requests de GitHub', () => {
+    const commits = { metric: 'code.commit', label: 'Commits', unit: 'commit' }
+    const prs = { metric: 'code.pull_request', label: 'Pull requests', unit: 'pull request' }
+    expect(valueText(commits, 0)).toBe('0 commit')
+    expect(valueText(commits, 1)).toBe('1 commit')
+    expect(valueText(commits, 12)).toBe('12 commits')
+    expect(valueText(commits, null)).toBe('commits : pas de données')
+    expect(valueText(prs, 1)).toBe('1 pull request')
+    expect(valueText(prs, 3)).toBe('3 pull requests')
+    expect(sourceName('github-2')).toBe('GitHub')
+  })
+
   it('disent ce qui manque à la journée', () => {
     const notes = dayNotes(day({ errors: 2, pending: ['lastfm-2'], to_check: ['music.listen'] }), METRICS)
     expect(notes).toEqual(['journée incomplète, 2 enregistrements en erreur', 'en attente de Last.fm', 'écoutes à vérifier'])
