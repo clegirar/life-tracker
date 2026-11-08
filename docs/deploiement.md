@@ -1044,6 +1044,58 @@ Puis, par le MCP, `inventory` : le nombre de « Vidéos YouTube » tombe à ≈1
 
 **Retour arrière.** Couper la position seule : `admin revoke-source iphone` ; Overland reçoit alors un 401, garde ses points et l'affiche. Le journal garde ce qui est entré. Revenir à une image d'avant : la migration ajoute des registres que l'ancienne version ignore, sauf le calendrier, qui montre alors « Déplacements » comme une somme vide ; rien n'est perdu.
 
+## Mise à jour : GitHub
+
+À faire une fois, sur le NAS déjà en service. La PR part en production à la fusion, migration comprise (`20261109120000_github.sql`, par le service `migrate` : cinq types, six métriques, pas de `rebuild`) : le connecteur GitHub ne démarre que lorsque ses trois variables sont dans `secrets/collector.env`, donc rien ne change pour les autres connecteurs d'ici là. « Commits » et « Pull requests » apparaissent dans les filtres du calendrier dès le déploiement, vides jusqu'au premier passage. Je ne lance rien de tout cela depuis le dépôt, et je tape moi-même chaque secret.
+
+1. **Avant la fusion**, recopier `compose.yaml` comme à l'étape 4 de « Mise à jour vers l'étape 5 » : son contrôle de santé vérifie aussi `github-state.json`.
+
+2. **Le token.** Sur github.com, Settings, Developer settings, Personal access tokens, **Tokens (classic)**, un token neuf pour le NAS seulement, scopes `repo` et `read:org`, rien d'autre, échéance d'un an au plus ; noter la date d'échéance affichée. Pour chaque organisation à SSO SAML : « Configure SSO », puis « Authorize » sur le token (sinon la carte d'état passe à « À faire », `sso_required`, et ses dépôts sont sautés). Le token va dans le gestionnaire de mots de passe et dans `secrets/collector.env`, nulle part ailleurs ; jamais le token de `gh` du Mac. Le collecteur joint `api.github.com` par le réseau `egress`.
+
+3. Après le déploiement de la version, sur le NAS, en root dans le dossier en `700` :
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   sudo docker compose logs migrate | tail -3   # « migrations à jour »
+   TOKEN=$(sudo docker compose run --rm -T admin create-source github --silence-threshold "6 hours" --label "GitHub" </dev/null)
+   [ "${#TOKEN}" = 64 ] && echo "token ok" || echo "ÉCHEC : ne pas continuer"
+   for kind in github.commit github.pull_request github.review github.issue github.comment; do
+     sudo docker compose run --rm -T admin grant-kind github "$kind" </dev/null
+   done
+   read -rs GITHUB_API_TOKEN          # le token classique neuf, sans écho
+   read -r GITHUB_TOKEN_EXPIRES_ON    # AAAA-MM-JJ, l'échéance affichée par GitHub
+   (umask 077; printf 'GITHUB_API_TOKEN=%s\nGITHUB_INGEST_TOKEN=%s\nGITHUB_TOKEN_EXPIRES_ON=%s\n' "$GITHUB_API_TOKEN" "$TOKEN" "$GITHUB_TOKEN_EXPIRES_ON" >> secrets/collector.env)
+   unset TOKEN GITHUB_API_TOKEN GITHUB_TOKEN_EXPIRES_ON
+   ls -l secrets/collector.env   # -rw-------
+   sudo docker compose up -d collector
+   ```
+
+   Il faut les trois ensemble : un seul manquant, ou une échéance illisible, empêche le collecteur de démarrer, les autres connecteurs compris.
+
+4. **Le premier passage** lit tout l'historique : la liste des dépôts lisibles, l'historique de chacun, puis les recherches année par année. Quelques centaines d'appels, sous la limite de 5 000 par heure ; une coupure reprend où elle s'était arrêtée. Ensuite, un passage tous les quarts d'heure ne relit que les dépôts poussés depuis.
+
+   ```sh
+   sudo docker compose logs collector | grep "github pass completed" | tail -2   # calls, repos, commits, pull_requests, reviews, issues, comments, accepted ; truncated 0 ; sso_required false
+   sudo docker compose ps collector                                            # healthy
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select status from core.sources where name = 'github'" </dev/null   # ok, expires_at, last_collected_at
+   ```
+
+   « token refusé » : le token est mauvais, expiré ou révoqué (`key_rejected`) ; `rate_limited` : le passage attend la remise à zéro de la limite ; `sso_required` : une organisation attend l'autorisation SSO du token (étape 2). `truncated` au-dessus de 0 : une année de recherche dépasse 1 000 résultats, à me signaler. Les logs ne donnent que des nombres : jamais le token, un login, un nom de dépôt ni un titre.
+
+5. Vérifier les critères du chantier GitHub dans [les chantiers](chantiers.md) : une journée face à github.com, dans la carte du jour, le calendrier et le MCP (`occurrences` `daily` sur `code.commit`, `top` par dépôt) ; puis le rejeu :
+
+   ```sh
+   sudo docker compose run --rm -T admin coverage code.commit </dev/null
+   sudo docker compose run --rm -T admin rebuild </dev/null   # 0 différence
+   ```
+
+6. **Remplacer le token** (à l'échéance, révoqué, ou passé ailleurs que sur le NAS) : en créer un neuf comme à l'étape 2 et révoquer l'ancien, remplacer les lignes `GITHUB_API_TOKEN=` et `GITHUB_TOKEN_EXPIRES_ON=` de `secrets/collector.env` (en root, éditeur sans sauvegarde, ou `sed -i` avec le token lu par `read -rs`), puis `sudo docker compose up -d collector`.
+
+**Perdre `github-state.json`** ne crée aucun doublon (chaque fait a une clé : sha, id de PR et action, id de review, d'issue ou de commentaire) : le passage suivant relit tout l'historique, et l'ingestion écarte ce qu'elle a déjà.
+
+**Retour arrière.** Couper GitHub seul : retirer les trois lignes `GITHUB_*` de `secrets/collector.env`, puis `sudo docker compose up -d collector`. Le journal garde ce qui est entré ; `admin revoke-source github` coupe le token de la source, et révoquer le token sur github.com coupe l'accès à GitHub. Revenir à une image d'avant : la migration ajoute des registres que l'ancienne version ignore, sauf le calendrier, qui montre alors les métriques comme des sommes vides ; rien n'est perdu.
+
 ## Vérifier les critères « Terminé quand »
 
 **Un café saisi depuis l'iPhone, par la web app comme par le raccourci, apparaît.**
