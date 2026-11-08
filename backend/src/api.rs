@@ -1507,36 +1507,19 @@ async fn get_sources_health(
     .fetch_all(&state.pool)
     .await?;
     let metrics = sqlx::query!(
-        r#"SELECT m.metric, seen.first_at, seen.last_at,
-                  extract(epoch FROM m.freshness_threshold)::float8 AS "threshold!",
-                  COALESCE(now() - seen.last_at > m.freshness_threshold, false) AS "stale!"
-           FROM core.metrics m
-           CROSS JOIN LATERAL (
-             SELECT min(e.occurred_at) AS first_at, max(e.occurred_at) AS last_at
-             FROM derived.live_events e
-             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
-               AND e.metric = m.metric
-           ) seen
-           WHERE m.freshness_threshold IS NOT NULL
-           ORDER BY m.metric"#,
+        r#"SELECT metric, extract(epoch FROM freshness_threshold)::float8 AS "threshold!",
+                  now() AS "now!"
+           FROM core.metrics
+           WHERE freshness_threshold IS NOT NULL
+           ORDER BY metric"#,
     )
     .fetch_all(&state.pool)
     .await?;
     // La vue, donc ce que la lecture montre vraiment : une source qui ne fait plus foi s'arrête là où
-    // la suivante commence, sans faux trou.
-    let coverage = sqlx::query!(
-        r#"SELECT e.metric AS "metric!", src.name AS source,
-                  min(e.occurred_at) AS "first_at!", max(e.occurred_at) AS "last_at!"
-           FROM derived.live_events e
-           JOIN core.sources src ON src.id = e.source_id
-           JOIN core.metrics m ON m.metric = e.metric
-           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
-             AND m.freshness_threshold IS NOT NULL
-           GROUP BY e.metric, src.name
-           ORDER BY 3"#,
-    )
-    .fetch_all(&state.pool)
-    .await?;
+    // la suivante commence, sans faux trou. La métrique couvre de la première à la dernière donnée de
+    // ses sources.
+    let names: Vec<String> = metrics.iter().map(|m| m.metric.clone()).collect();
+    let coverage = read::source_spans(&state.pool, &names).await?;
     let errors = sqlx::query_scalar!(
         r#"SELECT count(*) AS "errors!" FROM derived.interpretation_errors
            WHERE generation = (SELECT id FROM derived.generations WHERE state = 'active')"#,
@@ -1556,21 +1539,27 @@ async fn get_sources_health(
             .collect(),
         metrics: metrics
             .into_iter()
-            .map(|m| MetricHealth {
-                first_event_at: m.first_at,
-                last_event_at: m.last_at,
-                freshness_threshold_seconds: m.threshold,
-                stale: m.stale,
-                coverage: coverage
-                    .iter()
-                    .filter(|c| c.metric == m.metric)
-                    .map(|c| SourceCoverage {
-                        source: c.source.clone(),
-                        first_at: c.first_at,
-                        last_at: c.last_at,
-                    })
-                    .collect(),
-                metric: m.metric,
+            .map(|m| {
+                let coverage: Vec<&read::SourceSpan> =
+                    coverage.iter().filter(|c| c.metric == m.metric).collect();
+                let first_at = coverage.iter().map(|c| c.first_at).min();
+                let last_at = coverage.iter().map(|c| c.last_at).max();
+                MetricHealth {
+                    first_event_at: first_at,
+                    last_event_at: last_at,
+                    freshness_threshold_seconds: m.threshold,
+                    stale: last_at
+                        .is_some_and(|last| (m.now - last).as_seconds_f64() > m.threshold),
+                    coverage: coverage
+                        .iter()
+                        .map(|c| SourceCoverage {
+                            source: c.source.clone(),
+                            first_at: c.first_at,
+                            last_at: c.last_at,
+                        })
+                        .collect(),
+                    metric: m.metric,
+                }
             })
             .collect(),
     }))

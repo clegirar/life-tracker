@@ -172,19 +172,7 @@ pub async fn range(pool: &PgPool, start: NaiveDate, end: NaiveDate) -> Result<Pe
     let names: Vec<String> = metrics.iter().map(|m| m.metric.clone()).collect();
 
     // Par source : `live_events` arrête déjà une source là où une autre fait foi, sans faux trou.
-    let spans = sqlx::query!(
-        r#"SELECT e.metric AS "metric!",
-                  (min(e.occurred_at) AT TIME ZONE (SELECT timezone FROM core.settings))::date AS "first_day!",
-                  (max(e.occurred_at) AT TIME ZONE (SELECT timezone FROM core.settings))::date AS "last_day!",
-                  max(e.occurred_at) AS "last_at!"
-           FROM derived.live_events e
-           WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
-             AND e.metric = ANY($1)
-           GROUP BY e.metric, e.source_id"#,
-        &names,
-    )
-    .fetch_all(pool)
-    .await?;
+    let spans = read::source_spans(pool, &names).await?;
 
     let values = sqlx::query!(
         r#"SELECT (e.occurred_at AT TIME ZONE (SELECT timezone FROM core.settings))::date AS "day!",
