@@ -38,8 +38,11 @@ interface MetricGroup {
 }
 
 // Garmin : une seule pastille « Activité » pour les quatre blocs de sa carte (à ma demande, 7 nov. 2026).
+// GitHub : une seule pastille « GitHub » pour les commits et les pull requests, que sa carte montre
+// ensemble (à ma demande, 8 nov. 2026).
 const METRIC_GROUPS: MetricGroup[] = [
   { label: 'Activité', tone: 'heat-steps', metrics: ['steps', 'workout', 'sleep', 'calories.burned'] },
+  { label: 'GitHub', tone: 'heat-github', metrics: ['code.commit', 'code.pull_request'] },
 ]
 
 const groupOf = (metric: string) => METRIC_GROUPS.find((group) => group.metrics.includes(metric))

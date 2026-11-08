@@ -249,25 +249,30 @@ test('la carte du jour : commits, lignes, dépôts, pull requests, reviews, issu
   await expect(page.getByTestId('github')).toContainText('Rien sur GitHub ce jour-là.')
 })
 
-test('les cases du mois : commits et pull requests, dans la couleur de GitHub', async ({ page }) => {
+test('les cases du mois : une pastille « GitHub », commits et pull requests en points', async ({ page }) => {
   await login(page)
+  // Une métrique du groupe gardée suffit : la pastille coche les deux, comme « Activité ».
   await page.evaluate(() => window.localStorage.setItem('calendar.metrics', JSON.stringify(['code.commit'])))
   await page.goto(`/mois/${DATE.slice(0, 7)}`)
   const cell = page.locator(`.cell[data-date="${DATE}"]`)
-  await expect(cell.locator('.cell-value[data-metric="code.commit"]')).toHaveText('3')
-  await expect(cell).toHaveAccessibleName(/3 commits/)
-  await expect(cell.locator('.cell-value')).toHaveClass(/heat-github/)
+  for (const metric of ['code.commit', 'code.pull_request']) {
+    await expect(cell.locator(`.day-dot[data-metric="${metric}"]`)).toHaveCount(1)
+    await expect(cell.locator(`.day-dot[data-metric="${metric}"]`)).toHaveClass(/heat-github/)
+  }
+  await expect(cell).toHaveAccessibleName(/3 commits.*1 pull request\b/)
 
-  // Les pastilles des filtres, dans l'ordre du registre, après les jeux.
-  const chips = page.getByRole('group', { name: /Métriques|Filtres/ }).getByRole('button')
-  const labels = await chips.allTextContents()
-  expect(labels.indexOf('Commits')).toBeGreaterThan(labels.indexOf('Jeux'))
-  expect(labels.indexOf('Pull requests')).toBe(labels.indexOf('Commits') + 1)
-
-  await page.evaluate(() => window.localStorage.setItem('calendar.metrics', JSON.stringify(['code.pull_request'])))
-  await page.reload()
-  await expect(cell.locator('.cell-value[data-metric="code.pull_request"]')).toHaveText('1')
-  await expect(cell).toHaveAccessibleName(/1 pull request\b/)
+  // Une seule pastille « GitHub », après les jeux, cochée ; la décocher retire les deux.
+  const filters = page.getByRole('group', { name: /Métriques|Filtres/ })
+  const labels = await filters.getByRole('button').allTextContents()
+  expect(labels.indexOf('GitHub')).toBeGreaterThan(labels.indexOf('Jeux'))
+  expect(labels).not.toContain('Commits')
+  expect(labels).not.toContain('Pull requests')
+  const chip = filters.getByRole('button', { name: 'GitHub' })
+  await expect(chip).toHaveAttribute('aria-pressed', 'true')
+  await expect(chip).toHaveClass(/heat-github/)
+  await chip.click()
+  await expect(chip).toHaveAttribute('aria-pressed', 'false')
+  await expect(cell.locator('.day-dot')).toHaveCount(0)
 })
 
 test("un collecteur muet : l'alerte du jour, et la carte d'état silencieuse", async ({ page, request }) => {

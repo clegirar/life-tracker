@@ -1046,7 +1046,7 @@ Puis, par le MCP, `inventory` : le nombre de « Vidéos YouTube » tombe à ≈1
 
 ## Mise à jour : GitHub
 
-À faire une fois, sur le NAS déjà en service. La PR part en production à la fusion, migration comprise (`20261109120000_github.sql`, par le service `migrate` : cinq types, six métriques, pas de `rebuild`) : le connecteur GitHub ne démarre que lorsque ses trois variables sont dans `secrets/collector.env`, donc rien ne change pour les autres connecteurs d'ici là. « Commits » et « Pull requests » apparaissent dans les filtres du calendrier dès le déploiement, vides jusqu'au premier passage. Je ne lance rien de tout cela depuis le dépôt, et je tape moi-même chaque secret.
+À faire une fois, sur le NAS déjà en service. La PR part en production à la fusion, migration comprise (`20261109120000_github.sql`, par le service `migrate` : cinq types, six métriques, pas de `rebuild`) : le connecteur GitHub ne démarre que lorsque ses trois variables sont dans `secrets/collector.env`, donc rien ne change pour les autres connecteurs d'ici là. La pastille « GitHub » (commits et pull requests) apparaît dans les filtres du calendrier dès le déploiement, vides jusqu'au premier passage. Je ne lance rien de tout cela depuis le dépôt, et je tape moi-même chaque secret.
 
 1. **Avant la fusion**, recopier `compose.yaml` comme à l'étape 4 de « Mise à jour vers l'étape 5 » : son contrôle de santé vérifie aussi `github-state.json`.
 
