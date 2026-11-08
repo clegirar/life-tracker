@@ -1,0 +1,61 @@
+# Les runners GitHub Actions de life-tracker, sur le NAS (DS220+). Deux conteneurs Ubuntu : deux jobs à
+# la fois. À lancer sur le NAS seulement, depuis /volume1/docker/life-tracker-runner/ :
+#   sudo docker compose up -d
+# Mise en place, risques et retrait : docs/deploiement.md, « Runners sur le NAS ».
+#
+# Pourquoi ces réglages :
+# - network_mode: host : les tests publient PostgreSQL et le backend sur 127.0.0.1 ; le runner doit voir
+#   le même 127.0.0.1 que les conteneurs qu'il lance (par le socket Docker du NAS).
+# - Le dossier de travail est monté au MÊME chemin dans le runner et sur le NAS : un `docker run -v
+#   <dossier du dépôt>/db/init:…` lancé par un test est résolu par le Docker du NAS, pas par le runner.
+# - /cache, persistant : rustup, cargo, la compilation (une par runner : deux cargo sur la même cible
+#   s'attendraient), npm et Chromium. Sur le Celeron, c'est ce qui évite de tout recompiler à chaque job.
+# - Le socket Docker rend un job root sur le NAS : seul le code de ce dépôt privé y tourne, jamais
+#   celui d'un fork (« Run workflows from fork pull requests » reste désactivé, comme par défaut sur un
+#   dépôt privé).
+# - RUNNER_TOKEN ne sert qu'au premier enregistrement (jeton d'une heure) ; l'inscription est gardée
+#   dans config-N/, puis le jeton peut être retiré de runner.env.
+
+x-runner: &runner
+  image: myoung34/github-runner:2.338.2-ubuntu-noble
+  restart: unless-stopped
+  network_mode: host
+  mem_limit: 8g
+  env_file: ./runner.env
+  environment: &env
+    REPO_URL: https://github.com/clegirar/life-tracker
+    RUNNER_SCOPE: repo
+    LABELS: life-tracker
+    CONFIGURED_ACTIONS_RUNNER_FILES_DIR: /runner-config
+    DISABLE_AUTOMATIC_DEREGISTRATION: "true"
+    RUSTUP_HOME: /cache/rustup
+    CARGO_HOME: /cache/cargo
+    PLAYWRIGHT_BROWSERS_PATH: /cache/ms-playwright
+    npm_config_cache: /cache/npm
+
+services:
+  runner-1:
+    <<: *runner
+    environment:
+      <<: *env
+      RUNNER_NAME: nas-life-tracker-1
+      RUNNER_WORKDIR: /volume1/docker/life-tracker-runner/work-1
+      CARGO_TARGET_DIR: /cache/target-1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /volume1/docker/life-tracker-runner/work-1:/volume1/docker/life-tracker-runner/work-1
+      - /volume1/docker/life-tracker-runner/config-1:/runner-config
+      - /volume1/docker/life-tracker-runner/cache:/cache
+
+  runner-2:
+    <<: *runner
+    environment:
+      <<: *env
+      RUNNER_NAME: nas-life-tracker-2
+      RUNNER_WORKDIR: /volume1/docker/life-tracker-runner/work-2
+      CARGO_TARGET_DIR: /cache/target-2
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /volume1/docker/life-tracker-runner/work-2:/volume1/docker/life-tracker-runner/work-2
+      - /volume1/docker/life-tracker-runner/config-2:/runner-config
+      - /volume1/docker/life-tracker-runner/cache:/cache

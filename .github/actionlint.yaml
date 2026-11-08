@@ -1,0 +1,4 @@
+# Les runners auto-hébergés du NAS (deploy/runner/compose.yaml).
+self-hosted-runner:
+  labels:
+    - life-tracker
