@@ -3,6 +3,9 @@
 # backend et un PostgreSQL 18.6 jetable. Le conteneur, le serveur et la base disparaissent à la sortie.
 # Les captures restent dans web/e2e-artifacts/ (ignoré par git).
 # Usage : web/test.sh [arguments de playwright test]   (Docker requis)
+# La CI les sépare : WEB_SKIP_E2E=1 s'arrête après le build (ni Docker ni backend), WEB_SKIP_CHECKS=1
+# saute lint, types et tests unitaires mais garde le build, que sert vite preview (par exemple avec
+# --shard=1/3).
 set -euo pipefail
 
 WEB="$(cd "$(dirname "$0")" && pwd)"
@@ -20,14 +23,19 @@ trap cleanup EXIT
 
 cd "$WEB"
 [ -d node_modules ] || npm ci
-npx playwright install chromium >/dev/null
 
-echo "▶ Lint, types, tests unitaires (Paris et un autre fuseau d'appareil), build"
-npm run --silent lint
-npm run --silent typecheck
-TZ=Europe/Paris npm test --silent
-TZ=America/New_York npm test --silent
+if [ -z "${WEB_SKIP_CHECKS:-}" ]; then
+  echo "▶ Lint, types, tests unitaires (Paris et un autre fuseau d'appareil)"
+  npm run --silent lint
+  npm run --silent typecheck
+  TZ=Europe/Paris npm test --silent
+  TZ=America/New_York npm test --silent
+fi
+echo "▶ Build"
 npm run --silent build
+[ -z "${WEB_SKIP_E2E:-}" ] || exit 0
+
+npx playwright install chromium >/dev/null
 
 echo "▶ PostgreSQL jetable"
 docker run -d --rm --name "$C" \

@@ -1,6 +1,10 @@
-# Tests de chaque PR et de chaque push sur main, en jobs parallèles : base, backend, web, MCP,
-# extension Firefox et scripts de déploiement. Verte sur main, elle lance
-# .github/workflows/release.yml : version, images, NAS (l'extension n'a pas de release).
+# Tests de chaque PR et de chaque push sur main, en jobs parallèles : base, backend (lint à part, tests
+# en deux partitions), web (vérifications à part, Playwright en trois shards), MCP, extension Firefox et
+# scripts de déploiement. Verte sur main, elle lance .github/workflows/release.yml : version, images,
+# NAS (l'extension n'a pas de release).
+# Sur main, le job gate saute tous les tests quand l'arbre du commit est exactement celui que la CI de
+# la PR a testé (la fusion en squash d'une PR à jour avec main) : la CI conclut alors en succès sans
+# rien relancer, et la release part aussitôt. Au moindre doute, toute la CI tourne.
 name: CI
 
 on:
@@ -24,7 +28,65 @@ permissions:
   contents: read
 
 jobs:
+  # Sur un push sur main seulement (sauté sur une PR). tested=true si et seulement si l'arbre de ce commit
+  # est celui qu'a envoyé le job tested-tree d'une CI verte de la PR fusionnée, lancée depuis ce dépôt
+  # (jamais un fork). Une PR fusionnée sans être à jour avec main donne un autre arbre : tout retourne.
+  # Ne doit jamais échouer : toute erreur ou recherche vaine donne tested=false, donc toute la CI.
+  gate:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      tested: ${{ steps.tree.outputs.tested }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Arbre déjà testé par la CI de la PR ?
+        id: tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          already_tested() {
+            local tree head runs run dir
+            tree="$(git rev-parse "$SHA^{tree}")" || return 1
+            # La PR fusionnée dans main dont ce commit est le squash, ouverte depuis ce dépôt.
+            head="$(gh api "repos/$REPO/commits/$SHA/pulls" \
+              --jq "[.[] | select(.merged_at != null and .base.ref == \"main\" and .head.repo.full_name == \"$REPO\")][0].head.sha // empty")" \
+              || return 1
+            [ -n "$head" ] || { echo "Aucune PR fusionnée de ce dépôt pour ce commit"; return 1; }
+            # Ses CI vertes sur pull_request, de la plus récente à la plus ancienne, jamais celles d'un fork.
+            runs="$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?event=pull_request&status=success&head_sha=$head&per_page=20" \
+              --jq ".workflow_runs[] | select(.head_repository.full_name == \"$REPO\") | .id")" \
+              || return 1
+            for run in $runs; do
+              dir="$RUNNER_TEMP/tested-tree-$run"
+              gh run download "$run" --repo "$REPO" --name tested-tree --dir "$dir" || continue
+              if [ "$(cat "$dir/tree" 2>/dev/null)" = "$tree" ]; then
+                echo "Arbre $tree déjà testé par la CI $run de la PR : tests sautés"
+                return 0
+              fi
+            done
+            echo "Aucune CI verte de la PR n'a testé l'arbre $tree : toute la CI"
+            return 1
+          }
+          if already_tested; then
+            echo "tested=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tested=false" >> "$GITHUB_OUTPUT"
+          fi
+
   db:
+    needs: gate
+    # !cancelled() : gate est sauté sur une PR, ce qui sauterait sinon tout ce qui en dépend.
+    if: ${{ !cancelled() && needs.gate.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -33,9 +95,13 @@ jobs:
           persist-credentials: false
       - run: db/test/run.sh
 
-  backend:
+  # Format et clippy à part, en parallèle des tests. Clippy compile en mode check, que le cache des
+  # tests ne couvre pas : il a son propre cache, clé backend-clippy, écrit par ce seul job.
+  backend-lint:
+    needs: gate
+    if: ${{ !cancelled() && needs.gate.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -43,24 +109,78 @@ jobs:
       - name: Rust, d'après backend/rust-toolchain.toml
         working-directory: backend
         run: rustup toolchain install
-      # Seul ce job enregistre le cache : il compile tout ce que web et mcp recompilent (cargo build).
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: backend
-          shared-key: backend
-      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
-        with:
-          tool: cargo-nextest@0.9.150
+          shared-key: backend-clippy
       - name: Format et clippy
         working-directory: backend
         run: |
           cargo fmt --check
           cargo clippy --all-targets -- -D warnings
-      - run: backend/test.sh
 
-  web:
+  # Les tests en deux partitions de nextest, chacune avec son PostgreSQL ; chacune compile les tests.
+  backend:
+    needs: gate
+    if: ${{ !cancelled() && needs.gate.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust, d'après backend/rust-toolchain.toml
+        working-directory: backend
+        run: rustup toolchain install
+      # Seule la partition 1 enregistre le cache : elle compile tout ce que la partition 2, web-e2e et
+      # mcp recompilent (cargo build).
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: backend
+          shared-key: backend
+          save-if: ${{ matrix.partition == 1 }}
+      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        with:
+          tool: cargo-nextest@0.9.150
+      - run: backend/test.sh --partition "count:${{ matrix.partition }}/2"
+
+  # Lint, types, tests unitaires et build de la web app : ni Docker, ni backend, ni Chromium.
+  web-checks:
+    needs: gate
+    if: ${{ !cancelled() && needs.gate.outputs.tested != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.16.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Dépendances de la web app
+        working-directory: web
+        run: npm ci
+      - run: web/test.sh
+        env:
+          WEB_SKIP_E2E: "1"
+
+  # Playwright en trois shards, chacun avec son PostgreSQL et son backend : workers: 1 et une seule base
+  # par shard, comme en local. Chaque shard refait le build, que sert vite preview.
+  web-e2e:
+    needs: gate
+    if: ${{ !cancelled() && needs.gate.outputs.tested != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -87,9 +207,13 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
-      - run: web/test.sh
+      - run: web/test.sh "--shard=${{ matrix.shard }}/3"
+        env:
+          WEB_SKIP_CHECKS: "1"
 
   mcp:
+    needs: gate
+    if: ${{ !cancelled() && needs.gate.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -115,6 +239,8 @@ jobs:
       - run: mcp/test.sh
 
   extension:
+    needs: gate
+    if: ${{ !cancelled() && needs.gate.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -133,6 +259,8 @@ jobs:
       - run: extension/test.sh
 
   deploy-script:
+    needs: gate
+    if: ${{ !cancelled() && needs.gate.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -141,3 +269,31 @@ jobs:
           persist-credentials: false
       # shellcheck est déjà sur l'image ubuntu-24.04.
       - run: deploy/test.sh
+
+  # Sur une PR seulement, une fois tous les tests verts : l'arbre testé (celui du commit de fusion de la
+  # PR dans main, que la CI a extrait), que gate comparera au commit de main après la fusion.
+  tested-tree:
+    needs: [db, backend-lint, backend, web-checks, web-e2e, mcp, extension, deploy-script]
+    # Conditions explicites : gate, sauté sur une PR, ne doit pas sauter ce job ; un seul test non vert
+    # l'arrête.
+    if: >-
+      ${{ !cancelled() && github.event_name == 'pull_request' &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled') &&
+      !contains(needs.*.result, 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Arbre testé
+        run: |
+          mkdir -p "$RUNNER_TEMP/tested-tree"
+          git rev-parse 'HEAD^{tree}' | tee "$RUNNER_TEMP/tested-tree/tree"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-tree
+          path: ${{ runner.temp }}/tested-tree/tree
+          if-no-files-found: error
+          retention-days: 14
