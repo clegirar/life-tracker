@@ -63,7 +63,7 @@ export const MARKER_LABELS: Record<Marker, string> = {
   check: 'À vérifier',
 }
 
-const SOURCE_NAMES: Record<string, string> = { lastfm: 'Last.fm', garmin: 'Garmin', twitch: 'Twitch', steam: 'Steam', iphone: 'iPhone' }
+const SOURCE_NAMES: Record<string, string> = { lastfm: 'Last.fm', garmin: 'Garmin', twitch: 'Twitch', steam: 'Steam', iphone: 'iPhone', github: 'GitHub' }
 
 /** Le nom d'une source tel qu'on le dit : `lastfm-2` reste Last.fm. */
 export function sourceName(name: string): string {
@@ -101,6 +101,8 @@ export function valueText(metric: MonthMetric, value: number | null): string {
   if (metric.unit && PLAIN_UNITS.has(metric.unit)) return `${NUMBER.format(value)} ${metric.unit}`
   // « Déplacements » compte des lieux : « 1 lieu », « 3 lieux ».
   if (metric.unit === 'lieu') return plural(Math.round(value), 'lieu', 'lieux')
+  // L'unité est le singulier du nom : « 1 commit », « 1 pull request », « 3 pull requests ».
+  if (metric.unit && `${metric.unit}s` === label) return plural(Math.round(value), metric.unit, label)
   // Le premier mot porte le pluriel : « 1 vidéo YouTube », « 3 vidéos YouTube ».
   const [head, ...rest] = label.split(' ')
   const one = [/[sx]$/.test(head) ? head.slice(0, -1) : head, ...rest].join(' ')

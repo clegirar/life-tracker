@@ -32,7 +32,7 @@ const texts = (key: KeyInfo) => [key.name, key.expiry]
 
 describe('les fiches', () => {
   it('couvrent chaque tracker, chacun avec au moins une clé', () => {
-    expect(TRACKERS.map((tracker) => tracker.id)).toEqual(['cafe', 'musique', 'garmin', 'youtube', 'twitch', 'steam', 'iphone'])
+    expect(TRACKERS.map((tracker) => tracker.id)).toEqual(['cafe', 'musique', 'garmin', 'youtube', 'twitch', 'steam', 'github', 'iphone'])
     for (const tracker of TRACKERS) {
       expect(tracker.arrival, tracker.id).not.toBe('')
       expect(tracker.keys.length, tracker.id).toBeGreaterThan(0)
@@ -99,6 +99,24 @@ describe('les échéances', () => {
       live: true,
     })
     expect(keyExpiry(key, youtube({ state: 'action_required', reason: 'consent_required', expires_at: null, next_run_at: null }), NOW).urgency).toBe('soon')
+  })
+})
+
+describe('la fiche GitHub', () => {
+  it("dit l'échéance vivante du token d'accès personnel, en orange à 14 jours", () => {
+    const key = liveKey('github')
+    expect(key.name).toContain('`GITHUB_API_TOKEN`')
+    const github = (expires: number) =>
+      source({ name: 'github', label: 'GitHub', status: { state: 'ok', reason: null, expires_at: iso(expires), next_run_at: null } })
+    expect(keyExpiry(key, github(300 * DAY), NOW)).toEqual({ text: `Valable jusqu'au 1${NBSP}sept. 2027.`, urgency: null, live: true })
+    expect(keyExpiry(key, github(7 * DAY), NOW)).toEqual({ text: `Expire le 12${NBSP}nov., dans 7 jours.`, urgency: 'soon', live: true })
+    expect(keyExpiry(key, null, NOW).live).toBe(false)
+  })
+
+  it('nomme le token de la source par sa variable', () => {
+    const token = sheet('github').keys.find((key) => !key.live)!
+    expect(token.name).toBe('Token de la source `github` (`GITHUB_INGEST_TOKEN`)')
+    expect(token.expiry).toContain('Sans échéance.')
   })
 })
 

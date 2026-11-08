@@ -49,8 +49,8 @@ enum Command {
         #[arg(long, env = "PRIVACY_ZONES", hide_env_values = true)]
         privacy_zones: Option<String>,
     },
-    /// Interroge Last.fm, Garmin, YouTube et Steam, chacun si sa clé est fournie, et envoie à l'API
-    /// d'ingestion, sans jamais connaître la base. Chaque connecteur a son token, son état et ses
+    /// Interroge Last.fm, Garmin, YouTube, Steam et GitHub, chacun si sa clé est fournie, et envoie à
+    /// l'API d'ingestion, sans jamais connaître la base. Chaque connecteur a son token, son état et ses
     /// nouveaux essais
     Collect {
         #[arg(long, env = "LASTFM_API_KEY", hide_env_values = true)]
@@ -121,6 +121,19 @@ enum Command {
         steam_url: String,
         #[arg(long, env = "STEAM_INTERVAL_SECONDS", default_value_t = 900)]
         steam_interval_seconds: u64,
+        /// Le token d'accès personnel de GitHub (classique, `repo` et `read:org`)
+        #[arg(long, env = "GITHUB_API_TOKEN", hide_env_values = true)]
+        github_api_token: Option<String>,
+        /// Le token de la source GitHub
+        #[arg(long, env = "GITHUB_INGEST_TOKEN", hide_env_values = true)]
+        github_token: Option<String>,
+        #[arg(long, env = "GITHUB_API_URL", default_value = collector::github::DEFAULT_GITHUB_URL)]
+        github_url: String,
+        #[arg(long, env = "GITHUB_INTERVAL_SECONDS", default_value_t = 900)]
+        github_interval_seconds: u64,
+        /// L'échéance du token d'accès personnel, `AAAA-MM-JJ`, telle que GitHub l'affiche à sa création
+        #[arg(long, env = "GITHUB_TOKEN_EXPIRES_ON")]
+        github_token_expires_on: Option<String>,
         #[arg(long, env = "INGEST_URL")]
         ingest_url: String,
         /// Où garder l'état de chaque connecteur ; le perdre ne coûte qu'un rattrapage
@@ -247,6 +260,11 @@ async fn main() -> Result<()> {
             steam_token,
             steam_url,
             steam_interval_seconds,
+            github_api_token,
+            github_token,
+            github_url,
+            github_interval_seconds,
+            github_token_expires_on,
             ingest_url,
             state_dir,
         } => {
@@ -334,21 +352,47 @@ async fn main() -> Result<()> {
                     api_url: steam_url,
                     api_key,
                     steam_id,
-                    ingest_url,
+                    ingest_url: ingest_url.clone(),
                     token,
-                    state_dir,
+                    state_dir: state_dir.clone(),
                     interval: Duration::from_secs(steam_interval_seconds),
                     pause: STEAM_PAUSE,
                 }),
                 _ => bail!("Steam demande STEAM_API_KEY, STEAM_ID et STEAM_TOKEN ensemble"),
             };
-            if lastfm.is_none() && garmin.is_none() && youtube.is_none() && steam.is_none() {
+            let token_expires_at = set(github_token_expires_on)
+                .map(|text| {
+                    collector::garmin::key_expiry(&text).context(
+                        "GITHUB_TOKEN_EXPIRES_ON illisible : une date AAAA-MM-JJ est attendue",
+                    )
+                })
+                .transpose()?;
+            let github = match (set(github_api_token), set(github_token)) {
+                (None, None) => None,
+                (Some(api_token), Some(token)) => Some(collector::github::Config {
+                    api_url: github_url,
+                    api_token,
+                    ingest_url,
+                    token,
+                    state_dir,
+                    interval: Duration::from_secs(github_interval_seconds),
+                    token_expires_at,
+                }),
+                _ => bail!("GitHub demande GITHUB_API_TOKEN et GITHUB_INGEST_TOKEN ensemble"),
+            };
+            if lastfm.is_none()
+                && garmin.is_none()
+                && youtube.is_none()
+                && steam.is_none()
+                && github.is_none()
+            {
                 bail!(
                     "aucun connecteur : LASTFM_API_KEY (Last.fm), GARMIN_API_KEY (Garmin), \
-                     YOUTUBE_CLIENT_ID (YouTube) ou STEAM_API_KEY (Steam) est requis"
+                     YOUTUBE_CLIENT_ID (YouTube), STEAM_API_KEY (Steam) ou GITHUB_API_TOKEN \
+                     (GitHub) est requis"
                 );
             }
-            collect(lastfm, garmin, youtube, steam).await
+            collect(lastfm, garmin, youtube, steam, github).await
         }
         Command::ImportApple {
             archive,
@@ -374,6 +418,7 @@ async fn collect(
     garmin: Option<collector::garmin::Config>,
     youtube: Option<collector::youtube::Config>,
     steam: Option<collector::steam::Config>,
+    github: Option<collector::github::Config>,
 ) -> Result<()> {
     let filter = [
         "reqwest=off",
@@ -407,6 +452,10 @@ async fn collect(
     }
     if let Some(config) = steam {
         let connector = collector::steam::Collector::new(config)?;
+        workers.push(tokio::spawn(connector.run(stopped.clone())));
+    }
+    if let Some(config) = github {
+        let connector = collector::github::Collector::new(config)?;
         workers.push(tokio::spawn(connector.run(stopped.clone())));
     }
     shutdown_signal().await;

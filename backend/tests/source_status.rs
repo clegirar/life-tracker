@@ -194,6 +194,8 @@ async fn only_the_closed_vocabulary_is_accepted() {
         json!({ "state": "action_required", "reason": "consent_required" }),
         json!({ "state": "action_required", "reason": "profile_private",
                 "last_collected_at": "2026-11-06T10:00:00Z" }),
+        json!({ "state": "action_required", "reason": "sso_required",
+                "expires_at": "2027-11-07T23:00:00Z" }),
         json!({ "state": "action_required", "reason": "key_rejected",
                 "expires_at": "2027-01-01T00:00:00+02:00" }),
     ];

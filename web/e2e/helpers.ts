@@ -11,6 +11,7 @@ export const YOUTUBE_TOKEN = process.env.E2E_YOUTUBE_TOKEN!
 export const TWITCH_TOKEN = process.env.E2E_TWITCH_TOKEN!
 export const STEAM_TOKEN = process.env.E2E_STEAM_TOKEN!
 export const IPHONE_TOKEN = process.env.E2E_IPHONE_TOKEN!
+export const GITHUB_TOKEN = process.env.E2E_GITHUB_TOKEN!
 
 export function parisToday(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date())

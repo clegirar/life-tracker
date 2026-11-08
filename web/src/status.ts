@@ -32,6 +32,7 @@ const isYoutube = (name: string) => /^youtube\b/.test(name)
 const isTwitch = (name: string) => /^twitch\b/.test(name)
 const isSteam = (name: string) => /^steam\b/.test(name)
 const isIphone = (name: string) => /^iphone\b/.test(name)
+const isGithub = (name: string) => /^github\b/.test(name)
 
 /** Comment une source dit son échéance. */
 interface ExpiryPolicy {
@@ -52,6 +53,8 @@ const KEY_POLICY: ExpiryPolicy = { label: 'Échéance', warnDays: EXPIRY_WARNING
  */
 function expiryPolicy(name: string): ExpiryPolicy {
   if (isGarmin(name)) return { ...KEY_POLICY, label: 'Clé' }
+  // Le token d'accès personnel de GitHub : un an au plus, comme la clé Garmin.
+  if (isGithub(name)) return { ...KEY_POLICY, label: 'Token' }
   if (isYoutube(name)) return { label: 'Accès Google', warnDays: 2, todo: false, precise: true }
   return KEY_POLICY
 }
@@ -183,6 +186,19 @@ const GARMIN_KEY_STEPS = [
 ]
 const GARMIN_RUNBOOK = 'Le détail : `docs/deploiement.md`, « Mise à jour : Garmin Connect », étape 6.'
 
+/**
+ * Le token d'accès personnel de GitHub (classique, `repo` et `read:org`). Rien ne se perd pendant la
+ * panne : chaque passe relit les 30 derniers jours de commits, et les recherches reprennent la veille de
+ * la dernière passe réussie.
+ */
+const GITHUB_TOKEN_STEPS = [
+  "Sur github.com, Settings, Developer settings, Personal access tokens, Tokens (classic) : régénère le token (scopes `repo` et `read:org`, échéance d'un an au plus) et note sa date de fin.",
+  'Sur le NAS, dans `secrets/collector.env`, remplace `GITHUB_API_TOKEN` par le nouveau token et `GITHUB_TOKEN_EXPIRES_ON` par sa date (AAAA-MM-JJ).',
+  'Relance le collecteur : `sudo docker compose up -d collector`.',
+  "Une organisation à authentification unique (SAML) ? Autorise le nouveau token pour elle : « Configure SSO », puis « Authorize ».",
+]
+const GITHUB_NOTE = "Rien n'est perdu : la passe suivante relit les 30 derniers jours."
+
 /** La variable de la clé, par connecteur. */
 const KEY_VARIABLE: [RegExp, string][] = [
   [/^lastfm\b/, 'LASTFM_API_KEY'],
@@ -192,6 +208,9 @@ const KEY_VARIABLE: [RegExp, string][] = [
 function keyRejected(name: string): Guidance {
   if (isGarmin(name)) {
     return { title: 'Garmin refuse la clé : elle a expiré ou a été révoquée.', steps: GARMIN_KEY_STEPS, note: GARMIN_RUNBOOK }
+  }
+  if (isGithub(name)) {
+    return { title: "GitHub refuse le token d'accès personnel : il a expiré ou a été révoqué.", steps: GITHUB_TOKEN_STEPS, note: GITHUB_NOTE }
   }
   const variable = KEY_VARIABLE.find(([pattern]) => pattern.test(name))?.[1]
   if (isSteam(name)) {
@@ -221,6 +240,10 @@ function keyRejected(name: string): Guidance {
 function expiring(name: string, expires: number, now: number): Guidance {
   const date = shortDate(expiryDate(expires), parisDate(now))
   const past = daysLeft(expires, now) < 0 || expires <= now
+  if (isGithub(name)) {
+    const title = past ? `Le token GitHub a expiré le ${date} : remplace-le.` : `Le token GitHub expire le ${date} : remplace-le avant.`
+    return { title, steps: GITHUB_TOKEN_STEPS, note: GITHUB_NOTE }
+  }
   const title = past ? `La clé a expiré le ${date} : remplace-la.` : `La clé expire le ${date} : remplace-la avant.`
   if (isGarmin(name)) return { title, steps: GARMIN_KEY_STEPS, note: GARMIN_RUNBOOK }
   return { ...keyRejected(name), title }
@@ -300,7 +323,24 @@ function byReason(source: SourceStatus, reason: ReportedStatus['reason'], now: n
         ],
         note: "Rien n'est perdu : le temps joué pendant ce temps se compte à la reprise, et les succès gardent leur date.",
       }
+    case 'sso_required':
+      return {
+        title: "Une organisation à authentification unique (SAML) refuse le token : ses dépôts ne sont pas lus.",
+        steps: [
+          "Sur github.com, Settings, Developer settings, Personal access tokens, Tokens (classic) : ouvre le token du collecteur.",
+          "« Configure SSO », puis « Authorize » en face de l'organisation ; GitHub demande de s'y connecter.",
+          "La collecte reprend seule à la prochaine passe, dans un quart d'heure au plus.",
+        ],
+        note: "Le reste continue : seuls les dépôts de cette organisation attendent, et rien n'est perdu.",
+      }
     case 'rate_limited':
+      if (isGithub(source.name)) {
+        return {
+          title: "GitHub limite les appels pour l'heure en cours (5 000 points par heure).",
+          steps: [],
+          note: "Le collecteur reprend seul à la passe suivante. Normal pendant le premier passage, qui relit tout l'historique ; à regarder seulement si cela dure plus d'un jour.",
+        }
+      }
       return {
         title: "Le service limite les appels pour l'instant.",
         steps: [],
@@ -356,7 +396,7 @@ function silence(source: SourceStatus): Guidance {
       note: "Firefox simplement fermé ? Rien n'est perdu : ce qu'il n'a pas pu envoyer part à sa réouverture.",
     }
   }
-  const service = isLastfm(source.name) ? 'avec Last.fm ' : isSteam(source.name) ? 'avec Steam ' : ''
+  const service = isLastfm(source.name) ? 'avec Last.fm ' : isSteam(source.name) ? 'avec Steam ' : isGithub(source.name) ? 'avec GitHub ' : ''
   return {
     title: `Aucun contact réussi ${service}depuis plus de ${threshold} : des données peuvent manquer.`,
     steps: [
@@ -393,6 +433,20 @@ const LAST_OF: Record<string, string> = {
   'game.achievement': 'Dernier succès',
   'place.visit': 'Dernier lieu',
   'location.point': 'Dernière position',
+  'code.commit': 'Dernier commit',
+}
+
+/**
+ * GitHub alimente six métriques : une ligne chacune noierait la carte. « Dernier commit », puis
+ * « Dernière activité », la plus récente de toutes (pull request, review, issue, commentaire ou commit).
+ */
+function githubLines(metrics: SourceStatus['metrics'], now: number): Line[] {
+  const lines: Line[] = []
+  const commit = metrics.find((metric) => metric.metric === 'code.commit')
+  if (commit) lines.push(metricLine(commit, now))
+  const latest = Math.max(...metrics.map((metric) => Date.parse(metric.last_at)))
+  if (Number.isFinite(latest)) lines.push({ label: 'Dernière activité', value: since(latest, now) })
+  return lines
 }
 
 export function metricLine(metric: SourceStatus['metrics'][number], now: number): Line {
@@ -456,7 +510,7 @@ export function sourceCard(source: SourceStatus, now: number): Card {
   if (next !== null && next > now) lines.push({ label: isYoutube(source.name) ? 'Prochain export' : 'Prochaine passe', value: until(next, now) })
   const expiry = expiryLine(source, now)
   if (expiry) lines.push(expiry)
-  lines.push(...source.metrics.map((metric) => metricLine(metric, now)))
+  lines.push(...(isGithub(source.name) ? githubLines(source.metrics, now) : source.metrics.map((metric) => metricLine(metric, now))))
 
   let hint: string | null = null
   const listen = source.metrics.find((metric) => metric.metric === 'music.listen')

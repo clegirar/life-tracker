@@ -10,6 +10,7 @@ pub mod db;
 pub mod engine;
 pub mod games;
 pub mod geo;
+pub mod github;
 pub mod ingest;
 pub mod ingest_client;
 pub mod interpreters;

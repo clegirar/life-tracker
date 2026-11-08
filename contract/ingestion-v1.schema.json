@@ -100,7 +100,7 @@
       "properties": {
         "state": { "enum": ["ok", "action_required", "error"] },
         "reason": {
-          "enum": [null, "key_rejected", "consent_required", "consent_expired", "profile_private", "rate_limited", "service_unavailable", "ingest_failed"]
+          "enum": [null, "key_rejected", "consent_required", "consent_expired", "profile_private", "sso_required", "rate_limited", "service_unavailable", "ingest_failed"]
         },
         "expires_at": {
           "description": "L'échéance de la clé ou du jeton, RFC 3339.",

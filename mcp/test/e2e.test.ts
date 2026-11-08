@@ -16,6 +16,7 @@ const lastfmToken = process.env.LT_MCP_TEST_LASTFM_TOKEN ?? '';
 const garminToken = process.env.LT_MCP_TEST_GARMIN_TOKEN ?? '';
 const twitchToken = process.env.LT_MCP_TEST_TWITCH_TOKEN ?? '';
 const steamToken = process.env.LT_MCP_TEST_STEAM_TOKEN ?? '';
+const githubToken = process.env.LT_MCP_TEST_GITHUB_TOKEN ?? '';
 const iphoneToken = process.env.LT_MCP_TEST_IPHONE_TOKEN ?? '';
 const skip = backendUrl === undefined ? 'sans backend : lancer mcp/test.sh' : false;
 
@@ -114,6 +115,35 @@ const STEAM = [
   },
 ];
 
+// GitHub, tel que l'envoie le collecteur : les 19 et 20 oct. (UTC+2), trois commits sur un dépôt et un sur
+// le dépôt d'une organisation, une pull request ouverte puis fusionnée. Les titres sont gardés pour la web
+// app, jamais montrés au MCP (`shared_details` : lignes seulement). Dépôts et titres fictifs.
+const MINE = { id: 'R_kgDOFICTIF1', name: 'moi/depot-fictif' };
+const ORG = { id: 'R_kgDOFICTIF2', name: 'orga-fictive/autre-depot' };
+const SECRET_TITLE = 'Commit secret fictif';
+const githubCommit = (oid: string, repo: { id: string; name: string }, at: string, additions: number, deletions: number) => ({
+  key: `commit:${oid}`,
+  kind: 'github.commit',
+  schema_version: 1,
+  occurred_at: at,
+  payload: { repo, oid, authored_at: at, committed_at: at, title: SECRET_TITLE, additions, deletions, url: `https://github.com/${repo.name}/commit/${oid}` },
+});
+const githubPullRequest = (action: 'opened' | 'merged', at: string, lines?: { additions: number; deletions: number }) => ({
+  key: `pr:PR_kwDOFICTIF1:${action}`,
+  kind: 'github.pull_request',
+  schema_version: 1,
+  occurred_at: at,
+  payload: { id: 'PR_kwDOFICTIF1', action, repo: MINE, number: 12, title: SECRET_TITLE, url: `https://github.com/${MINE.name}/pull/12`, ...lines },
+});
+const GITHUB = [
+  githubCommit('a1'.repeat(20), MINE, '2026-10-19T10:00:00+02:00', 40, 2),
+  githubCommit('b2'.repeat(20), MINE, '2026-10-19T15:00:00+02:00', 10, 5),
+  githubCommit('c3'.repeat(20), MINE, '2026-10-20T09:00:00+02:00', 1, 1),
+  githubCommit('d4'.repeat(20), ORG, '2026-10-20T11:00:00+02:00', 7, 0),
+  githubPullRequest('opened', '2026-10-19T16:00:00+02:00'),
+  githubPullRequest('merged', '2026-10-20T10:00:00+02:00', { additions: 51, deletions: 7 }),
+];
+
 // Overland (iOS), tel qu'il envoie à sa route d'adaptation : le 18 oct. (UTC+2), un point, un lieu dans
 // la zone de confidentialité (10:00 à 11:00) et un lieu dehors (14:00 à 15:30). Coordonnées fictives.
 const OVERLAND = {
@@ -175,6 +205,9 @@ async function settled(): Promise<void> {
       events('stream.watch') === 5 &&
       events('game.play') === 1 &&
       events('game.achievement') === 1 &&
+      events('code.commit') === 4 &&
+      events('code.pull_request') === 1 &&
+      events('code.pull_request_merged') === 1 &&
       events('location.point') === 1 &&
       events('place.visit') === 2
     ) {
@@ -225,6 +258,7 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
     await ingest(garminToken, GARMIN);
     await ingest(twitchToken, TWITCH);
     await ingest(steamToken, STEAM);
+    await ingest(githubToken, GITHUB);
     await ingestOverland();
     await settled();
     h = await startServer({ backendUrl, serviceToken });
@@ -436,6 +470,75 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
     assert.equal(found.marked_known, 1);
   });
 
+  test('GitHub : commits par jour et par dépôt, lignes sans titre, résumé du jour et découvertes', async () => {
+    const outputs: string[] = [];
+    const tool = async (name: string, args: Record<string, unknown>) => {
+      const result = (await client.callTool({ name, arguments: args })) as ToolResult;
+      outputs.push(result.content[0]?.text ?? '');
+      return parse(result);
+    };
+
+    // Combien de commits chaque jour ?
+    const daily = await tool('occurrences', { metric: 'code.commit', from: '2026-10-19', to: '2026-10-20', form: 'daily' });
+    assert.equal(daily.total, 4);
+    assert.deepEqual(daily.days, [
+      { date: '2026-10-19', count: 2 },
+      { date: '2026-10-20', count: 2 },
+    ]);
+
+    // Combien de commits sur ce dépôt en octobre ? Sa clé vient de `top` (ou de `search`).
+    const top = await tool('top', { metric: 'code.commit', level: 'repo', from: '2026-10-01', to: '2026-10-31' });
+    type Ranked = { key: string; name: string; occurrences: number };
+    assert.deepEqual(
+      (top.items as Ranked[]).map((i) => [i.key, i.name, i.occurrences]),
+      [
+        [MINE.id, MINE.name, 3],
+        [ORG.id, ORG.name, 1],
+      ],
+    );
+    const mine = await tool('occurrences', { metric: 'code.commit', from: '2026-10-01', to: '2026-10-31', form: 'daily', level: 'repo', key: MINE.id });
+    assert.equal(mine.total, 3);
+    assert.deepEqual(mine.days, [
+      { date: '2026-10-19', count: 2 },
+      { date: '2026-10-20', count: 1 },
+    ]);
+
+    // Combien de lignes ajoutées le 19 ? Chaque commit avec ses lignes, jamais son titre ni son sha.
+    const list = await tool('occurrences', { metric: 'code.commit', from: '2026-10-19', to: '2026-10-19', form: 'list' });
+    type Listed = { local: string; items: Record<string, string>; details: Record<string, unknown> };
+    const commits = list.occurrences as Listed[];
+    assert.deepEqual(
+      commits.map((o) => [o.local, o.items.repo, o.details]),
+      [
+        ['2026-10-19 10:00', MINE.name, { additions: 40, deletions: 2 }],
+        ['2026-10-19 15:00', MINE.name, { additions: 10, deletions: 5 }],
+      ],
+    );
+    const merged = await tool('occurrences', { metric: 'code.pull_request_merged', from: '2026-10-20', to: '2026-10-20', form: 'list' });
+    assert.deepEqual((merged.occurrences as Listed[])[0]?.details, { additions: 51, deletions: 7 });
+
+    // Le résumé du jour : commits et pull requests, dans le calendrier ; le dépôt découvert ce jour-là.
+    const day = await tool('day_summary', { date: '2026-10-19' });
+    type Entry = { metric: string; value: number | null; top?: Record<string, { items: Ranked[] }>; discoveries?: Record<string, { items: { name: string }[] }> };
+    const metrics = day.metrics as Entry[];
+    const commitEntry = metrics.find((m) => m.metric === 'code.commit');
+    assert.equal(commitEntry?.value, 2);
+    assert.deepEqual(commitEntry?.top?.repo?.items.map((i) => [i.name, i.occurrences]), [[MINE.name, 2]]);
+    assert.deepEqual(commitEntry?.discoveries?.repo?.items.map((i) => i.name), [MINE.name]);
+    assert.equal(metrics.find((m) => m.metric === 'code.pull_request')?.value, 1);
+    // Reviews, issues, commentaires et fusions n'ont pas de valeur du jour : hors du résumé.
+    assert.equal(metrics.find((m) => m.metric === 'code.pull_request_merged'), undefined);
+
+    // Quels nouveaux dépôts ce mois-ci ? Le premier commit sur chacun, l'historique étant complet.
+    const found = await tool('discoveries', { metric: 'code.commit', level: 'repo', from: '2026-10-01', to: '2026-10-31' });
+    assert.deepEqual((found.items as { name: string }[]).map((d) => d.name), [MINE.name, ORG.name]);
+
+    const all = outputs.join('');
+    assert.ok(!all.includes(SECRET_TITLE), 'un titre visible par le MCP');
+    assert.ok(!all.includes('a1a1a1a1'), 'un sha visible par le MCP');
+    assert.ok(!all.includes('/commit/'), 'une url visible par le MCP');
+  });
+
   test('Overland : les lieux à travers la zone de confidentialité, jamais un point', async () => {
     const outputs: string[] = [];
     const tool = async (name: string, args: Record<string, unknown>) => {
@@ -482,7 +585,7 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
     const metrics = day.metrics as Entry[];
     assert.deepEqual(
       metrics.map((m) => m.metric),
-      ['coffee', 'music.listen', 'steps', 'workout', 'sleep', 'calories.burned', 'video.watch', 'stream.watch', 'game.play', 'place.visit'],
+      ['coffee', 'music.listen', 'steps', 'workout', 'sleep', 'calories.burned', 'video.watch', 'stream.watch', 'game.play', 'place.visit', 'code.commit', 'code.pull_request'],
       'l’ordre d’affichage du registre',
     );
     const steps = metrics.find((m) => m.metric === 'steps');

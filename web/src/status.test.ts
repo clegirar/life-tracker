@@ -128,7 +128,7 @@ describe("l'état d'une carte", () => {
   })
 
   it('traduit chaque raison', () => {
-    for (const reason of ['consent_required', 'consent_expired', 'profile_private', 'rate_limited', 'service_unavailable', 'ingest_failed'] as const) {
+    for (const reason of ['consent_required', 'consent_expired', 'profile_private', 'sso_required', 'rate_limited', 'service_unavailable', 'ingest_failed'] as const) {
       const card = sourceCard(source({ status: { state: 'error', reason, expires_at: null, next_run_at: null } }), NOW)
       expect(card.guidance?.title, reason).toBeTruthy()
     }
@@ -180,6 +180,76 @@ describe('le collecteur Steam', () => {
     expect(card.state).toBe('silent')
     expect(card.guidance?.title).toBe(`Aucun contact réussi avec Steam depuis plus de 6${NBSP}h : des données peuvent manquer.`)
     expect(card.guidance?.steps.join(' ')).toContain('sudo docker compose ps collector')
+  })
+})
+
+describe('le collecteur GitHub', () => {
+  const github = (overrides: Partial<SourceStatus> = {}) =>
+    source({
+      name: 'github',
+      label: 'GitHub',
+      silence_threshold_seconds: 21_600,
+      status: { state: 'ok', reason: null, expires_at: iso(200 * DAY), next_run_at: iso(10 * MIN), last_collected_at: iso(-5 * MIN) },
+      metrics: [
+        { metric: 'code.commit', label: 'Commits', last_at: iso(-3 * HOUR) },
+        { metric: 'code.pull_request', label: 'Pull requests', last_at: iso(-4 * HOUR) },
+        { metric: 'code.review', label: 'Reviews', last_at: iso(-90 * MIN) },
+        { metric: 'code.comment', label: 'Commentaires GitHub', last_at: iso(-2 * DAY) },
+      ],
+      ...overrides,
+    })
+
+  it('dit le dernier commit et la dernière activité, pas une ligne par métrique', () => {
+    const card = sourceCard(github(), NOW)
+    expect(card.state).toBe('ok')
+    expect(card.lines).toContainEqual({ label: 'Dernier commit', value: `il y a 3${NBSP}h` })
+    expect(card.lines).toContainEqual({ label: 'Dernière activité', value: `il y a 1${NBSP}h` })
+    expect(card.lines.map((line) => line.label)).not.toContain('Dernière donnée, reviews')
+    expect(card.lines).toContainEqual({ label: 'Token', value: `valable jusqu'au 24${NBSP}mai 2027` })
+  })
+
+  it("sans commit, seulement la dernière activité ; rien avant la première donnée", () => {
+    const reviews = sourceCard(github({ metrics: [{ metric: 'code.review', label: 'Reviews', last_at: iso(-20 * MIN) }] }), NOW)
+    expect(reviews.lines.map((line) => line.label)).not.toContain('Dernier commit')
+    expect(reviews.lines).toContainEqual({ label: 'Dernière activité', value: `il y a 20${NBSP}min` })
+    const empty = sourceCard(github({ metrics: [] }), NOW)
+    expect(empty.lines.map((line) => line.label)).not.toContain('Dernière activité')
+  })
+
+  it("prévient quatorze jours avant l'échéance du token, en orange", () => {
+    const card = sourceCard(github({ status: { state: 'ok', reason: null, expires_at: iso(10 * DAY), next_run_at: null } }), NOW)
+    expect(card.state).toBe('todo')
+    expect(card.lines).toContainEqual({ label: 'Token', value: `expire le 15${NBSP}nov., dans 10 jours`, warn: 'soon' })
+    expect(card.guidance?.title).toBe(`Le token GitHub expire le 15${NBSP}nov. : remplace-le avant.`)
+    expect(card.guidance?.steps.join(' ')).toContain('`GITHUB_TOKEN_EXPIRES_ON`')
+  })
+
+  it('un token refusé renvoie vers `GITHUB_API_TOKEN`', () => {
+    const card = sourceCard(github({ status: { state: 'action_required', reason: 'key_rejected', expires_at: null, next_run_at: null } }), NOW)
+    expect(card.state).toBe('todo')
+    expect(card.guidance?.title).toMatch(/^GitHub refuse le token/)
+    expect(card.guidance?.steps.join(' ')).toContain('`GITHUB_API_TOKEN`')
+    expect(card.guidance?.steps.join(' ')).toContain('`repo` et `read:org`')
+  })
+
+  it("une organisation SAML : autoriser le token pour elle, le reste continue", () => {
+    const card = sourceCard(github({ status: { state: 'action_required', reason: 'sso_required', expires_at: iso(200 * DAY), next_run_at: null } }), NOW)
+    expect(card.state).toBe('todo')
+    expect(card.guidance?.title).toMatch(/authentification unique \(SAML\) refuse le token/)
+    expect(card.guidance?.steps.join(' ')).toContain('« Configure SSO »')
+  })
+
+  it('limité, dit le budget de GitHub et le premier passage', () => {
+    const card = sourceCard(github({ status: { state: 'error', reason: 'rate_limited', expires_at: null, next_run_at: null } }), NOW)
+    expect(card.state).toBe('broken')
+    expect(card.guidance?.title).toContain('5 000 points par heure')
+    expect(card.guidance?.note).toContain('premier passage')
+  })
+
+  it('silencieux, renvoie vers le collecteur du NAS', () => {
+    const card = sourceCard(github({ silent: true, last_seen_at: iso(-8 * HOUR) }), NOW)
+    expect(card.state).toBe('silent')
+    expect(card.guidance?.title).toBe(`Aucun contact réussi avec GitHub depuis plus de 6${NBSP}h : des données peuvent manquer.`)
   })
 })
 

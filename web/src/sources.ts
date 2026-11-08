@@ -110,6 +110,21 @@ export const TRACKERS: TrackerSheet[] = [
     keys: [{ name: "Clé d'API Web Steam (`STEAM_API_KEY`)", expiry: NO_EXPIRY }, sourceToken('steam')],
   },
   {
+    id: 'github',
+    title: 'GitHub',
+    source: /^github\b/,
+    arrival:
+      "Le collecteur du NAS interroge l'API GraphQL de GitHub tous les quarts d'heure : commits de la branche par défaut de chaque dépôt lisible (privés et organisations compris), pull requests ouvertes et fusionnées, reviews, issues et commentaires. Le premier passage relit tout l'historique du compte, en reprenant où il s'est arrêté ; ensuite, chaque passe relit les 30 derniers jours. Seuls les titres et les lignes sont gardés, jamais le corps d'un message.",
+    keys: [
+      {
+        name: "Token d'accès personnel GitHub, classique, `repo` et `read:org` (`GITHUB_API_TOKEN`)",
+        expiry: "1 an au plus ; date inconnue du serveur tant que `GITHUB_TOKEN_EXPIRES_ON` manque. À autoriser pour chaque organisation à authentification unique (SAML).",
+        live: true,
+      },
+      { ...sourceToken('github'), name: 'Token de la source `github` (`GITHUB_INGEST_TOKEN`)' },
+    ],
+  },
+  {
     id: 'iphone',
     title: 'Position (iPhone)',
     source: /^iphone\b/,

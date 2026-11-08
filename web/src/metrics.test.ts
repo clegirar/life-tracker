@@ -40,6 +40,17 @@ const GARMIN = ['steps', 'workout', 'sleep', 'calories.burned']
 const registry = (ids: string[]): MonthMetric[] =>
   ids.map((metric) => ({ metric, label: metric, unit: null }))
 
+describe('la pastille « GitHub »', () => {
+  it('remplace Commits et Pull requests, et les coche ensemble', () => {
+    const chips = metricChips(registry(['game.play', 'code.commit', 'code.pull_request']))
+    expect(chips.map((chip) => chip.label)).toEqual(['game.play', 'GitHub'])
+    expect(chips[1]).toEqual({ id: 'code.commit', label: 'GitHub', tone: 'heat-github', metrics: ['code.commit', 'code.pull_request'] })
+    const available = ['game.play', 'code.commit', 'code.pull_request']
+    expect(toggleMetric(['game.play'], 'code.commit', available)).toEqual(['game.play', 'code.commit', 'code.pull_request'])
+    expect(toggleMetric(['code.commit', 'code.pull_request'], 'code.pull_request', available)).toEqual([])
+  })
+})
+
 describe('la pastille « Activité »', () => {
   it('remplace Pas, Séances, Sommeil et Calories, à la place de la première', () => {
     const chips = metricChips(registry(REGISTRY))
@@ -77,6 +88,9 @@ describe('les couleurs', () => {
   it('une métrique nouvelle prend la teinte neutre', () => {
     expect(metricTone('music.listen')).toBe('heat-music')
     expect(metricTone('the')).toBe('heat-neutral')
+    // Les deux métriques de GitHub prennent la couleur de sa carte, comme ses pastilles.
+    expect(metricTone('code.commit')).toBe('heat-github')
+    expect(metricTone('code.pull_request')).toBe('heat-github')
   })
 })
 

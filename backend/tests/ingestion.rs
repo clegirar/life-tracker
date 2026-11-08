@@ -14,6 +14,11 @@ const ALL: &[&str] = &[
     "twitch.watch",
     "steam.playtime",
     "steam.achievement",
+    "github.commit",
+    "github.pull_request",
+    "github.review",
+    "github.issue",
+    "github.comment",
 ];
 const COFFEE: &[&str] = &["coffee.cup"];
 

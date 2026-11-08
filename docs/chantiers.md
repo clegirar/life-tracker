@@ -13,6 +13,7 @@ Le [POC](poc.md) est validé depuis le 4 nov. 2026. Chaque chantier a sa section
 | Twitch | En production depuis le 6 nov. 2026 (#17, #19), extension signée et installée, vérifiée le 7 nov. ; restent le rattrapage hors ligne, le silence de la page d'état et l'affichage sur les vrais appareils |
 | Steam | En production depuis le 7 nov. 2026 (v0.12.0, corrigé en v0.12.1) ; restent une vraie partie (prévue le 14-15 nov.), les totaux, les succès au bon jour, minuit et l'affichage sur les vrais appareils |
 | Déplacements (iPhone, Overland) | Backend et web app construits le 7 nov. 2026 (branche `feat/position-iphone`) ; restent la mise en service et une vraie journée |
+| GitHub | Backend et web app construits le 7 nov. 2026 (branche `feat/github`) ; restent la mise en service et une vraie journée |
 | Twitch : import de l'historique (export RGPD) | À faire, quand je le demanderai (l'export est demandé à Twitch) |
 | Ouvrir la web app sur Internet | À faire, quand je le demanderai |
 
@@ -286,6 +287,38 @@ Ouvert le 7 nov. 2026, à ma demande (l'idée « Déplacements via géolocalisat
 - Pour le jeton de service, le MCP ne voit ni point ni visite dans la zone du domicile.
 - La source a sa carte à la page d'état et sa fiche dans Sources.
 - Après une journée réelle, la consommation de batterie est jugée acceptable.
+
+## GitHub
+
+Ouvert le 7 nov. 2026, à ma demande. Suivre mon activité GitHub jour par jour : commits, pull requests ouvertes et fusionnées, reviews, issues et commentaires, avec les lignes ajoutées et supprimées ; et pouvoir demander à Claude « combien de commits tel jour », « combien de lignes sur X cette semaine ». Les choix sont au journal des décisions de [l'architecture](architecture.md), 7 nov. 2026, et dans la fiche GitHub.
+
+**Mes choix.** Toutes les activités ; tous les dépôts, privés et organisations compris ; de chaque fait, le dépôt, le titre (première ligne du message, titre de la PR ou de l'issue) et les lignes, jamais le corps d'un message ni d'un commentaire ; le MCP voit dépôts, comptes et lignes, pas les titres ; tout l'historique, depuis la création du compte.
+
+**Accès.** L'API GraphQL de GitHub, dans un connecteur du collecteur avec sa source `github`, toutes les 15 min. Un token d'accès personnel classique, scopes `repo` et `read:org` : un token « fine-grained » n'a qu'un propriétaire, il en faudrait un par organisation, chacun approuvé par elle. Le scope `repo` permet aussi d'écrire ; le connecteur ne fait que des requêtes de lecture. Échéance d'un an au plus, donnée par `GITHUB_TOKEN_EXPIRES_ON` et rapportée à la page d'état, comme la clé Garmin.
+
+**Essai sur le vrai compte, le 7 nov. 2026** (`gh` du Mac, mêmes scopes ; des comptes seulement, jamais un titre ni un nom de dépôt) :
+
+- Compte créé en nov. 2017, contributions de 2019 à 2026, 5 organisations ; 1 point par requête simple, 5 000 par heure.
+- **`contributionsCollection`, la source du graphe de contributions, est écarté :** il cache les contributions privées même avec `repo` (1 229 « restreintes » en 2026 ; life-tracker, privé, n'y figure pas ; 394 PR contre 822 par la recherche). Le graphe de GitHub ne sert donc pas de référence de vérification.
+- **Dépôts :** `viewer.repositories` (propriétaire, collaborateur, membre d'organisation) en donne 72, dont 54 privés et 32 d'organisation, mais les organisations en ont 101 lisibles : la liste réunit `viewer.repositories`, les dépôts de chaque organisation et `repositoriesContributedTo` (dépôts publics des autres).
+- **Commits :** l'historique de la branche par défaut de chaque dépôt, filtré sur mon compte, marche sur un dépôt privé, avec dates d'auteur et de commit et lignes ajoutées et supprimées. La recherche de commits ne voit pas les dépôts privés.
+- **PR, reviews, issues :** la recherche voit le privé : 822 PR (428 privées, 742 fusionnées), 225 PR des autres relues, 218 issues. Elle plafonne à 1 000 résultats : tranches d'un an au premier passage. **Commentaires :** 216 sur des issues et des PR, aucun sur des commits.
+
+**Construit le 7 nov. 2026, backend** : migration `20261109120000_github.sql` (cinq types `github.*` ; métriques `code.commit` et `code.pull_request` dans le calendrier, `code.pull_request_merged`, `code.review`, `code.issue` et `code.comment` sans valeur du jour), interprètes, connecteur `collector::github` (`GITHUB_API_TOKEN`, `GITHUB_INGEST_TOKEN`, `GITHUB_TOKEN_EXPIRES_ON`, état `github-state.json`), la raison `sso_required` (une organisation SAML refuse le token), `GET /v1/days/{date}/github`, le contrôle de santé du collecteur. Testé contre un GitHub simulé par `backend/tests/github.rs`. Écarts : la fusion d'une PR est une métrique à part, pour ne pas compter deux fois une PR dans le calendrier ; les forks ne sont pas lus pour les commits, comme sur GitHub ; la source s'appelle `GITHUB_INGEST_TOKEN` et non `GITHUB_TOKEN`, déjà pris par `gh` et GitHub Actions.
+
+**Construit le 7 nov. 2026, web app et MCP** : carte GitHub du jour (`GithubCard.tsx`, `github.ts`, `useGithub.ts`, `fetchDayGithub`), montrée si la pastille « GitHub » est choisie : commits et lignes du jour (`+43 −3`, « Lignes inconnues pour 1 commit » plutôt qu'un zéro), une phrase pour PR, fusions, reviews, issues et commentaires, puis chaque dépôt avec ses lignes (icône, titre, heure, détail), chacune ouvrant l'objet sur github.com ; « Découvertes » seulement s'il y en a ; journées vides dites comme Steam. Couleur `--github`, un vert olive (`#5c7a00`, `#b5e048` en sombre) : le vert des contributions de GitHub est déjà celui des pas. Filtres : une seule pastille « GitHub », qui coche ensemble commits et pull requests (à ma demande, 8 nov. 2026, comme « Activité » pour Garmin) ; pluriels corrigés dans le calendrier. Page d'état : « Dernier commit », « Dernière activité », l'échéance du token (orange à 14 jours) et les consignes de `key_rejected`, `sso_required` et `rate_limited`. Fiche Sources : l'arrivée par le collecteur, le token d'accès personnel (échéance vivante) et le token de la source. MCP : aucun code, un cas de bout en bout (`occurrences` par jour et par dépôt, `top`, lignes sans titre, `day_summary`, `discoveries`). Testé par `web/e2e/github.spec.ts` et `mcp/test/e2e.test.ts`, captures iPhone et Mac, clair et sombre.
+
+**Reste à vérifier sur le NAS** : si `history(since:)` filtre bien par date de commit (sinon un vieux commit poussé tard sans rebase serait manqué) ; la durée du premier passage ; une organisation SAML.
+
+**Terminé quand**
+
+- Une journée réelle correspond à github.com (commits, PR, reviews, issues, commentaires), dans le calendrier, la carte du jour et par le MCP.
+- Le MCP répond juste à « combien de commits (PR, reviews, issues, commentaires, lignes) tel jour, telle période, sur tel dépôt ».
+- Tout l'historique est collecté, sans doublon à la relecture ; `admin rebuild` donne 0 différence.
+- Un commit poussé tard sur la branche par défaut apparaît à son jour.
+- La carte d'état passe en alerte avec un token révoqué, puis revient ; l'échéance du token s'affiche.
+- Ni token, ni titre, ni nom de dépôt dans les logs ou le dépôt ; le connecteur n'a pas accès à la base.
+- La carte est vérifiée aux largeurs iPhone et Mac, en clair et en sombre.
 
 ## Twitch : import de l'historique (export RGPD)
 

@@ -930,7 +930,8 @@ fn collect_never_receives_a_database_url_and_requires_a_connector() {
         none.contains("LASTFM_API_KEY")
             && none.contains("GARMIN_API_KEY")
             && none.contains("YOUTUBE_CLIENT_ID")
-            && none.contains("STEAM_API_KEY"),
+            && none.contains("STEAM_API_KEY")
+            && none.contains("GITHUB_API_TOKEN"),
         "{none}"
     );
     let half = run(&[("GARMIN_API_KEY", "cle-fictive")]);
@@ -947,4 +948,17 @@ fn collect_never_receives_a_database_url_and_requires_a_connector() {
         !half.contains("cle-fictive") && !half.contains("76500000000000001"),
         "{half}"
     );
+    let half = run(&[("GITHUB_API_TOKEN", "ghp_jetonfictif")]);
+    assert!(half.contains("GITHUB_INGEST_TOKEN"), "{half}");
+    assert!(!half.contains("ghp_jetonfictif"), "{half}");
+    let unreadable = run(&[
+        ("GITHUB_API_TOKEN", "ghp_jetonfictif"),
+        ("GITHUB_INGEST_TOKEN", "token-fictif"),
+        ("GITHUB_TOKEN_EXPIRES_ON", "dans un an"),
+    ]);
+    assert!(
+        unreadable.contains("GITHUB_TOKEN_EXPIRES_ON"),
+        "{unreadable}"
+    );
+    assert!(!unreadable.contains("ghp_jetonfictif"), "{unreadable}");
 }
