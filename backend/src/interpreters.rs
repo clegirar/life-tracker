@@ -194,6 +194,36 @@ pub static INTERPRETERS: &[Interpreter] = &[
         interpret: steam_achievement,
     },
     Interpreter {
+        kind: "github.commit",
+        version: 1,
+        schema_version: 1,
+        interpret: github_commit,
+    },
+    Interpreter {
+        kind: "github.pull_request",
+        version: 1,
+        schema_version: 1,
+        interpret: github_pull_request,
+    },
+    Interpreter {
+        kind: "github.review",
+        version: 1,
+        schema_version: 1,
+        interpret: github_review,
+    },
+    Interpreter {
+        kind: "github.issue",
+        version: 1,
+        schema_version: 1,
+        interpret: github_issue,
+    },
+    Interpreter {
+        kind: "github.comment",
+        version: 1,
+        schema_version: 1,
+        interpret: github_comment,
+    },
+    Interpreter {
         kind: "overland.location",
         version: 1,
         schema_version: 1,
@@ -1067,6 +1097,231 @@ fn steam_achievement(record: &Record) -> Result<Vec<Output>, InterpretError> {
             ),
         ],
         ..Event::at_envelope(record, "game.achievement")
+    })])
+}
+
+// ─── GitHub ──────────────────────────────────────────────────────────────────
+//
+// Le connecteur réduit déjà chaque fait à sa liste blanche ; l'interprète la revérifie et ne recopie
+// dans les détails que les champs listés. Jamais le corps d'un message, d'une issue ni d'un
+// commentaire : seulement les titres, que `shared_details` ne donne pas au MCP.
+
+/// Un id GraphQL (dépôt, pull request, review, issue, commentaire) : un jeton opaque et court.
+const MAX_GITHUB_ID_BYTES: usize = 128;
+/// `propriétaire/nom` : 39 + 1 + 100 octets chez GitHub.
+const MAX_GITHUB_REPO_BYTES: usize = 200;
+/// Un titre au-delà est coupé : la carte n'en montre pas plus.
+const MAX_GITHUB_TITLE_CHARS: usize = 300;
+const MAX_GITHUB_URL_BYTES: usize = 2048;
+
+/// Un texte court, sans espace ni caractère de contrôle.
+fn github_token(value: Option<&Value>, max: usize) -> Option<&str> {
+    value.and_then(Value::as_str).filter(|t| {
+        !t.is_empty() && t.len() <= max && !t.chars().any(|c| c.is_control() || c.is_whitespace())
+    })
+}
+
+/// Le dépôt d'un fait, sous son id stable, affiché `propriétaire/nom` (le nom au moment du fait).
+fn github_repo(payload: &Value, error: &'static str) -> Result<Item, InterpretError> {
+    let repo = payload.get("repo").ok_or(InterpretError(error))?;
+    let id = github_token(repo.get("id"), MAX_GITHUB_ID_BYTES).ok_or(InterpretError(error))?;
+    let name =
+        github_token(repo.get("name"), MAX_GITHUB_REPO_BYTES).ok_or(InterpretError(error))?;
+    Ok(Item::single("repo", id.to_owned(), name))
+}
+
+/// Un titre facultatif : absent ou `null`, rien ; un texte, sans ses blancs autour ni ses caractères de
+/// contrôle, coupé à `MAX_GITHUB_TITLE_CHARS` ; autre chose, une erreur.
+fn github_title(payload: &Value, error: &'static str) -> Result<Option<String>, InterpretError> {
+    match payload.get("title") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) => {
+            let clean: String = text
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
+            let title: String = clean.trim().chars().take(MAX_GITHUB_TITLE_CHARS).collect();
+            Ok(Some(title).filter(|t| !t.is_empty()))
+        }
+        Some(_) => Err(InterpretError(error)),
+    }
+}
+
+/// Une adresse facultative, en https seulement : la carte en fait un lien.
+fn github_url<'a>(
+    payload: &'a Value,
+    error: &'static str,
+) -> Result<Option<&'a str>, InterpretError> {
+    match payload.get("url") {
+        None | Some(Value::Null) => Ok(None),
+        value => github_token(value, MAX_GITHUB_URL_BYTES)
+            .filter(|u| u.starts_with("https://"))
+            .map(Some)
+            .ok_or(InterpretError(error)),
+    }
+}
+
+/// Un nombre de lignes facultatif : GitHub n'en donne pas pour un très gros commit.
+fn github_lines(
+    payload: &Value,
+    field: &str,
+    error: &'static str,
+) -> Result<Option<i64>, InterpretError> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_i64()
+            .filter(|n| (0..=i64::from(i32::MAX)).contains(n))
+            .map(Some)
+            .ok_or(InterpretError(error)),
+    }
+}
+
+/// Le numéro d'une issue ou d'une pull request dans son dépôt.
+fn github_number(value: Option<&Value>) -> Option<i64> {
+    value
+        .and_then(Value::as_i64)
+        .filter(|n| (1..=i64::from(i32::MAX)).contains(n))
+}
+
+/// L'id d'un fait : exigé, même s'il ne sert qu'à la clé, pour qu'un fait sans identité soit vu.
+fn github_require_id(payload: &Value, error: &'static str) -> Result<(), InterpretError> {
+    github_token(payload.get("id"), MAX_GITHUB_ID_BYTES)
+        .map(|_| ())
+        .ok_or(InterpretError(error))
+}
+
+/// `{repo: {id, name}, oid, authored_at, committed_at, title, additions, deletions, url}` : un commit, à
+/// sa date d'auteur (l'enveloppe). Détails : `{sha, title, additions, deletions, url}`.
+fn github_commit(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    let payload = &record.payload;
+    let repo = github_repo(payload, "github.commit: invalid repo")?;
+    let sha = payload
+        .get("oid")
+        .and_then(Value::as_str)
+        .filter(|s| (7..=64).contains(&s.len()) && s.chars().all(|c| c.is_ascii_hexdigit()))
+        .ok_or(InterpretError("github.commit: invalid oid"))?;
+    let title = github_title(payload, "github.commit: invalid title")?;
+    let additions = github_lines(payload, "additions", "github.commit: invalid additions")?;
+    let deletions = github_lines(payload, "deletions", "github.commit: invalid deletions")?;
+    let url = github_url(payload, "github.commit: invalid url")?;
+    Ok(vec![Output::Event(Event {
+        details: json!({
+            "sha": sha.to_ascii_lowercase(), "title": title, "additions": additions,
+            "deletions": deletions, "url": url,
+        }),
+        items: vec![repo],
+        ..Event::at_envelope(record, "code.commit")
+    })])
+}
+
+/// `{id, action, repo, number, title, url, additions, deletions}` : une pull request ouverte
+/// (`opened`, à sa création : `code.pull_request`) ou fusionnée (`merged`, à sa fusion :
+/// `code.pull_request_merged`, avec les lignes de la pull request à ce moment-là). Deux métriques pour
+/// que le calendrier ne compte pas deux fois une pull request fusionnée (voir la migration).
+fn github_pull_request(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    let payload = &record.payload;
+    github_require_id(payload, "github.pull_request: invalid id")?;
+    let repo = github_repo(payload, "github.pull_request: invalid repo")?;
+    let number = github_number(payload.get("number"))
+        .ok_or(InterpretError("github.pull_request: invalid number"))?;
+    let title = github_title(payload, "github.pull_request: invalid title")?;
+    let url = github_url(payload, "github.pull_request: invalid url")?;
+    let event = match payload.get("action").and_then(Value::as_str) {
+        Some("opened") => Event {
+            details: json!({ "number": number, "title": title, "url": url }),
+            items: vec![repo],
+            ..Event::at_envelope(record, "code.pull_request")
+        },
+        Some("merged") => {
+            let additions = github_lines(
+                payload,
+                "additions",
+                "github.pull_request: invalid additions",
+            )?;
+            let deletions = github_lines(
+                payload,
+                "deletions",
+                "github.pull_request: invalid deletions",
+            )?;
+            Event {
+                details: json!({
+                    "number": number, "title": title, "url": url,
+                    "additions": additions, "deletions": deletions,
+                }),
+                items: vec![repo],
+                ..Event::at_envelope(record, "code.pull_request_merged")
+            }
+        }
+        _ => return Err(InterpretError("github.pull_request: invalid action")),
+    };
+    Ok(vec![Output::Event(event)])
+}
+
+/// `{id, state, repo, number, title, url}` : une review soumise sur la pull request `number`, à sa
+/// soumission. L'état passe en minuscules : `approved`, `changes_requested`, `commented`, `dismissed`.
+fn github_review(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    let payload = &record.payload;
+    github_require_id(payload, "github.review: invalid id")?;
+    let repo = github_repo(payload, "github.review: invalid repo")?;
+    let state = match payload.get("state").and_then(Value::as_str) {
+        Some("APPROVED") => "approved",
+        Some("CHANGES_REQUESTED") => "changes_requested",
+        Some("COMMENTED") => "commented",
+        Some("DISMISSED") => "dismissed",
+        _ => return Err(InterpretError("github.review: invalid state")),
+    };
+    let number = github_number(payload.get("number"))
+        .ok_or(InterpretError("github.review: invalid number"))?;
+    let title = github_title(payload, "github.review: invalid title")?;
+    let url = github_url(payload, "github.review: invalid url")?;
+    Ok(vec![Output::Event(Event {
+        details: json!({ "state": state, "number": number, "title": title, "url": url }),
+        items: vec![repo],
+        ..Event::at_envelope(record, "code.review")
+    })])
+}
+
+/// `{id, repo, number, title, url}` : une issue ouverte, à sa création.
+fn github_issue(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    let payload = &record.payload;
+    github_require_id(payload, "github.issue: invalid id")?;
+    let repo = github_repo(payload, "github.issue: invalid repo")?;
+    let number = github_number(payload.get("number"))
+        .ok_or(InterpretError("github.issue: invalid number"))?;
+    let title = github_title(payload, "github.issue: invalid title")?;
+    let url = github_url(payload, "github.issue: invalid url")?;
+    Ok(vec![Output::Event(Event {
+        details: json!({ "number": number, "title": title, "url": url }),
+        items: vec![repo],
+        ..Event::at_envelope(record, "code.issue")
+    })])
+}
+
+/// `{id, repo, target, number, title, url}` : un commentaire, à sa création, sur une issue
+/// (`issue`), une pull request (`pull_request`), avec le numéro et le titre de la cible, ou sur un
+/// commit (`commit`), avec la première ligne de son message pour titre et sans numéro.
+fn github_comment(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    let payload = &record.payload;
+    github_require_id(payload, "github.comment: invalid id")?;
+    let repo = github_repo(payload, "github.comment: invalid repo")?;
+    let target = payload
+        .get("target")
+        .and_then(Value::as_str)
+        .filter(|t| ["issue", "pull_request", "commit"].contains(t))
+        .ok_or(InterpretError("github.comment: invalid target"))?;
+    let number = match payload.get("number") {
+        None | Some(Value::Null) if target == "commit" => None,
+        value => {
+            Some(github_number(value).ok_or(InterpretError("github.comment: invalid number"))?)
+        }
+    };
+    let title = github_title(payload, "github.comment: invalid title")?;
+    let url = github_url(payload, "github.comment: invalid url")?;
+    Ok(vec![Output::Event(Event {
+        details: json!({ "target": target, "number": number, "title": title, "url": url }),
+        items: vec![repo],
+        ..Event::at_envelope(record, "code.comment")
     })])
 }
 
@@ -2246,6 +2501,174 @@ mod tests {
                 overland_visit(&record(payload)),
                 Err(InterpretError("overland.visit: invalid visit"))
             );
+        }
+    }
+
+    fn github_repo_payload() -> Value {
+        json!({"id": "R_kgDOFICTIF", "name": "moi/depot-fictif"})
+    }
+
+    fn item_keys(event: &Event) -> Vec<(&str, &str, &str)> {
+        event
+            .items
+            .iter()
+            .map(|i| (i.level, i.item_key.as_str(), i.display.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn a_github_commit_keeps_its_whitelist_under_its_repo() {
+        let event = single_event(
+            github_commit(&record(json!({
+                "repo": github_repo_payload(), "oid": "ABCDEF0123456789abcdef0123456789abcdef01",
+                "authored_at": "2026-10-13T07:42:10Z", "committed_at": "2026-10-14T07:00:00Z",
+                "title": "  Corrige le compteur\u{0007}  ", "additions": 12, "deletions": 3,
+                "url": "https://github.com/moi/depot-fictif/commit/abc", "body": "jamais recopié",
+            })))
+            .unwrap(),
+        );
+        assert_eq!(event.metric, "code.commit");
+        assert_eq!(event.occurred_at, at("2026-10-13T07:42:10Z"), "l'enveloppe");
+        assert_eq!(event.value, None);
+        assert_eq!(
+            event.details,
+            json!({"sha": "abcdef0123456789abcdef0123456789abcdef01",
+                   "title": "Corrige le compteur", "additions": 12, "deletions": 3,
+                   "url": "https://github.com/moi/depot-fictif/commit/abc"})
+        );
+        assert_eq!(
+            item_keys(&event),
+            [("repo", "R_kgDOFICTIF", "moi/depot-fictif")]
+        );
+        // Un très gros commit sans lignes, un titre trop long coupé.
+        let event = single_event(
+            github_commit(&record(json!({
+                "repo": github_repo_payload(), "oid": "abcdef0",
+                "title": "é".repeat(400), "additions": null,
+            })))
+            .unwrap(),
+        );
+        assert_eq!(event.details["additions"], Value::Null);
+        assert_eq!(event.details["url"], Value::Null);
+        assert_eq!(
+            event.details["title"].as_str().unwrap().chars().count(),
+            MAX_GITHUB_TITLE_CHARS
+        );
+        for payload in [
+            json!({"oid": "abcdef0"}),
+            json!({"repo": {"id": "R_1"}, "oid": "abcdef0"}),
+            json!({"repo": {"id": "R 1", "name": "a/b"}, "oid": "abcdef0"}),
+            json!({"repo": github_repo_payload(), "oid": "xyz"}),
+            json!({"repo": github_repo_payload(), "oid": "abcdef0", "additions": -1}),
+            json!({"repo": github_repo_payload(), "oid": "abcdef0", "deletions": "3"}),
+            json!({"repo": github_repo_payload(), "oid": "abcdef0", "title": 3}),
+            json!({"repo": github_repo_payload(), "oid": "abcdef0", "url": "javascript:alert(1)"}),
+        ] {
+            let err = github_commit(&record(payload.clone())).unwrap_err();
+            assert!(err.0.starts_with("github.commit: invalid"), "{payload}");
+        }
+    }
+
+    #[test]
+    fn an_opened_and_a_merged_pull_request_are_two_metrics() {
+        let pr = |action: &str| {
+            json!({"id": "PR_kwFICTIF", "action": action, "repo": github_repo_payload(),
+                   "number": 42, "title": "Ajoute le tracker", "additions": 120, "deletions": 8,
+                   "url": "https://github.com/moi/depot-fictif/pull/42", "body": "jamais"})
+        };
+        let opened = single_event(github_pull_request(&record(pr("opened"))).unwrap());
+        assert_eq!(opened.metric, "code.pull_request");
+        assert_eq!(
+            opened.details,
+            json!({"number": 42, "title": "Ajoute le tracker",
+                   "url": "https://github.com/moi/depot-fictif/pull/42"})
+        );
+        let merged = single_event(github_pull_request(&record(pr("merged"))).unwrap());
+        assert_eq!(merged.metric, "code.pull_request_merged");
+        assert_eq!(merged.details["additions"], 120);
+        assert_eq!(merged.details["deletions"], 8);
+        assert_eq!(item_keys(&merged), item_keys(&opened));
+        for payload in [
+            pr("closed"),
+            json!({"action": "opened", "repo": github_repo_payload(), "number": 1}),
+            json!({"id": "PR_1", "action": "opened", "repo": github_repo_payload(), "number": 0}),
+            json!({"id": "PR_1", "action": "opened", "number": 1}),
+        ] {
+            let err = github_pull_request(&record(payload.clone())).unwrap_err();
+            assert!(
+                err.0.starts_with("github.pull_request: invalid"),
+                "{payload}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_review_an_issue_and_a_comment_keep_their_whitelists() {
+        let review = single_event(
+            github_review(&record(json!({
+                "id": "PRR_1", "state": "CHANGES_REQUESTED", "repo": github_repo_payload(),
+                "number": 7, "title": "La PR d'un autre", "body": "jamais",
+                "url": "https://github.com/moi/depot-fictif/pull/7#pullrequestreview-1",
+            })))
+            .unwrap(),
+        );
+        assert_eq!(review.metric, "code.review");
+        assert_eq!(review.details["state"], "changes_requested");
+        assert_eq!(
+            review
+                .details
+                .as_object()
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            ["number", "state", "title", "url"]
+        );
+        assert!(
+            github_review(&record(json!({"id": "PRR_1", "state": "PENDING",
+                "repo": github_repo_payload(), "number": 7})))
+            .is_err()
+        );
+
+        let issue = single_event(
+            github_issue(&record(json!({
+                "id": "I_1", "repo": github_repo_payload(), "number": 3, "title": "Un bogue",
+                "url": "https://github.com/moi/depot-fictif/issues/3", "body": "jamais",
+            })))
+            .unwrap(),
+        );
+        assert_eq!(issue.metric, "code.issue");
+        assert_eq!(
+            issue.details,
+            json!({"number": 3, "title": "Un bogue",
+                   "url": "https://github.com/moi/depot-fictif/issues/3"})
+        );
+
+        let comment = single_event(
+            github_comment(&record(json!({
+                "id": "IC_1", "repo": github_repo_payload(), "target": "pull_request",
+                "number": 7, "title": "La PR d'un autre", "body": "jamais",
+                "url": "https://github.com/moi/depot-fictif/pull/7#issuecomment-1",
+            })))
+            .unwrap(),
+        );
+        assert_eq!(comment.metric, "code.comment");
+        assert_eq!(comment.details["target"], "pull_request");
+        assert_eq!(comment.details.get("body"), None);
+        let on_commit = single_event(
+            github_comment(&record(json!({
+                "id": "CC_1", "repo": github_repo_payload(), "target": "commit",
+                "number": null, "title": "Un commit",
+            })))
+            .unwrap(),
+        );
+        assert_eq!(on_commit.details["number"], Value::Null);
+        for payload in [
+            json!({"id": "IC_1", "repo": github_repo_payload(), "target": "issue"}),
+            json!({"id": "IC_1", "repo": github_repo_payload(), "target": "discussion", "number": 1}),
+            json!({"repo": github_repo_payload(), "target": "commit"}),
+        ] {
+            let err = github_comment(&record(payload.clone())).unwrap_err();
+            assert!(err.0.starts_with("github.comment: invalid"), "{payload}");
         }
     }
 }

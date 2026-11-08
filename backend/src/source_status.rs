@@ -27,6 +27,9 @@ pub enum Reason {
     /// Le profil du service n'est pas public : Steam ne donne les succès que d'un profil dont les
     /// « Détails des jeux » sont publics. Le reste de la collecte continue.
     ProfilePrivate,
+    /// Une organisation à authentification unique (SAML) refuse le token : il faut l'autoriser pour
+    /// elle dans les réglages du token (GitHub). Le reste de la collecte continue.
+    SsoRequired,
     RateLimited,
     ServiceUnavailable,
     /// L'API d'ingestion a refusé ou n'a pas répondu.

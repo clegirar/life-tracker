@@ -599,6 +599,8 @@ async fn concurrent_starters_establish_one_active_generation() {
                "garmin.sleep": 2, "garmin.activity": 1, "garmin.activity_track": 1,
                "youtube.watch": 1, "youtube.video_info": 1, "twitch.watch": 1,
                "steam.playtime": 1, "steam.achievement": 1,
+               "github.commit": 1, "github.pull_request": 1, "github.review": 1,
+               "github.issue": 1, "github.comment": 1,
                "overland.location": 1, "overland.visit": 1})
     );
 }

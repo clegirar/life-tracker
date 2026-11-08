@@ -348,9 +348,11 @@ async fn days_before_a_metric_starts_have_no_data_and_no_alert() {
             "video.watch",
             "stream.watch",
             "game.play",
-            "place.visit"
+            "place.visit",
+            "code.commit",
+            "code.pull_request"
         ],
-        "ni déclarations, ni références, ni métriques sans valeur du jour (les succès Steam), dans l'ordre d'affichage du registre"
+        "ni déclarations, ni références, ni métriques sans valeur du jour (les succès Steam, les reviews GitHub…), dans l'ordre d'affichage du registre"
     );
     assert_eq!(month["metrics"][0]["label"], "Cafés");
 }
