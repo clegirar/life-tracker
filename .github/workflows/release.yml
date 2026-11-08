@@ -2,7 +2,7 @@
 # a changé depuis le dernier tag : si le contenu d'une image a bougé (backend/, web/, mcp/, hors tests
 # et Markdown), il calcule vX.Y.Z d'après les types de commits, et le job crée le tag et la GitHub
 # Release avec ses notes. Puis images linux/amd64 étiquetées vX.Y.Z sur ghcr.io, et déploiement sur le
-# NAS par SSH sur 127.0.0.1 : tous les jobs tournent sur les runners du NAS (deploy/runner/compose.yaml). Tout se construit depuis le commit testé par la CI (head_sha).
+# NAS par Tailscale et SSH. Tout se construit depuis le commit testé par la CI (head_sha).
 # Retour arrière : Run workflow avec un tag existant, qui ne fait que le déploiement.
 # Mise en place et secrets : docs/deploiement.md, « Déploiement automatique ».
 name: Release
@@ -34,7 +34,7 @@ jobs:
       github.event_name == 'workflow_run' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push'
-    runs-on: [self-hosted, life-tracker]
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write
@@ -68,7 +68,7 @@ jobs:
   # Retour arrière ou redéploiement : la version doit exister, tag et GitHub Release.
   existing:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: [self-hosted, life-tracker]
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       tag: ${{ steps.check.outputs.tag }}
@@ -91,7 +91,7 @@ jobs:
   images:
     needs: version
     if: needs.version.outputs.tag != ''
-    runs-on: [self-hosted, life-tracker]
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -135,7 +135,7 @@ jobs:
       !cancelled() && (
         (github.event_name == 'workflow_run' && needs.images.result == 'success') ||
         (github.event_name == 'workflow_dispatch' && needs.existing.result == 'success'))
-    runs-on: [self-hosted, life-tracker]
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     concurrency:
       group: deploy
@@ -147,10 +147,17 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || needs.existing.outputs.tag }}
           persist-credentials: false
+      # Nœud éphémère, tag:ci : l'ACL ne lui ouvre que le port SSH du NAS.
+      - uses: tailscale/github-action@064b10558093f38325e838ddea35486bdc6b1d5c # v4.4.0
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
       - name: Déploiement sur le NAS
         env:
           NAS_SSH_KEY: ${{ secrets.NAS_SSH_KEY }}
           NAS_KNOWN_HOSTS: ${{ secrets.NAS_KNOWN_HOSTS }}
+          NAS_HOST: ${{ secrets.NAS_HOST }}
           NAS_USER: ${{ secrets.NAS_USER }}
           NAS_SSH_PORT: ${{ secrets.NAS_SSH_PORT }}
           TAG: ${{ needs.version.outputs.tag || needs.existing.outputs.tag }}
@@ -159,11 +166,9 @@ jobs:
           known="$RUNNER_TEMP/known_hosts"
           trap 'rm -f "$key" "$known"' EXIT
           (umask 077 && printf '%s\n' "$NAS_SSH_KEY" >"$key")
-          # Le runner est sur le NAS (réseau de l'hôte) : SSH par 127.0.0.1, sans Tailscale. Les clés
-          # d'hôte de NAS_KNOWN_HOSTS restent la référence, réécrites pour cette adresse.
-          printf '%s\n' "$NAS_KNOWN_HOSTS" | awk -v h="[127.0.0.1]:$NAS_SSH_PORT" 'NF { $1 = h; print }' >"$known"
+          printf '%s\n' "$NAS_KNOWN_HOSTS" >"$known"
           sha="$(sha256sum compose.yaml | cut -d' ' -f1)"
           echo "deploy $TAG $sha"
           ssh -i "$key" -p "$NAS_SSH_PORT" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=30 \
             -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$known" \
-            "$NAS_USER@127.0.0.1" "deploy $TAG $sha"
+            "$NAS_USER@$NAS_HOST" "deploy $TAG $sha"

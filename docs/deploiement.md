@@ -1144,8 +1144,8 @@ Une release à la fois, jamais interrompue : deux fusions rapprochées se suiven
 
 Le job `deploy` :
 
-1. tourne sur un runner du NAS (voir « Runners sur le NAS ») ; jusqu'au 8 nov. 2026, il rejoignait le tailnet comme nœud éphémère `tag:ci`, par un client OAuth Tailscale, dont les points 1 et 2 plus bas gardent la mise en place ;
-2. se connecte en SSH au NAS par `127.0.0.1` avec une clé dédiée, les clés d'hôte de `NAS_KNOWN_HOSTS` réécrites pour cette adresse (le `from=` de la clé admet déjà la boucle locale) ;
+1. rejoint le tailnet comme nœud éphémère `tag:ci`, par un client OAuth Tailscale ;
+2. se connecte en SSH au NAS avec une clé dédiée, `known_hosts` épinglé ;
 3. envoie `deploy vX.Y.Z <sha256 de compose.yaml>`, et rien d'autre : la clé n'a pas de shell, seulement une commande forcée.
 
 Sur le NAS, `deploy.sh` (copie de `deploy/deploy.sh`), en root par une seule règle sudoers :
@@ -1157,25 +1157,6 @@ Sur le NAS, `deploy.sh` (copie de `deploy/deploy.sh`), en root par une seule rè
 - n'affiche que des noms de services et des états.
 
 Reste à la main : les copies de `compose.yaml` et de `deploy.sh`, et toute administration que demande la description de la PR (`admin rebuild`, `set-precedence`, un secret…), après le déploiement.
-
-### Runners sur le NAS
-
-Depuis le 8 nov. 2026, tous les jobs (CI, titre de PR, release) tournent sur deux runners auto-hébergés du NAS, label `life-tracker`, et plus sur ceux de GitHub : le quota gratuit d'Actions (2 000 min par mois pour un dépôt privé) ne suffisait plus. `deploy/runner/compose.yaml` les décrit, avec la raison de chaque réglage : image Ubuntu `myoung34/github-runner` (Playwright y installe les bibliothèques de Chromium par `apt`, ce que DSM ne peut pas), réseau de l'hôte, socket Docker du NAS, dossier de travail au même chemin dans le runner et sur le NAS, cache persistant (rustup, cargo, compilation par runner, npm, Chromium).
-
-**Mise en place**, sur le NAS en root (`sudo -i`) :
-
-1. `mkdir -p /volume1/docker/life-tracker-runner/{work-1,work-2,config-1,config-2,cache}`, puis y copier `deploy/runner/compose.yaml` (`scp -O -P 203`).
-2. Un jeton d'enregistrement, valable une heure, sur le Mac : `gh api -X POST repos/clegirar/life-tracker/actions/runners/registration-token --jq .token`. Sur le NAS : `umask 077 && printf 'RUNNER_TOKEN=%s\n' '<jeton>' > runner.env`.
-3. `docker compose up -d`, puis `docker compose logs -f` jusqu'à deux `Listening for Jobs`. L'inscription est gardée dans `config-N/` : vider ensuite `runner.env` (`: > runner.env`).
-4. Vérifier : `gh api repos/clegirar/life-tracker/actions/runners` les montre `online`.
-
-Les runners se mettent à jour d'eux-mêmes ; un conteneur recréé refait la mise à jour au démarrage. Monter la version de l'image de temps en temps. Retrait : `docker compose down`, puis supprimer les runners dans *Settings > Actions > Runners*.
-
-**Ce qu'il faut savoir.**
-- Le socket Docker rend tout job root sur le NAS et lui montre les conteneurs de production : la commande forcée et la règle sudoers du déploiement ne protègent plus contre le code de la CI, seulement contre une fuite de la clé SSH. Seul le code de ce dépôt privé y tourne : *Run workflows from fork pull requests* reste désactivé.
-- Les tests ne créent et ne suppriment que leurs propres conteneurs (`lt-*-test-<pid>`), sur des ports libres de `127.0.0.1` ; ils ne touchent jamais le journal de production.
-- Le Celeron est partagé avec la production : pendant une CI, l'app répond plus lentement. Deux jobs à la fois au plus, 8 Go de mémoire par runner.
-- Le premier passage compile tout (rustup, toolchain, dépendances) ; ensuite la compilation reste dans `CARGO_TARGET_DIR`, d'un job à l'autre.
 
 Dans les commandes, `MOI` est mon compte DSM d'administrateur, `NAS_HOST` le nom du NAS dans le tailnet (`nas.TAILNET.ts.net`) ou son adresse `100.x`, toujours le même partout. Aucune valeur secrète ne passe par la conversation avec Claude ni par le dépôt.
 

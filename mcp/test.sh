@@ -54,8 +54,7 @@ free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",
 
 echo "▶ Le vrai backend : migrate, sources, jeton de service, serve"
 (cd "$BACKEND" && cargo build --quiet)
-# CARGO_TARGET_DIR : la compilation persistante d'un runner du NAS (deploy/runner/compose.yaml).
-BIN="${CARGO_TARGET_DIR:-$BACKEND/target}/debug/life-tracker"
+BIN="$BACKEND/target/debug/life-tracker"
 admin() { ADMIN_DATABASE_URL="$(url tracker_admin admin-test)" "$BIN" admin "$@" 2>/dev/null; }
 MIGRATE_DATABASE_URL="$(url tracker_owner owner-test)" "$BIN" migrate >/dev/null
 LT_MCP_TEST_SERVICE_TOKEN="$(admin create-service-token mcp)"

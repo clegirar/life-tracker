@@ -65,8 +65,7 @@ free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",
 
 echo "▶ Le vrai backend : migrate, set-password, create-source, serve"
 (cd "$BACKEND" && cargo build --quiet)
-# CARGO_TARGET_DIR : la compilation persistante d'un runner du NAS (deploy/runner/compose.yaml).
-BIN="${CARGO_TARGET_DIR:-$BACKEND/target}/debug/life-tracker"
+BIN="$BACKEND/target/debug/life-tracker"
 ARTIFACTS="$WEB/e2e-artifacts"
 mkdir -p "$ARTIFACTS"
 LOG="$ARTIFACTS/backend.log"
