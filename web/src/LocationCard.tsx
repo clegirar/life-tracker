@@ -20,6 +20,7 @@ import { MoreButton } from './MusicCard'
 import { visibleRows } from './music'
 import type { useLocations } from './useLocations'
 import { useMinute } from './useMinute'
+import { CardSkeleton } from './CardSkeleton'
 
 // Leaflet et ses tuiles ne se chargent qu'à l'approche de la carte, comme pour les séances.
 const LocationMap = lazy(() => import('./RouteMap').then((module) => ({ default: module.LocationMap })))
@@ -106,7 +107,7 @@ export function LocationCard({ date, today, state, health }: Props) {
         </p>
       )}
 
-      {!locations && !loadFailed && <p className="empty">Chargement…</p>}
+      {!locations && !loadFailed && <CardSkeleton rows={7} />}
       {locations && kind === 'uncovered' && (
         <p className="empty" data-testid="location-empty">
           {uncoveredText(date, today, health)}

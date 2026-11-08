@@ -1,12 +1,14 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { fetchDay, logout, Unauthorized } from './api'
+import { logout, Unauthorized } from './api'
 import { AuthorizationPage } from './AuthorizationPage'
 import { monthOf } from './calendar'
 import { DayPage } from './DayPage'
 import { Login } from './Login'
-import { useMetricSelection } from './metrics'
+import { metricShown, useMetricSelection } from './metrics'
 import { MonthPage } from './MonthPage'
+import { dayQuery, onSessionLost as onQuerySessionLost, useKnownMetrics } from './queries'
 import { SOURCES, STATUS, TODAY, routePath, useRoute, type Route } from './route'
 import { MenuButton, Sidebar, useWide } from './Sidebar'
 import { needsAction, sourceCard } from './status'
@@ -14,21 +16,14 @@ import { SourcesPage } from './SourcesPage'
 import { StatusPage } from './StatusPage'
 import { parisDate } from './time'
 import { useCoffee } from './useCoffee'
-import { useMonth } from './useMonth'
-import { useActivity } from './useActivity'
-import { useLocations } from './useLocations'
 import { useMusic } from './useMusic'
 import { useSourcesStatus } from './useSourcesStatus'
-import { useSteam } from './useSteam'
-import { useGithub } from './useGithub'
-import { useTwitch } from './useTwitch'
-import { useVideo } from './useVideo'
-import { useYear } from './useYear'
 import { YearPage } from './YearPage'
 
 type Auth = 'unknown' | 'in' | 'out' | 'expired'
 
 export function App() {
+  const queryClient = useQueryClient()
   const [auth, setAuth] = useState<Auth>('unknown')
   const [now, setNow] = useState(() => Date.now())
   const today = parisDate(now)
@@ -53,35 +48,31 @@ export function App() {
     }
   }, [])
 
-  const onSessionLost = useCallback(() => setAuth('expired'), [])
+  // Une session perdue en cours de route ; avant la sonde de connexion, rien à perdre.
+  const onSessionLost = useCallback(() => setAuth((current) => (current === 'in' ? 'expired' : current)), [])
+  // Toute lecture refusée pour session perdue le dit ici.
+  useEffect(() => onQuerySessionLost(onSessionLost), [onSessionLost])
 
-  const shownMonth = route.page === 'month' ? route.month : null
-  // Vit au-dessus de l'écran de connexion : une écriture refusée par une session expirée y survit.
-  const coffee = useCoffee(date, onSessionLost, auth === 'in')
-  const music = useMusic(date, onSessionLost, auth === 'in')
-  const activity = useActivity(date, onSessionLost, auth === 'in')
-  const video = useVideo(date, onSessionLost, auth === 'in')
-  const twitch = useTwitch(date, onSessionLost, auth === 'in')
-  const steam = useSteam(date, onSessionLost, auth === 'in')
-  const github = useGithub(date, onSessionLost, auth === 'in')
-  const locations = useLocations(date, onSessionLost, auth === 'in')
-  // Le mois affiché, ou celui du jour : la page du jour y lit si sa journée est incomplète.
-  const calendar = useMonth(shownMonth ?? monthOf(date), onSessionLost, auth === 'in', shownMonth)
-  // L'année n'est lue que vue ouverte : la rouvrir la relit.
-  const shownYear = route.page === 'year' ? route.year : today.slice(0, 4)
-  const year = useYear(shownYear, onSessionLost, auth === 'in' && route.page === 'year')
-  // Lu dès la connexion : le point du menu en dépend. Relu à chaque ouverture de la page d'état ou des
-  // sources, qui en montre les échéances.
-  const sources = useSourcesStatus(onSessionLost, auth === 'in', route.page === 'status' || route.page === 'sources')
+  // Les lectures du jour ne tournent que sur sa page, et seulement pour les cartes affichées. Le café et
+  // la musique vivent ici, au-dessus de l'écran de connexion : une écriture refusée par une session
+  // expirée y survit. Les autres cartes, le mois et l'année lisent depuis leur page.
+  const shows = metricShown(metricSelection.stored, useKnownMetrics().map((m) => m.metric))
+  const onDay = auth === 'in' && route.page === 'day'
+  const coffee = useCoffee(date, onSessionLost, onDay && shows('coffee'))
+  const music = useMusic(date, onSessionLost, onDay && shows('music.listen'))
+  // Lu dès la connexion : le point du menu en dépend. Les pages d'état et des sources le relisent à
+  // chaque ouverture.
+  const sources = useSourcesStatus(auth === 'in', false)
   const attention = (sources.status?.sources ?? []).some((source) => needsAction(sourceCard(source, now).state))
 
+  // La sonde lit les cafés d'aujourd'hui dans le cache : la page du jour les a déjà en arrivant.
   // Une panne n'est pas une déconnexion : la page du jour saura la signaler.
   useEffect(() => {
-    fetchDay(parisDate(Date.now())).then(
+    queryClient.fetchQuery(dayQuery(parisDate(Date.now()))).then(
       () => setAuth('in'),
       (error) => setAuth(error instanceof Unauthorized ? 'out' : 'in'),
     )
-  }, [])
+  }, [queryClient])
 
   const closeMenu = useCallback(() => {
     // Le focus revient au bouton qui a ouvert le tiroir, une fois la page sortie de `inert`.
@@ -108,36 +99,17 @@ export function App() {
   if (route.page === 'authorization') {
     page = <AuthorizationPage menu={menu} statusHref={routePath(STATUS)} onStatus={() => go(STATUS)} onSessionLost={onSessionLost} />
   } else if (route.page === 'status') {
-    page = (
-      <StatusPage
-        menu={menu}
-        now={now}
-        data={sources.status}
-        loadFailed={sources.loadFailed}
-        onReload={() => void sources.reload()}
-      />
-    )
+    page = <StatusPage menu={menu} now={now} />
   } else if (route.page === 'sources') {
-    page = (
-      <SourcesPage
-        menu={menu}
-        now={now}
-        data={sources.status}
-        loadFailed={sources.loadFailed}
-        onReload={() => void sources.reload()}
-      />
-    )
+    page = <SourcesPage menu={menu} now={now} />
   } else if (route.page === 'year') {
     page = (
       <YearPage
         menu={menu}
         year={route.year}
         today={today}
-        data={year.year}
-        loadFailed={year.loadFailed}
         onYear={(next) => go({ page: 'year', year: next })}
         onOpenMonth={(month) => go({ page: 'month', month })}
-        onReload={() => void year.reload()}
         storedMetrics={metricSelection.stored}
         onToggleMetric={metricSelection.toggle}
         onSetAllMetrics={metricSelection.setAll}
@@ -151,11 +123,7 @@ export function App() {
         month={route.month}
         today={today}
         selected={date}
-        data={calendar.month}
-        loadFailed={calendar.loadFailed}
-        health={music.health}
         onMonth={(month) => go({ page: 'month', month })}
-        onReload={() => void calendar.reload()}
         onOpenDay={openDay}
         storedMetrics={metricSelection.stored}
         onToggleMetric={metricSelection.toggle}
@@ -170,19 +138,11 @@ export function App() {
         today={today}
         onSelect={openDay}
         onShowMonth={() => go({ page: 'month', month: monthOf(date) })}
-        calendarDay={calendar.month?.days.find((day) => day.date === date) ?? null}
-        metrics={calendar.month?.metrics ?? []}
         storedMetrics={metricSelection.stored}
         onToggleMetric={metricSelection.toggle}
         onSetAllMetrics={metricSelection.setAll}
         coffee={coffee}
         music={music}
-        activity={activity}
-        video={video}
-        twitch={twitch}
-        steam={steam}
-        github={github}
-        locations={locations}
       />
     )
   }
@@ -206,21 +166,14 @@ export function App() {
         attention={attention}
         onLogout={async () => {
           await logout().catch(() => undefined)
+          // L'écran de connexion d'abord : plus aucune lecture ne part, puis le cache est vidé.
+          setAuth('out')
+          queryClient.clear()
           coffee.reset()
           music.reset()
-          activity.reset()
-          video.reset()
-          twitch.reset()
-          steam.reset()
-          github.reset()
-          locations.reset()
-          calendar.reset()
-          year.reset()
-          sources.reset()
           setLastDay(null)
           setMenuOpen(false)
           navigate(TODAY, true)
-          setAuth('out')
         }}
       />
       {/* `inert` : le tiroir ouvert est seul à recevoir le focus et les touchers. */}

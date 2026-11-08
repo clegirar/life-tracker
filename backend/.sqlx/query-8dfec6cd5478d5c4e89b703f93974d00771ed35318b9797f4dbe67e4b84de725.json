@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH spans AS (\n             SELECT e.seq, e.ordinal, e.occurred_at, i.item_key, i.display,\n                    tstzrange(e.occurred_at,\n                              e.occurred_at + (e.details->>'played_ms')::bigint * interval '1 millisecond') AS span\n             FROM derived.live_events e\n             LEFT JOIN derived.event_items i\n               ON i.generation = e.generation AND i.seq = e.seq AND i.ordinal = e.ordinal\n              AND i.level = $4\n             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n               AND e.metric = $1\n               AND e.occurred_at >= ($2::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n                                    - $7::bigint * interval '1 millisecond'\n               AND e.occurred_at < (($3::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n               AND (e.details->>'played_ms')::bigint > 0\n               AND ($5::text IS NULL OR i.item_key = $5)\n           ),\n           covered AS (\n             SELECT d.day, CASE WHEN $6::bool THEN s.item_key END AS item_key,\n                    range_agg(s.span * d.bounds) AS covered,\n                    count(DISTINCT (s.seq, s.ordinal)) FILTER (WHERE s.occurred_at <@ d.bounds) AS events,\n                    (array_agg(s.display ORDER BY s.occurred_at DESC, s.seq DESC))[1] AS name,\n                    (array_agg(s.seq ORDER BY s.occurred_at DESC, s.seq DESC))[1] AS seq,\n                    (array_agg(s.ordinal ORDER BY s.occurred_at DESC, s.seq DESC))[1] AS ordinal\n             FROM spans s\n             CROSS JOIN LATERAL (\n               SELECT x::date AS day,\n                      tstzrange(x AT TIME ZONE (SELECT timezone FROM core.settings),\n                                (x + interval '1 day') AT TIME ZONE (SELECT timezone FROM core.settings)) AS bounds\n               FROM generate_series((lower(s.span) AT TIME ZONE (SELECT timezone FROM core.settings))::date::timestamp,\n                                    (upper(s.span) AT TIME ZONE (SELECT timezone FROM core.settings))::date::timestamp,\n                                    interval '1 day') AS x\n             ) d\n             WHERE d.day BETWEEN $2::date AND $3::date\n               AND s.span && d.bounds\n             GROUP BY 1, 2\n           )\n           SELECT day AS \"day!\", item_key AS \"item_key?\", name AS \"name?\", seq AS \"seq?\", ordinal AS \"ordinal?\", events AS \"events!\",\n                  (SELECT sum(extract(epoch FROM upper(r) - lower(r))) FROM unnest(covered) AS r)::float8 AS \"seconds!\"\n           FROM covered\n           ORDER BY day, item_key",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "day!",
+        "type_info": "Date",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "item_key?",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "name?",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "seq?",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "ordinal?",
+        "type_info": "Int2",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "events!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "seconds!",
+        "type_info": "Float8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Date",
+        "Date",
+        "Text",
+        "Text",
+        "Bool",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "8dfec6cd5478d5c4e89b703f93974d00771ed35318b9797f4dbe67e4b84de725"
+}

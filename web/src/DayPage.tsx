@@ -1,23 +1,24 @@
-import { useRef, useState, type ReactNode } from 'react'
-import type { MonthDay, MonthMetric } from './api'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ACTIVITY_METRICS, ActivityCard } from './ActivityCard'
-import type { useActivity } from './useActivity'
+import { useActivity } from './useActivity'
 import { LocationCard } from './LocationCard'
-import type { useLocations } from './useLocations'
+import { useLocations } from './useLocations'
 import { monthName, monthOf } from './calendar'
 import type { Op } from './reconcile'
 import { isAdd } from './reconcile'
 import { MetricFilters, NO_METRIC } from './MetricFilters'
-import { effectiveSelection } from './metrics'
+import { effectiveSelection, metricShown } from './metrics'
 import { musicAlert } from './music'
 import { MusicCard } from './MusicCard'
 import type { useMusic } from './useMusic'
+import { useHealth, useKnownMetrics, usePrefetch } from './queries'
 import { addDays, dayTitle, emptyLabel, longDate, parisInstant, parisTime } from './time'
 import type { useCoffee } from './useCoffee'
-import type { useSteam } from './useSteam'
-import type { useGithub } from './useGithub'
-import type { useTwitch } from './useTwitch'
-import type { useVideo } from './useVideo'
+import { useMonth } from './useMonth'
+import { useSteam } from './useSteam'
+import { useGithub } from './useGithub'
+import { useTwitch } from './useTwitch'
+import { useVideo } from './useVideo'
 import { SteamCard } from './SteamCard'
 import { GithubCard } from './GithubCard'
 import { useMasonry } from './useMasonry'
@@ -31,22 +32,12 @@ interface Props {
   today: string
   onSelect: (date: string) => void
   onShowMonth: () => void
-  /** La journée vue par le mois : ses erreurs. `null` tant que le mois n'est pas lu. */
-  calendarDay: MonthDay | null
-  /** Les métriques du registre, lues avec le mois ; vide tant qu'il n'est pas lu. */
-  metrics: MonthMetric[]
   /** Le choix gardé, commun au mois, à l'année et au jour. */
   storedMetrics: string[] | null
   onToggleMetric: (metric: string, available: string[]) => void
   onSetAllMetrics: (available: string[], on: boolean) => void
   coffee: ReturnType<typeof useCoffee>
   music: ReturnType<typeof useMusic>
-  activity: ReturnType<typeof useActivity>
-  video: ReturnType<typeof useVideo>
-  twitch: ReturnType<typeof useTwitch>
-  steam: ReturnType<typeof useSteam>
-  github: ReturnType<typeof useGithub>
-  locations: ReturnType<typeof useLocations>
 }
 
 function Chevron({ d }: { d: string }) {
@@ -73,19 +64,11 @@ export function DayPage({
   today,
   onSelect,
   onShowMonth,
-  calendarDay,
-  metrics,
   storedMetrics,
   onToggleMetric,
   onSetAllMetrics,
   coffee,
   music,
-  activity,
-  video,
-  twitch,
-  steam,
-  github,
-  locations,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [picked, setPicked] = useState('12:00')
@@ -94,13 +77,34 @@ export function DayPage({
   const cards = useMasonry<HTMLDivElement>()
   const isToday = date === today
   const { cups } = coffee
+  // Les métriques de la dernière lecture d'un mois ou d'une année : les filtres sont là d'emblée, et une
+  // carte décochée n'apparaît pas le temps que le mois se lise.
+  const metrics = useKnownMetrics()
   const available = metrics.map((m) => m.metric)
   const selected = effectiveSelection(storedMetrics, available)
-  // Une métrique que les filtres ne connaissent pas (le mois n'est pas encore lu) reste affichée.
-  const shows = (metric: string) => !available.includes(metric) || selected.includes(metric)
+  const shows = metricShown(storedMetrics, available)
   const none = available.length > 0 && selected.length === 0
   const activityShown = ACTIVITY_METRICS.filter(shows)
-  const alert = shows('music.listen') ? musicAlert(music.health) : null
+  // La journée vue par le mois : ses erreurs, et ce que disent les cartes d'un jour sans données.
+  const calendarDay = useMonth(monthOf(date)).month?.days.find((day) => day.date === date) ?? null
+  const health = useHealth()
+  const alert = shows('music.listen') ? musicAlert(health) : null
+  // Chaque carte ne lit que si elle est affichée.
+  const activity = useActivity(date, activityShown.length > 0)
+  const video = useVideo(date, shows('video.watch'))
+  const twitch = useTwitch(date, shows('stream.watch'))
+  const steam = useSteam(date, shows('game.play'))
+  const github = useGithub(date, shows('code.commit') || shows('code.pull_request'))
+  const locations = useLocations(date, shows('place.visit'))
+  const prefetch = usePrefetch()
+  const previous = addDays(date, -1)
+  const next = addDays(date, 1)
+
+  // Les cafés de la veille et du lendemain se lisent d'avance ; les cartes, elles, attendent qu'on y aille.
+  useEffect(() => {
+    prefetch.day(previous)
+    if (next <= today) prefetch.day(next)
+  }, [previous, next, today, prefetch])
 
   function select(next: string) {
     setPickerOpen(false)
@@ -150,10 +154,10 @@ export function DayPage({
           <h1 className="title">{dayTitle(date, today)}</h1>
         </div>
         <nav className="nav" aria-label="Changer de jour">
-          <button type="button" className="round" aria-label="Jour précédent" onClick={() => select(addDays(date, -1))}>
+          <button type="button" className="round" aria-label="Jour précédent" onClick={() => select(previous)}>
             <Chevron d="M15 5l-7 7 7 7" />
           </button>
-          <button type="button" className="round" aria-label="Jour suivant" disabled={isToday} onClick={() => select(addDays(date, 1))}>
+          <button type="button" className="round" aria-label="Jour suivant" disabled={isToday} onClick={() => select(next)}>
             <Chevron d="M9 5l7 7-7 7" />
           </button>
         </nav>
@@ -279,16 +283,16 @@ export function DayPage({
           </section>
         )}
 
-        {activityShown.length > 0 && <ActivityCard date={date} today={today} state={activity} health={music.health} shown={activityShown} />}
-        {shows('music.listen') && <MusicCard date={date} today={today} state={music} />}
-        {shows('video.watch') && <VideoCard date={date} today={today} state={video} health={music.health} />}
-        {shows('stream.watch') && <TwitchCard date={date} today={today} state={twitch} health={music.health} calendarDay={calendarDay} />}
+        {activityShown.length > 0 && <ActivityCard date={date} today={today} state={activity} health={health} shown={activityShown} />}
+        {shows('music.listen') && <MusicCard date={date} today={today} state={music} health={health} />}
+        {shows('video.watch') && <VideoCard date={date} today={today} state={video} health={health} />}
+        {shows('stream.watch') && <TwitchCard date={date} today={today} state={twitch} health={health} calendarDay={calendarDay} />}
         {/* Les succès n'ont pas de filtre : la carte les montre avec le temps de jeu. */}
-        {shows('game.play') && <SteamCard date={date} today={today} state={steam} health={music.health} calendarDay={calendarDay} />}
+        {shows('game.play') && <SteamCard date={date} today={today} state={steam} health={health} calendarDay={calendarDay} />}
         {/* Reviews, issues et commentaires n'ont pas de filtre : la carte les montre avec les commits et les pull requests. */}
-        {(shows('code.commit') || shows('code.pull_request')) && <GithubCard date={date} today={today} state={github} health={music.health} calendarDay={calendarDay} />}
+        {(shows('code.commit') || shows('code.pull_request')) && <GithubCard date={date} today={today} state={github} health={health} calendarDay={calendarDay} />}
         {/* La trace n'a pas de filtre (`location.point` est hors du calendrier) : elle suit les lieux. */}
-        {shows('place.visit') && <LocationCard date={date} today={today} state={locations} health={music.health} />}
+        {shows('place.visit') && <LocationCard date={date} today={today} state={locations} health={health} />}
       </div>
     </main>
   )

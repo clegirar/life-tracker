@@ -1,21 +1,21 @@
-import type { ReactNode } from 'react'
-import type { Year } from './api'
+import { useEffect, type ReactNode } from 'react'
 import { monthGrid, monthName, monthOf } from './calendar'
 import { DayDots, MetricsLegend } from './DayDots'
 import { HeatLegend, MetricFilters } from './MetricFilters'
 import { dayActivity, effectiveSelection, metricTone } from './metrics'
+import { useKnownMetrics, usePrefetch } from './queries'
+import { useReveal } from './useReveal'
+import { useYear } from './useYear'
 import { heatLevel, monthSummary, periodThresholds, yearMonths } from './year'
+import { Spinner } from './Spinner'
 
 interface Props {
   /** Le bouton du tiroir, sur iPhone. */
   menu: ReactNode
   year: string
   today: string
-  data: Year | null
-  loadFailed: boolean
   onYear: (year: string) => void
   onOpenMonth: (month: string) => void
-  onReload: () => void
   /** Le choix gardé, commun au mois, à l'année et au jour. */
   storedMetrics: string[] | null
   onToggleMetric: (metric: string, available: string[]) => void
@@ -36,33 +36,65 @@ function sixWeeks(month: string): (string | null)[] {
   return [...cells, ...Array.from({ length: 42 - cells.length }, () => null)]
 }
 
-export function YearPage({ menu, year, today, data, loadFailed, onYear, onOpenMonth, onReload, storedMetrics, onToggleMetric, onSetAllMetrics }: Props) {
-  const metrics = data?.metrics ?? []
+export function YearPage({ menu, year, today, onYear, onOpenMonth, storedMetrics, onToggleMetric, onSetAllMetrics }: Props) {
+  const { year: shown, loadFailed, reload } = useYear(year)
+  const prefetch = usePrefetch()
+  const pending = shown === null
+  const reveal = useReveal(year, !pending)
+  // Les métriques de la dernière lecture, de cette année ou d'une autre : les filtres, la légende et le
+  // type de case (intensité ou points) ne changent pas à l'arrivée des valeurs.
+  const metrics = useKnownMetrics()
   const available = metrics.map((m) => m.metric)
   const selected = effectiveSelection(storedMetrics, available)
   const chosen = metrics.filter((m) => selected.includes(m.metric))
   const single = chosen.length === 1 ? chosen[0].metric : null
   // Tout décoché : ni intensité ni point, et l'invitation à la place de la légende.
   const none = available.length > 0 && selected.length === 0
-  const shown = data && String(data.year) === year ? data : null
   const days = new Map((shown?.days ?? []).map((day) => [day.date, day]))
   // Une métrique : l'intensité, par quartiles de l'année. Plusieurs : des points, comme dans le mois.
   const thresholds = single ? periodThresholds(shown?.days ?? [], single, today) : []
   const isCurrent = year === today.slice(0, 4)
   const current = monthOf(today)
+  const previous = String(Number(year) - 1)
+  const next = String(Number(year) + 1)
+
+  // L'année lue, ses voisines se lisent d'avance (la suivante seulement si elle a commencé).
+  useEffect(() => {
+    if (pending) return
+    prefetch.year(previous)
+    if (!isCurrent) prefetch.year(next)
+  }, [pending, previous, next, isCurrent, prefetch])
 
   return (
     <main className="page year-page">
       {menu && <div className="topbar">{menu}</div>}
       <header className="header">
         <div className="header-text">
-          <h1 className="title">{year}</h1>
+          <h1 className="title">
+            {year}
+            {pending && <Spinner />}
+          </h1>
         </div>
         <nav className="nav" aria-label="Changer d'année">
-          <button type="button" className="round" aria-label="Année précédente" onClick={() => onYear(String(Number(year) - 1))}>
+          <button
+            type="button"
+            className="round"
+            aria-label="Année précédente"
+            onPointerEnter={() => prefetch.year(previous)}
+            onPointerDown={() => prefetch.year(previous)}
+            onClick={() => onYear(previous)}
+          >
             <Chevron d="M15 5l-7 7 7 7" />
           </button>
-          <button type="button" className="round" aria-label="Année suivante" disabled={isCurrent} onClick={() => onYear(String(Number(year) + 1))}>
+          <button
+            type="button"
+            className="round"
+            aria-label="Année suivante"
+            disabled={isCurrent}
+            onPointerEnter={() => prefetch.year(next)}
+            onPointerDown={() => prefetch.year(next)}
+            onClick={() => onYear(next)}
+          >
             <Chevron d="M9 5l7 7-7 7" />
           </button>
         </nav>
@@ -71,7 +103,7 @@ export function YearPage({ menu, year, today, data, loadFailed, onYear, onOpenMo
       {loadFailed && (
         <div className="notice" role="alert">
           <span>Impossible d'actualiser cette année.</span>
-          <button type="button" className="notice-action" onClick={onReload}>
+          <button type="button" className="notice-action" onClick={() => void reload()}>
             Réessayer
           </button>
         </div>
@@ -84,6 +116,8 @@ export function YearPage({ menu, year, today, data, loadFailed, onYear, onOpenMo
         data-testid="year-grid"
         data-mode={none ? 'aucune' : single ? 'une' : 'plusieurs'}
         data-metrics={selected.join(' ')}
+        aria-busy={pending}
+        data-reveal={reveal ? '' : undefined}
       >
         {yearMonths(year).map((month) => {
           const future = month > current

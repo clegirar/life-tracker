@@ -4,6 +4,7 @@ import { integerText, isEmpty, kmText, sleepHeartRate, sleepSpan, sleepStages, s
 import { PACE_CLASSES } from './pace'
 import type { PaceScale } from './RouteMap'
 import type { useActivity } from './useActivity'
+import { CardSkeleton } from './CardSkeleton'
 
 // Leaflet et ses tuiles ne se chargent qu'à l'approche d'une carte : le reste de l'app n'en paie rien.
 const RouteMap = lazy(() => import('./RouteMap'))
@@ -134,7 +135,7 @@ export function ActivityCard({ date, today, state, health, shown }: Props) {
         </p>
       )}
 
-      {!activity && !loadFailed && <p className="empty">Chargement…</p>}
+      {!activity && !loadFailed && <CardSkeleton rows={5} />}
       {activity && isEmpty(activity) && (
         <p className="empty">{date === today ? "Pas encore de données Garmin aujourd'hui." : 'Pas de données Garmin ce jour-là.'}</p>
       )}

@@ -118,6 +118,58 @@ impl Period {
     }
 }
 
+/// Ce qu'une source couvre d'une métrique : sa première et sa dernière donnée vivante, et leurs jours
+/// de Paris.
+pub struct SourceSpan {
+    pub metric: String,
+    pub source: String,
+    pub first_at: DateTime<Utc>,
+    pub last_at: DateTime<Utc>,
+    pub first_day: NaiveDate,
+    pub last_day: NaiveDate,
+}
+
+/// La couverture de chaque source pour ces métriques, de la plus ancienne à la plus récente. Lue sur
+/// `derived.live_events`, donc ce que la lecture montre vraiment : une source qui ne fait plus foi
+/// s'arrête là où la suivante commence, sans faux trou. Chaque couple (métrique, source) se lit au bord
+/// de l'index `(generation, metric, source_id, occurred_at)`, au premier et au dernier événement vivant :
+/// quelques millisecondes, au lieu d'un parcours de tout l'historique (journal des décisions de
+/// l'architecture, 8 nov. 2026). Un couple sans événement ne donne rien.
+pub async fn source_spans(
+    pool: &PgPool,
+    metrics: &[String],
+) -> std::result::Result<Vec<SourceSpan>, sqlx::Error> {
+    sqlx::query_as!(
+        SourceSpan,
+        r#"SELECT m.metric AS "metric!", s.name AS "source!",
+                  f.at AS "first_at!", l.at AS "last_at!",
+                  (f.at AT TIME ZONE (SELECT timezone FROM core.settings))::date AS "first_day!",
+                  (l.at AT TIME ZONE (SELECT timezone FROM core.settings))::date AS "last_day!"
+           FROM unnest($1::text[]) AS m(metric)
+           CROSS JOIN core.sources s
+           CROSS JOIN LATERAL (
+             SELECT e.occurred_at AS at
+             FROM derived.live_events e
+             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+               AND e.metric = m.metric AND e.source_id = s.id
+             ORDER BY e.occurred_at
+             LIMIT 1
+           ) f
+           CROSS JOIN LATERAL (
+             SELECT e.occurred_at AS at
+             FROM derived.live_events e
+             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+               AND e.metric = m.metric AND e.source_id = s.id
+             ORDER BY e.occurred_at DESC
+             LIMIT 1
+           ) l
+           ORDER BY f.at, m.metric, s.name"#,
+        metrics,
+    )
+    .fetch_all(pool)
+    .await
+}
+
 /// `AAAA-MM-JJ` strict.
 pub fn parse_day(value: &str) -> Option<NaiveDate> {
     (value.len() == 10)
@@ -648,7 +700,10 @@ pub struct Measured {
 /// événements de cet élément ; `by_item` donne une ligne par élément du niveau `level` (et une pour les
 /// événements sans élément), son temps étant l'union de ses seuls intervalles. Un événement dure
 /// `MAX_MEASURED_MS` au plus : chercher ceux commencés ce temps avant la période suffit, et garde
-/// l'index `(generation, metric, occurred_at)`. Seuls les jours qui ont du temps sont rendus.
+/// l'index `(generation, metric, occurred_at)`. Chaque intervalle est rapproché des seuls jours de Paris
+/// qu'il touche (un ou deux), et non de chaque jour de la période : une année de Twitch passe de 1,9 s à
+/// 37 ms (journal des décisions de l'architecture, 8 nov. 2026). Seuls les jours qui ont du temps sont
+/// rendus.
 pub async fn measured(
     pool: &PgPool,
     metric: &str,
@@ -674,12 +729,6 @@ pub async fn measured(
                AND (e.details->>'played_ms')::bigint > 0
                AND ($5::text IS NULL OR i.item_key = $5)
            ),
-           days AS (
-             SELECT d::date AS day,
-                    tstzrange(d AT TIME ZONE (SELECT timezone FROM core.settings),
-                              (d + interval '1 day') AT TIME ZONE (SELECT timezone FROM core.settings)) AS bounds
-             FROM generate_series($2::date::timestamp, $3::date::timestamp, interval '1 day') AS d
-           ),
            covered AS (
              SELECT d.day, CASE WHEN $6::bool THEN s.item_key END AS item_key,
                     range_agg(s.span * d.bounds) AS covered,
@@ -687,8 +736,17 @@ pub async fn measured(
                     (array_agg(s.display ORDER BY s.occurred_at DESC, s.seq DESC))[1] AS name,
                     (array_agg(s.seq ORDER BY s.occurred_at DESC, s.seq DESC))[1] AS seq,
                     (array_agg(s.ordinal ORDER BY s.occurred_at DESC, s.seq DESC))[1] AS ordinal
-             FROM days d
-             JOIN spans s ON s.span && d.bounds
+             FROM spans s
+             CROSS JOIN LATERAL (
+               SELECT x::date AS day,
+                      tstzrange(x AT TIME ZONE (SELECT timezone FROM core.settings),
+                                (x + interval '1 day') AT TIME ZONE (SELECT timezone FROM core.settings)) AS bounds
+               FROM generate_series((lower(s.span) AT TIME ZONE (SELECT timezone FROM core.settings))::date::timestamp,
+                                    (upper(s.span) AT TIME ZONE (SELECT timezone FROM core.settings))::date::timestamp,
+                                    interval '1 day') AS x
+             ) d
+             WHERE d.day BETWEEN $2::date AND $3::date
+               AND s.span && d.bounds
              GROUP BY 1, 2
            )
            SELECT day AS "day!", item_key AS "item_key?", name AS "name?", seq AS "seq?", ordinal AS "ordinal?", events AS "events!",

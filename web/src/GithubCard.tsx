@@ -24,6 +24,7 @@ import { MoreButton } from './MusicCard'
 import { visibleRows } from './music'
 import type { useGithub } from './useGithub'
 import { OutIcon } from './VideoCard'
+import { CardSkeleton } from './CardSkeleton'
 
 interface Props {
   date: string
@@ -181,7 +182,7 @@ export function GithubCard({ date, today, state, health, calendarDay }: Props) {
         </p>
       )}
 
-      {!github && !loadFailed && <p className="empty">Chargement…</p>}
+      {!github && !loadFailed && <CardSkeleton rows={4} />}
       {github && !active && <p className="empty">{githubEmptyText(date, today, health, calendarDay ? coveredValue(calendarDay.values) : undefined)}</p>}
 
       {active && (

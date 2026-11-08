@@ -143,6 +143,66 @@ test('un jour passé n’est jamais gardé : une donnée tardive le change', asy
   await clearDay(request, cookie, date)
 })
 
+const previousMonth = (month: string) => {
+  const [y, m] = month.split('-').map(Number)
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`
+}
+
+test('un mois qui se lit garde ses filtres et sa légende, sans aucune valeur, puis les montre', async ({ page }) => {
+  await login(page)
+  await page.getByRole('button', { name: /^Voir le mois/ }).click()
+  const grid = page.getByTestId('month-grid')
+  await expect(grid).toHaveAttribute('aria-busy', 'false')
+  const filters = page.getByRole('group', { name: 'Métriques affichées' })
+  await expect(filters).toBeVisible()
+
+  // Les mois retenus jusqu'à ce qu'on les libère : deux mois en arrière, aucun n'a pu être lu d'avance.
+  let release!: () => void
+  const held = new Promise<void>((resolve) => (release = resolve))
+  await page.route('**/v1/months/**', async (route) => {
+    await held
+    await route.continue()
+  })
+  await page.getByRole('button', { name: 'Mois précédent' }).click()
+  await page.getByRole('button', { name: 'Mois précédent' }).click()
+  const target = previousMonth(previousMonth(monthOf(today)))
+  await expect(grid.locator(`.cell[data-date="${target}-01"]`)).toBeVisible()
+  await expect(grid).toHaveAttribute('aria-busy', 'true')
+  // L'indicateur, à côté du titre, se montre après 300 ms.
+  await expect(page.getByTestId('spinner')).toBeVisible()
+  await expect(page.getByTestId('spinner')).toHaveCSS('opacity', '1')
+  // La structure reste : les filtres, la légende ; aucune valeur, aucun point, aucune marque.
+  await expect(filters).toBeVisible()
+  await expect(page.locator('.legend')).toBeVisible()
+  await expect(grid.locator('.day-dot, .mark')).toHaveCount(0)
+  expect((await grid.locator('.cell-value').allTextContents()).every((text) => text.trim() === '')).toBe(true)
+  await page.waitForTimeout(300) // la fin de l'arrivée
+  await page.screenshot({ path: `${SHOTS}/light-mois-en-lecture.png`, fullPage: true })
+
+  release()
+  await expect(grid).toHaveAttribute('aria-busy', 'false')
+  await expect(page.getByTestId('spinner')).toHaveCount(0)
+  await expect(filters).toBeVisible()
+  await page.unroute('**/v1/months/**')
+})
+
+test('le mois précédent, lu d’avance, s’affiche sans nouvelle lecture', async ({ page }) => {
+  await login(page)
+  const previous = previousMonth(monthOf(today))
+  const prefetched = page.waitForResponse((r) => r.url().endsWith(`/v1/months/${previous}`) && r.ok())
+  await page.getByRole('button', { name: /^Voir le mois/ }).click()
+  await expect(page.getByTestId('month-grid')).toHaveAttribute('aria-busy', 'false')
+  await prefetched
+
+  // Plus aucun mois ne se lit : le précédent vient du cache, tout de suite et sans erreur.
+  await page.route('**/v1/months/**', (route) => route.abort('internetdisconnected'))
+  await page.getByRole('button', { name: 'Mois précédent' }).click()
+  await expect(page.locator(`.cell[data-date="${previous}-01"]`)).toBeVisible()
+  await expect(page.getByTestId('month-grid')).toHaveAttribute('aria-busy', 'false')
+  await expect(page.getByText("Impossible d'actualiser ce mois.")).toHaveCount(0)
+  await page.unroute('**/v1/months/**')
+})
+
 for (const colorScheme of ['light', 'dark'] as const) {
   test.describe(colorScheme, () => {
     test.use({ colorScheme })

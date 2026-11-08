@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MonthDay, MonthMetric } from './api'
-import { dayActivity, effectiveSelection, metricChips, metricTone, setAll, toggleMetric, visibleDots } from './metrics'
+import { dayActivity, effectiveSelection, metricChips, metricShown, metricTone, setAll, toggleMetric, visibleDots } from './metrics'
 
 const ALL = ['coffee', 'music.listen']
 
@@ -118,5 +118,21 @@ describe('les points d’une journée', () => {
     expect(visibleDots(twenty, 8)).toEqual({ dots: twenty.slice(0, 8), more: 12 })
     expect(visibleDots(twenty.slice(0, 8), 8)).toEqual({ dots: twenty.slice(0, 8), more: 0 })
     expect(visibleDots([], 3)).toEqual({ dots: [], more: 0 })
+  })
+})
+
+describe('les cartes affichées par la page du jour', () => {
+  it('métriques connues : le choix, et une métrique hors registre reste affichée', () => {
+    const shows = metricShown(['coffee'], ALL)
+    expect(shows('coffee')).toBe(true)
+    expect(shows('music.listen')).toBe(false)
+    expect(shows('place.visit')).toBe(true)
+  })
+
+  it('jamais lues : le choix gardé seul, sans afficher une carte décochée', () => {
+    expect(metricShown(null, [])('music.listen')).toBe(true)
+    expect(metricShown(['coffee'], [])('coffee')).toBe(true)
+    expect(metricShown(['coffee'], [])('music.listen')).toBe(false)
+    expect(metricShown([], [])('coffee')).toBe(false)
   })
 })

@@ -1,0 +1,73 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT m.metric AS \"metric!\", s.name AS \"source!\",\n                  f.at AS \"first_at!\", l.at AS \"last_at!\",\n                  (f.at AT TIME ZONE (SELECT timezone FROM core.settings))::date AS \"first_day!\",\n                  (l.at AT TIME ZONE (SELECT timezone FROM core.settings))::date AS \"last_day!\"\n           FROM unnest($1::text[]) AS m(metric)\n           CROSS JOIN core.sources s\n           CROSS JOIN LATERAL (\n             SELECT e.occurred_at AS at\n             FROM derived.live_events e\n             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n               AND e.metric = m.metric AND e.source_id = s.id\n             ORDER BY e.occurred_at\n             LIMIT 1\n           ) f\n           CROSS JOIN LATERAL (\n             SELECT e.occurred_at AS at\n             FROM derived.live_events e\n             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n               AND e.metric = m.metric AND e.source_id = s.id\n             ORDER BY e.occurred_at DESC\n             LIMIT 1\n           ) l\n           ORDER BY f.at, m.metric, s.name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "metric!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "source!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.sources",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "first_at!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "last_at!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "first_day!",
+        "type_info": "Date",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "last_day!",
+        "type_info": "Date",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      null,
+      false,
+      true,
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "1829fb5fe662d21c3a37715c6a647078eee9d08f3b79aaccb421d8094f1f6eeb"
+}

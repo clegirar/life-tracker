@@ -1,19 +1,13 @@
-// Les écoutes d'un jour, la santé des sources et les marquages « déjà connu » en cours.
+// Les écoutes d'un jour et les marquages « déjà connu » en cours. Le marquage est optimiste : il se voit
+// tout de suite (`visibleFirstListens`), un échec rend l'état du serveur et le dit à part. La santé des
+// sources, longue à calculer, n'est plus lue ici : seules les pages qui la montrent la demandent
+// (`useHealth`).
 
-import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  fetchDayMusic,
-  fetchSourcesHealth,
-  Refused,
-  sendRecords,
-  Transient,
-  Unauthorized,
-  type DayMusic,
-  type FirstListen,
-  type OutgoingRecord,
-  type SourcesHealth,
-} from './api'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useCallback, useEffect, useState } from 'react'
+import { fetchDayMusic, Refused, sendRecords, Transient, Unauthorized, type DayMusic, type FirstListen, type OutgoingRecord } from './api'
 import { cancelOp, itemId, markOp, settleOps, visibleFirstListens, type MarkOp } from './discoveries'
+import { keys, loadFailed } from './queries'
 
 /** Les écoutes arrivent toutes les quelques minutes : inutile de relire plus souvent. */
 const REFRESH_MS = 60_000
@@ -24,50 +18,29 @@ const SEND_RETRY_DELAYS_MS = [500, 1500]
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+const musicQuery = (date: string) => ({ queryKey: keys.dayPart('music', date), queryFn: () => fetchDayMusic(date) })
+
 export function useMusic(date: string, onSessionLost: () => void, enabled: boolean) {
-  const [days, setDays] = useState<Record<string, DayMusic>>({})
-  const [health, setHealth] = useState<SourcesHealth | null>(null)
-  const [loadFailed, setLoadFailed] = useState(false)
+  const client = useQueryClient()
+  const query = useQuery({ ...musicQuery(date), enabled, refetchInterval: REFRESH_MS })
   const [ops, setOps] = useState<MarkOp[]>([])
   const [slow, setSlow] = useState(false)
-  const lastRequest = useRef(0)
 
-  const refresh = useCallback(
-    async (day: string) => {
-      const request = ++lastRequest.current
-      const [music, sources] = await Promise.allSettled([fetchDayMusic(day), fetchSourcesHealth()])
-      if ([music, sources].some((r) => r.status === 'rejected' && r.reason instanceof Unauthorized)) {
-        onSessionLost()
-        return
-      }
-      // Une réponse plus ancienne que la dernière demandée ne compte plus.
-      if (request !== lastRequest.current) return
-      if (music.status === 'fulfilled') {
-        // Dans la même mise à jour : le marquage passe des écritures au serveur sans clignoter.
-        setDays((current) => ({ ...current, [day]: music.value }))
-        setOps((current) => settleOps(current, day, music.value.first_listens))
-      }
-      if (sources.status === 'fulfilled') setHealth(sources.value)
-      setLoadFailed(music.status === 'rejected')
-    },
-    [onSessionLost],
+  // Chaque lecture des écoutes d'un jour retire les marquages que le serveur montre désormais.
+  useEffect(
+    () =>
+      client.getQueryCache().subscribe((event) => {
+        if (event.type !== 'updated' || event.action.type !== 'success') return
+        const [scope, day, part] = event.query.queryKey
+        const data = event.query.state.data as DayMusic | undefined
+        if (scope !== 'day' || typeof day !== 'string' || part !== 'music' || !data) return
+        setOps((current) => {
+          const next = settleOps(current, day, data.first_listens)
+          return next.length === current.length ? current : next
+        })
+      }),
+    [client],
   )
-
-  useEffect(() => {
-    if (!enabled) return
-    // Faux positif : `refresh` ne touche à l'état qu'après son `await`.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void refresh(date)
-    const whenVisible = () => {
-      if (document.visibilityState === 'visible') void refresh(date)
-    }
-    const timer = setInterval(whenVisible, REFRESH_MS)
-    document.addEventListener('visibilitychange', whenVisible)
-    return () => {
-      clearInterval(timer)
-      document.removeEventListener('visibilitychange', whenVisible)
-    }
-  }, [date, enabled, refresh])
 
   const waiting = ops
     .filter((op) => op.date === date && op.status !== 'failed')
@@ -80,7 +53,7 @@ export function useMusic(date: string, onSessionLost: () => void, enabled: boole
     let step = 0
     let timer: ReturnType<typeof setTimeout>
     const tick = async () => {
-      await refresh(date)
+      await client.fetchQuery({ ...musicQuery(date), staleTime: 0 }).catch(() => undefined)
       step = Math.min(step + 1, POLL_DELAYS_MS.length - 1)
       timer = setTimeout(tick, POLL_DELAYS_MS[step])
     }
@@ -91,7 +64,7 @@ export function useMusic(date: string, onSessionLost: () => void, enabled: boole
       clearTimeout(slowTimer)
       setSlow(false)
     }
-  }, [date, enabled, refresh, waiting])
+  }, [client, date, enabled, waiting])
 
   const patch = useCallback((id: string, change: Partial<MarkOp>) => {
     setOps((current) => current.map((op) => (op.id === id ? { ...op, ...change } : op)))
@@ -145,26 +118,22 @@ export function useMusic(date: string, onSessionLost: () => void, enabled: boole
     setOps((current) => current.filter((other) => other.id !== op.id))
   }
 
-  const reset = useCallback(() => {
-    setDays({})
-    setHealth(null)
-    setOps([])
-  }, [])
+  /** À la déconnexion ; le cache des lectures, lui, est vidé par l'app. */
+  const reset = useCallback(() => setOps([]), [])
 
-  const day = days[date] ?? null
+  const day = query.data ?? null
 
   return {
     /** `null` tant qu'on ne sait pas : jamais un zéro qui n'a pas été lu. */
     music: day,
-    health,
     firstListens: day ? visibleFirstListens(day.first_listens, ops, date) : [],
     failedMarks: ops.filter((op) => op.status === 'failed'),
     marksSlow: slow,
     toggleKnown,
     retryMark,
     dismissMark,
-    loadFailed,
-    reload: () => refresh(date),
+    loadFailed: loadFailed(query),
+    reload: query.refetch,
     reset,
   }
 }

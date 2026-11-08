@@ -2,16 +2,13 @@
 // quand il le faut, la marche à suivre et son bouton. Elle affiche et rappelle ; elle ne reçoit aucune clé.
 
 import type { ReactNode } from 'react'
-import type { SourcesStatus } from './api'
+import { useSourcesStatus } from './useSourcesStatus'
 import { codeParts, sourceCard, STATE_WORD, type Card, type Guidance } from './status'
 
 interface Props {
   /** Le bouton du tiroir, sur iPhone. */
   menu: ReactNode
   now: number
-  data: SourcesStatus | null
-  loadFailed: boolean
-  onReload: () => void
 }
 
 /** Une étape : du texte, et les fichiers ou commandes en police fixe. */
@@ -79,7 +76,10 @@ function SourceCard({ card }: { card: Card }) {
   )
 }
 
-export function StatusPage({ menu, now, data, loadFailed, onReload }: Props) {
+export function StatusPage({ menu, now }: Props) {
+  // Chaque ouverture de la page relit l'état, puis chaque minute tant qu'elle est ouverte.
+  const { status: data, loadFailed, reload } = useSourcesStatus(true, true)
+  const onReload = () => void reload()
   const cards = data?.sources.map((source) => sourceCard(source, now)) ?? null
 
   return (

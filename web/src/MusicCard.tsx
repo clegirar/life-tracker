@@ -11,7 +11,9 @@ import {
   type MusicTab,
 } from './music'
 import { Segments } from './Segments'
+import type { SourcesHealth } from './api'
 import type { useMusic } from './useMusic'
+import { CardSkeleton } from './CardSkeleton'
 
 const TABS = [
   ['tracks', 'Titres'],
@@ -23,6 +25,7 @@ interface Props {
   date: string
   today: string
   state: ReturnType<typeof useMusic>
+  health: SourcesHealth | null
 }
 
 interface Row {
@@ -53,13 +56,13 @@ export function MoreButton({ total, expanded, onToggle, section }: { total: numb
   )
 }
 
-export function MusicCard({ date, today, state }: Props) {
+export function MusicCard({ date, today, state, health }: Props) {
   const [tab, setTab] = useState<MusicTab>('tracks')
   // Déplié pour un jour et un onglet : changer de jour ou d'onglet replie, même en revenant.
   const [unfolded, setUnfolded] = useState({ key: '', finds: false, rows: false })
   const findsSection = useRef<HTMLElement>(null)
   const rowsSection = useRef<HTMLElement>(null)
-  const { music, health, loadFailed, firstListens } = state
+  const { music, loadFailed, firstListens } = state
   const key = `${date}/${tab}`
   const open = unfolded.key === key ? unfolded : { key, finds: false, rows: false }
   const toggle = (part: 'finds' | 'rows') => setUnfolded({ ...open, [part]: !open[part] })
@@ -101,7 +104,7 @@ export function MusicCard({ date, today, state }: Props) {
         </div>
       )}
 
-      {!music && !loadFailed && <p className="empty">Chargement…</p>}
+      {!music && !loadFailed && <CardSkeleton rows={6} />}
       {music?.listens === 0 && <p className="empty">{musicEmptyText(date, today, health)}</p>}
 
       {music && music.listens > 0 && (

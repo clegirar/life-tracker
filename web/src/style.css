@@ -400,6 +400,30 @@ button:disabled {
   letter-spacing: 0.01em;
 }
 
+/* Période en lecture : l'indicateur ne se montre qu'après 300 ms, par un fondu, puis tourne par crans. */
+.spinner {
+  display: inline-block;
+  margin-left: 10px;
+  vertical-align: middle;
+  fill: var(--muted);
+  opacity: 0;
+  animation:
+    spinner-in 150ms var(--ease-out) 300ms forwards,
+    spinner-turn 800ms steps(8) infinite;
+}
+
+@keyframes spinner-in {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes spinner-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .nav {
   display: flex;
   gap: 8px;
@@ -762,6 +786,29 @@ button:disabled {
   font-size: 15px;
   line-height: 20px;
   color: var(--muted);
+}
+
+/* Une carte du jour qui se lit : sa place, à peu près à sa hauteur, pour que la maçonnerie ne saute pas. */
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.skeleton-bar {
+  height: 20px;
+  border-radius: 6px;
+  background: var(--field);
+}
+
+/* Le premier enfant est le texte pour lecteur d'écran. */
+.skeleton-bar:nth-child(3n + 2) {
+  width: 64%;
+}
+
+.skeleton-bar:nth-child(3n) {
+  width: 88%;
 }
 
 .cups {
@@ -1383,6 +1430,35 @@ button:disabled {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 3px;
+  transition: opacity 150ms var(--ease-out);
+}
+
+/* Une période qui se lit : la grille est là, en retrait, sans aucune valeur (une valeur d'une autre
+   période serait un mensonge). À l'arrivée, elle reprend sa couleur et les valeurs se fondent. */
+.year-grid[aria-busy='true'] .mini-grid {
+  opacity: 0.45;
+}
+
+/* Le mois en lecture s'efface en bloc, numéros dans leur couleur normale : jamais le gris d'un jour
+   « sans données » de la légende, avec lequel il se confondrait. */
+.month-grid > li {
+  transition: opacity 150ms var(--ease-out);
+}
+
+.month-grid[aria-busy='true'] > li {
+  opacity: 0.4;
+}
+
+@keyframes value-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Seulement pour une période attendue (`data-reveal`) : une période déjà en cache s'affiche d'un coup. */
+.month-grid[data-reveal] :is(.cell-value, .day-dots, .mark),
+.year-grid[data-reveal] .day-dots {
+  animation: value-in 150ms var(--ease-out);
 }
 
 .dot,
@@ -1570,6 +1646,14 @@ button:disabled {
   .mini:active {
     transform: none;
     transition: none;
+  }
+  .mini-grid,
+  .month-grid > li {
+    transition: none;
+  }
+  .month-grid[data-reveal] :is(.cell-value, .day-dots, .mark),
+  .year-grid[data-reveal] .day-dots {
+    animation: none;
   }
   .chip,
   .chip:active {
@@ -2763,4 +2847,11 @@ button:disabled {
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
+}
+
+/* Sans mouvement : l'indicateur apparaît toujours après 300 ms, mais ne tourne pas. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: spinner-in 150ms linear 300ms forwards;
+  }
 }

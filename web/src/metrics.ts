@@ -112,6 +112,17 @@ export function effectiveSelection(stored: string[] | null, available: string[])
   return available.filter((metric) => chipMembers(metric, available).some((m) => kept.includes(m)))
 }
 
+/**
+ * Ce que la page du jour montre, et donc lit. D'après les métriques connues (la dernière liste lue) ;
+ * une métrique absente du registre reste affichée. Jamais lues (premier passage sur ce navigateur) :
+ * d'après le choix gardé seul, pour qu'une carte décochée ne s'affiche pas le temps d'une lecture.
+ */
+export function metricShown(stored: string[] | null, available: string[]): (metric: string) => boolean {
+  if (available.length === 0) return (metric) => stored === null || stored.includes(metric)
+  const selected = effectiveSelection(stored, available)
+  return (metric) => !available.includes(metric) || selected.includes(metric)
+}
+
 /** Ajoute ou retire la pastille d'une métrique (elle seule, ou tout son groupe), la dernière comprise. */
 export function toggleMetric(current: string[], metric: string, available: string[]): string[] {
   const members = chipMembers(metric, available)
