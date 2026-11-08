@@ -274,13 +274,14 @@ jobs:
   # PR dans main, que la CI a extrait), que gate comparera au commit de main après la fusion.
   tested-tree:
     needs: [db, backend-lint, backend, web-checks, web-e2e, mcp, extension, deploy-script]
-    # Conditions explicites : gate, sauté sur une PR, ne doit pas sauter ce job ; un seul test non vert
-    # l'arrête.
+    # Chaque test nommé et exigé vert : gate, sauté sur une PR, ne doit pas sauter ce job (always), et un
+    # seul test non vert l'arrête. La forme needs.*.result sautait ce job même tout vert.
     if: >-
-      ${{ !cancelled() && github.event_name == 'pull_request' &&
-      !contains(needs.*.result, 'failure') &&
-      !contains(needs.*.result, 'cancelled') &&
-      !contains(needs.*.result, 'skipped') }}
+      ${{ always() && github.event_name == 'pull_request' &&
+      needs.db.result == 'success' && needs.backend-lint.result == 'success' &&
+      needs.backend.result == 'success' && needs.web-checks.result == 'success' &&
+      needs.web-e2e.result == 'success' && needs.mcp.result == 'success' &&
+      needs.extension.result == 'success' && needs.deploy-script.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
