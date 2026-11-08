@@ -16,6 +16,7 @@
     "e2e": "playwright test"
   },
   "dependencies": {
+    "@tanstack/react-query": "5.104.5",
     "leaflet": "1.9.4",
     "react": "19.3.1",
     "react-dom": "19.3.1"

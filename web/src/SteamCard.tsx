@@ -5,6 +5,7 @@ import { visibleRows } from './music'
 import { discoveryRows, gameRows, playedSteam, playMinutesText, steamEmptyText, steamSilent, type DiscoveryRow, type GameRow } from './steam'
 import type { useSteam } from './useSteam'
 import { OutIcon } from './VideoCard'
+import { CardSkeleton } from './CardSkeleton'
 
 interface Props {
   date: string
@@ -119,7 +120,7 @@ export function SteamCard({ date, today, state, health, calendarDay }: Props) {
         </p>
       )}
 
-      {!games && !loadFailed && <p className="empty">Chargement…</p>}
+      {!games && !loadFailed && <CardSkeleton rows={3} />}
       {games && !played && <p className="empty">{steamEmptyText(date, today, health, calendarDay ? (calendarDay.values['game.play'] ?? null) : undefined)}</p>}
 
       {played && (

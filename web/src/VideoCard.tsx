@@ -4,6 +4,7 @@ import { MoreButton } from './MusicCard'
 import { plural, visibleRows } from './music'
 import type { useVideo } from './useVideo'
 import { channelOfDay, totalText, videoEmptyText, watchRows, youtubeSilent, type WatchRow } from './video'
+import { CardSkeleton } from './CardSkeleton'
 
 interface Props {
   date: string
@@ -100,7 +101,7 @@ export function VideoCard({ date, today, state, health }: Props) {
         </p>
       )}
 
-      {!video && !loadFailed && <p className="empty">Chargement…</p>}
+      {!video && !loadFailed && <CardSkeleton rows={4} />}
       {video?.count === 0 && <p className="empty">{videoEmptyText(date, today, health)}</p>}
 
       {watched && (

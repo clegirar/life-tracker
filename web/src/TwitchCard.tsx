@@ -5,6 +5,7 @@ import { visibleRows } from './music'
 import { channelRows, overlapText, streamMinutesText, twitchEmptyText, twitchSilent, watchedTwitch, type ChannelRow } from './twitch'
 import type { useTwitch } from './useTwitch'
 import { OutIcon } from './VideoCard'
+import { CardSkeleton } from './CardSkeleton'
 
 interface Props {
   date: string
@@ -77,7 +78,7 @@ export function TwitchCard({ date, today, state, health, calendarDay }: Props) {
         </p>
       )}
 
-      {!stream && !loadFailed && <p className="empty">Chargement…</p>}
+      {!stream && !loadFailed && <CardSkeleton rows={3} />}
       {stream && !watched && <p className="empty">{twitchEmptyText(date, today, health, calendarDay ? (calendarDay.values['stream.watch'] ?? null) : undefined)}</p>}
 
       {watched && (

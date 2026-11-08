@@ -1,10 +1,14 @@
-import type { ReactNode } from 'react'
-import type { Month, MonthMetric, SourcesHealth } from './api'
+import { useEffect, type ReactNode } from 'react'
+import type { MonthMetric } from './api'
 import { addMonths, cellLabel, cellText, errorCountText, marker, MARKER_LABELS, monthGrid, monthName, monthOf, WEEKDAYS, type Marker } from './calendar'
 import { DayDots, MetricsLegend } from './DayDots'
 import { MetricFilters } from './MetricFilters'
 import { dayActivity, effectiveSelection, metricTone } from './metrics'
 import { musicAlert } from './music'
+import { useHealth, useKnownMetrics, usePrefetch } from './queries'
+import { useMonth } from './useMonth'
+import { useReveal } from './useReveal'
+import { Spinner } from './Spinner'
 
 interface Props {
   /** Le bouton du tiroir, sur iPhone. */
@@ -14,12 +18,8 @@ interface Props {
   month: string
   today: string
   selected: string
-  data: Month | null
-  loadFailed: boolean
-  health: SourcesHealth | null
   onMonth: (month: string) => void
   onOpenDay: (date: string) => void
-  onReload: () => void
   /** Le choix gardé, commun au mois, à l'année et au jour. */
   storedMetrics: string[] | null
   onToggleMetric: (metric: string, available: string[]) => void
@@ -43,10 +43,20 @@ function DayValue({ value, metric, info }: { value: number | null; metric: strin
   )
 }
 
-export function MonthPage({ menu, onShowYear, month, today, selected, data, loadFailed, health, onMonth, onOpenDay, onReload, storedMetrics, onToggleMetric, onSetAllMetrics }: Props) {
+export function MonthPage({ menu, onShowYear, month, today, selected, onMonth, onOpenDay, storedMetrics, onToggleMetric, onSetAllMetrics }: Props) {
+  const { month: data, loadFailed, reload } = useMonth(month, true)
+  const health = useHealth()
+  const prefetch = usePrefetch()
   const isCurrent = month === monthOf(today)
-  const days = new Map((data?.month === month ? data.days : []).map((day) => [day.date, day]))
-  const metrics = data?.metrics ?? []
+  const previous = addMonths(month, -1)
+  const next = addMonths(month, 1)
+  // Les valeurs de ce mois seulement ; en attendant, la grille garde sa structure, sans aucune valeur.
+  const days = new Map((data?.days ?? []).map((day) => [day.date, day]))
+  const pending = data === null
+  const reveal = useReveal(month, !pending)
+  // Les métriques de la dernière lecture, de ce mois ou d'un autre : les filtres et la légende restent
+  // en place pendant qu'un mois se lit.
+  const metrics = useKnownMetrics()
   const available = metrics.map((m) => m.metric)
   const shownMetrics = effectiveSelection(storedMetrics, available)
   const chosen = metrics.filter((m) => shownMetrics.includes(m.metric))
@@ -62,6 +72,13 @@ export function MonthPage({ menu, onShowYear, month, today, selected, data, load
   const alert = musicAlert(health)
   const errors = health?.errors ?? null
 
+  // Le mois lu, ses voisins se lisent d'avance : y aller les montre tout de suite.
+  useEffect(() => {
+    if (pending) return
+    prefetch.month(previous)
+    if (!isCurrent) prefetch.month(next)
+  }, [pending, previous, next, isCurrent, prefetch])
+
   return (
     <main className="page month-page">
       <div className="topbar">
@@ -73,13 +90,31 @@ export function MonthPage({ menu, onShowYear, month, today, selected, data, load
       </div>
       <header className="header">
         <div className="header-text">
-          <h1 className="title">{monthName(month)}</h1>
+          <h1 className="title">
+            {monthName(month)}
+            {pending && <Spinner />}
+          </h1>
         </div>
         <nav className="nav" aria-label="Changer de mois">
-          <button type="button" className="round" aria-label="Mois précédent" onClick={() => onMonth(addMonths(month, -1))}>
+          <button
+            type="button"
+            className="round"
+            aria-label="Mois précédent"
+            onPointerEnter={() => prefetch.month(previous)}
+            onPointerDown={() => prefetch.month(previous)}
+            onClick={() => onMonth(previous)}
+          >
             <Chevron d="M15 5l-7 7 7 7" />
           </button>
-          <button type="button" className="round" aria-label="Mois suivant" disabled={isCurrent} onClick={() => onMonth(addMonths(month, 1))}>
+          <button
+            type="button"
+            className="round"
+            aria-label="Mois suivant"
+            disabled={isCurrent}
+            onPointerEnter={() => prefetch.month(next)}
+            onPointerDown={() => prefetch.month(next)}
+            onClick={() => onMonth(next)}
+          >
             <Chevron d="M9 5l7 7-7 7" />
           </button>
         </nav>
@@ -90,7 +125,7 @@ export function MonthPage({ menu, onShowYear, month, today, selected, data, load
       {loadFailed && (
         <div className="notice" role="alert">
           <span>Impossible d'actualiser ce mois.</span>
-          <button type="button" className="notice-action" onClick={onReload}>
+          <button type="button" className="notice-action" onClick={() => void reload()}>
             Réessayer
           </button>
         </div>
@@ -117,7 +152,7 @@ export function MonthPage({ menu, onShowYear, month, today, selected, data, load
             <span key={long}>{short}</span>
           ))}
         </div>
-        <ol className="month-grid" data-testid="month-grid">
+        <ol className="month-grid" data-testid="month-grid" aria-busy={pending} data-reveal={reveal ? '' : undefined}>
           {monthGrid(month)
             .flat()
             .map((date, index) => {

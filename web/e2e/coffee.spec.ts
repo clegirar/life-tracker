@@ -259,7 +259,10 @@ test('une écriture refusée par le serveur se signale sans proposer de renvoi',
 test('une lecture en échec n’affiche jamais un zéro', async ({ page }) => {
   await login(page)
   await page.route('**/v1/days/**', (route) => route.abort('internetdisconnected'))
+  // La veille a pu être lue d'avance : l'avant-veille, elle, ne peut l'être que pendant la panne.
   await page.getByRole('button', { name: 'Jour précédent' }).click()
+  await page.getByRole('button', { name: 'Jour précédent' }).click()
+  await expect(page.getByRole('heading', { name: 'Hier' })).toHaveCount(0)
   await expect(page.getByRole('alert')).toContainText("Impossible d'actualiser")
   await expect(count(page)).toHaveText('–')
   await expect(page.getByText('Aucun café noté')).toBeHidden()

@@ -3,7 +3,8 @@
 // Google) et l'état des sources viennent de la même lecture que la page État.
 
 import type { ReactNode } from 'react'
-import type { SourceStatus, SourcesStatus } from './api'
+import { useSourcesStatus } from './useSourcesStatus'
+import type { SourceStatus } from './api'
 import { frenchSpaces, keyExpiry, OTHER_KEYS, sheetState, sourceOf, TRACKERS, type KeyInfo } from './sources'
 import { STATE_WORD } from './status'
 import { Rich } from './StatusPage'
@@ -12,9 +13,6 @@ interface Props {
   /** Le bouton du tiroir, sur iPhone. */
   menu: ReactNode
   now: number
-  data: SourcesStatus | null
-  loadFailed: boolean
-  onReload: () => void
 }
 
 /** Le texte d'une fiche, avec ses espaces insécables et son code en police fixe. */
@@ -41,7 +39,10 @@ function Key({ info, source, now, id }: { info: KeyInfo; source: SourceStatus | 
   )
 }
 
-export function SourcesPage({ menu, now, data, loadFailed, onReload }: Props) {
+export function SourcesPage({ menu, now }: Props) {
+  // Chaque ouverture de la page relit l'état, puis chaque minute tant qu'elle est ouverte.
+  const { status: data, loadFailed, reload } = useSourcesStatus(true, true)
+  const onReload = () => void reload()
   return (
     <main className="page status-page sources-page">
       {menu && <div className="topbar">{menu}</div>}
