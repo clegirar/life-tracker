@@ -221,7 +221,7 @@ test('la page du jour en maçonnerie : deux colonnes sur Mac, sans trou entre le
   await page.setViewportSize(DESKTOP)
   await openDay(page, DAY)
   await page.getByTestId('route-map').scrollIntoViewIfNeeded()
-  await expect(page.locator('.route-map')).toHaveAttribute('data-state', 'ready')
+  await expect(page.getByTestId('route-map').locator('.route-map')).toHaveAttribute('data-state', 'ready')
   await expect(page.locator('.cards')).toHaveAttribute('data-masonry', '')
   // L'ordre du DOM reste celui de la lecture.
   await expect(page.locator('.cards > .card').first()).toHaveClass(/card-coffee/)
@@ -304,7 +304,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
         const shot = (name: string) => fullShot(page, `${SHOTS}/${width}-${colorScheme}-${name}.png`)
         await openDay(page, DAY)
         await page.getByTestId('route-map').scrollIntoViewIfNeeded()
-        await expect(page.locator('.route-map')).toHaveAttribute('data-state', 'ready')
+        await expect(page.getByTestId('route-map').locator('.route-map')).toHaveAttribute('data-state', 'ready')
         await page.waitForTimeout(300) // la fin du fondu de la carte
         await checkLayout(page)
         await shot('jour-activite')
