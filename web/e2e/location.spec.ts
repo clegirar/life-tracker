@@ -1,12 +1,13 @@
 import { execFileSync } from 'node:child_process'
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
-import { addDays, API_URL, apiSession, checkLayout, DESKTOP, fullShot, IPHONE_TOKEN, login, openMenu, parisToday } from './helpers'
+import { addDays, API_URL, apiSession, checkLayout, DESKTOP, fullShot, GARMIN_TOKEN, IPHONE_TOKEN, login, openMenu, parisToday, send } from './helpers'
 
 // Les déplacements (iPhone, Overland) : la carte du jour, la case du mois et la carte de la page d'état.
 // Les lots entrent par la vraie route d'adaptation `POST /v1/locations/overland`, avec le token de la
 // source `iphone` (web/test.sh), comme Overland ; Wi-Fi, batterie et identifiant d'appareil compris,
 // pour vérifier qu'ils n'entrent pas. Seul le silence se simule dans la base jetable. Des coordonnées
-// fictives, en mer au large de Marseille ; les tuiles d'OpenStreetMap sont une image locale.
+// fictives, en mer au large de Marseille ; les tuiles d'OpenStreetMap sont une image locale. Une
+// séance de la montre, avec sa trace, entre par l'API d'ingestion avec le token de la source `garmin`.
 const SHOTS = process.env.E2E_SCREENSHOTS ?? 'e2e-artifacts/screenshots'
 const today = parisToday()
 const BEFORE = addDays(today, -38)
@@ -14,6 +15,7 @@ const EVE = addDays(today, -37)
 const DATE = addDays(today, -36)
 const NEXT = addDays(today, -35)
 const STILL = addDays(today, -34)
+const RUN = addDays(today, -33)
 const STAYS = addDays(today, -32)
 const AFTER = addDays(today, -30)
 // Le séjour en cours se compte depuis maintenant : un instant fixé au chargement, pour qu'un renvoi des
@@ -155,6 +157,53 @@ async function seed(request: APIRequestContext) {
     .toEqual([true, 4, 3, 63, 2])
 }
 
+/** Une boucle de `steps` points autour de `center`, en mer, `[lat, lon, secondes]` comme la trace Garmin. */
+function loop(center: LatLng, steps: number): [number, number, number][] {
+  return Array.from({ length: steps + 1 }, (_, i) => {
+    const angle = (i / steps) * 2 * Math.PI
+    return [Math.round((center[0] + 0.012 * Math.sin(angle)) * 1e6) / 1e6, Math.round((center[1] + 0.016 * Math.cos(angle)) * 1e6) / 1e6, i * 135]
+  })
+}
+
+/**
+ * Une course sans le téléphone, de 09:00 à 09:45 : la maison, d'iOS de 07:00 à 12:00, est coupée
+ * autour d'elle, et le point que l'iPhone, resté à la maison, envoie pendant la course tombe. Puis une
+ * marche vers le café et un arrêt.
+ */
+async function seedRun(request: APIRequestContext) {
+  await overland(request, [
+    visit([RUN, '07:00'], [RUN, '12:00'], HOME),
+    point(RUN, '09:20', HOME),
+    ...walk(RUN, '12:05', HOME, CAFE, 30),
+    visit([RUN, '12:40'], [RUN, '14:00'], CAFE),
+  ])
+  const start = paris(RUN, '09:00')
+  const points = loop([HOME[0] - 0.015, HOME[1] + 0.01], 20)
+  const record = (key: string, kind: string, payload: Record<string, unknown>) => ({ key, kind, schema_version: 1, occurred_at: start, payload })
+  await send(
+    request,
+    [
+      record('activity:4242:e2e-location', 'garmin.activity', {
+        activity_id: 4242, type: 'running', start, duration_s: 2700, moving_s: 2680, distance_m: 8200,
+        avg_speed_mps: 3.04, avg_hr: 150, max_hr: 172, calories: 560, start_lat: points[0][0], start_lon: points[0][1],
+        end_lat: points[20][0], end_lon: points[20][1], location_name: null,
+      }),
+      record('track:4242:e2e-location', 'garmin.activity_track', { activity_id: 4242, points }),
+    ],
+    GARMIN_TOKEN,
+  )
+  const cookie = await apiSession(request)
+  await expect
+    .poll(
+      async () => {
+        const body = await (await request.get(`/v1/days/${RUN}/locations`, { headers: { Cookie: cookie } })).json()
+        return [body.workouts.length, body.places.length, body.segments.length]
+      },
+      { timeout: 30_000 },
+    )
+    .toEqual([1, 3, 1])
+}
+
 /** Le lieu en cours d'aujourd'hui, une fois les points interprétés. */
 async function seedHere(request: APIRequestContext) {
   await seedToday(request)
@@ -202,6 +251,7 @@ async function mapReady(page: Page) {
 
 test.beforeAll(async ({ request }) => {
   await seed(request)
+  await seedRun(request)
 })
 
 // Les autres fichiers retrouvent une source qui parle.
@@ -304,6 +354,39 @@ test('des séjours détectés dans les points, avec leur durée, une visite iOS 
   await expect(page.locator(`.cell[data-date="${STAYS}"] .cell-value[data-metric="place.visit"]`)).toHaveText('1')
 })
 
+test('une séance de la montre : dans la distance, à son heure dans la liste, et sa trace sur la carte', async ({ page }) => {
+  await offlineTiles(page)
+  await login(page)
+  await page.goto(`/jour/${RUN}`)
+  const card = page.getByTestId('location')
+  // La marche de l'iPhone (3,0 km) et les 8,2 km de Garmin.
+  await expect(card.getByTestId('location-distance')).toHaveText(/^11,2\skm$/)
+  await expect(card.getByTestId('location-distance-detail')).toHaveText(/^dont 8,2\skm de course$/)
+  // La maison coupée autour de la course : deux lieux, et la séance entre les deux, sans numéro.
+  await expect(card.getByTestId('location-places')).toHaveText('3')
+  const rows = card.locator('[data-testid="visit"], [data-testid="visit-workout"]')
+  await expect(rows).toHaveCount(4)
+  await expect(rows.nth(0)).toHaveAttribute('data-testid', 'visit')
+  await expect(rows.nth(0)).toContainText('07:00 – 09:00')
+  await expect(rows.nth(0)).toContainText('2 h')
+  await expect(rows.nth(1)).toHaveAttribute('data-testid', 'visit-workout')
+  await expect(rows.nth(1)).toContainText('Course')
+  await expect(rows.nth(1)).toContainText('09:00 – 09:45')
+  await expect(rows.nth(1)).toContainText(/8,2\skm/)
+  await expect(rows.nth(2)).toContainText('09:45 – 12:00')
+  await expect(rows.nth(2)).toContainText('2 h 15')
+  await expect(rows.nth(3)).toContainText('12:40 – 14:00')
+  await expect(card.getByTestId('visit').locator('.visit-number')).toHaveText(['1', '2', '3'])
+
+  // La marche et la course : deux lignes ; le point de l'iPhone pendant la course n'est pas dessiné.
+  await mapReady(page)
+  const map = card.locator('.route-map')
+  await expect(map).toHaveAccessibleName(/^Carte des déplacements : 3 lieux, 3,0\skm de trace, 1 séance$/)
+  await expect(map.locator('.leaflet-overlay-pane path')).toHaveCount(2)
+  await expect(map.locator('.visit-pin')).toHaveText(['1 · 2', '3'])
+  await checkLayout(page)
+})
+
 test("la page d'état : dernier envoi, dernière position et dernier lieu, puis le silence", async ({ page, request }) => {
   await heartbeat(request)
   await login(page)
@@ -386,6 +469,13 @@ for (const colorScheme of ['light', 'dark'] as const) {
           await page.waitForTimeout(300)
           await checkLayout(page)
           await shot('deplacements-sejours')
+
+          await page.goto(`/jour/${RUN}`)
+          await mapReady(page)
+          await page.evaluate(() => window.scrollTo(0, 0))
+          await page.waitForTimeout(300)
+          await checkLayout(page)
+          await shot('deplacements-seance')
 
           await seedHere(request)
           await page.goto('/')

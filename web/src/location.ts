@@ -1,9 +1,11 @@
-// Ce que la carte Déplacements dit d'un jour : la trace de l'iPhone (Overland) et les lieux où je suis
-// resté, visites iOS et séjours détectés dans les points, avec leur durée, et celui où je suis encore ;
-// sans nom de lieu (le géocodage inverse est un chantier à venir). Un jour hors de la période
-// suivie (`covered` faux) est un jour sans données, jamais un jour sans déplacement.
+// Ce que la carte Déplacements dit d'un jour : la trace de l'iPhone (Overland), les séances de la
+// montre qui ont une trace (pendant une séance, la montre l'emporte) et les lieux où je suis resté,
+// visites iOS et séjours détectés dans les points, avec leur durée, et celui où je suis encore ; sans
+// nom de lieu (le géocodage inverse est un chantier à venir). Un jour hors de la période suivie
+// (`covered` faux) et sans séance est un jour sans données, jamais un jour sans déplacement.
 
-import type { DayLocations, LocationPlace, SourcesHealth } from './api'
+import type { DayLocations, LocationPlace, LocationWorkout, SourcesHealth } from './api'
+import { workoutType } from './activity'
 import { formatMinutes } from './music'
 import { clock, dayWord, shortDate } from './status'
 import { addDays, parisDate } from './time'
@@ -17,6 +19,8 @@ export type LatLng = [number, number]
 export type LocationKind = 'uncovered' | 'still' | 'moved'
 
 export function locationKind(day: DayLocations): LocationKind {
+  // Une séance de la montre se montre même un jour où l'iPhone n'a rien envoyé.
+  if (day.workouts.length > 0) return 'moved'
   if (!day.covered) return 'uncovered'
   return day.segments.length === 0 && day.places.length === 0 ? 'still' : 'moved'
 }
@@ -36,14 +40,26 @@ export function distanceM([lat1, lon1]: LatLng, [lat2, lon2]: LatLng): number {
   return 2 * EARTH_M * Math.asin(Math.min(1, Math.sqrt(a)))
 }
 
-/** La longueur de la trace du jour : chaque morceau, sans relier deux morceaux entre eux. */
-export function traceLengthM(day: DayLocations): number {
+/** La longueur d'une ligne de points. */
+function lineLengthM(points: LatLng[]): number {
   let total = 0
-  for (const segment of day.segments) {
-    for (let i = 1; i < segment.points.length; i++) total += distanceM(segment.points[i - 1], segment.points[i])
-  }
+  for (let i = 1; i < points.length; i++) total += distanceM(points[i - 1], points[i])
   return total
 }
+
+/** La longueur de la trace de l'iPhone : chaque morceau, sans relier deux morceaux entre eux. */
+export function traceLengthM(day: DayLocations): number {
+  return day.segments.reduce((total, segment) => total + lineLengthM(segment.points), 0)
+}
+
+/**
+ * La distance d'une séance : le chiffre de Garmin, comme la carte Activité ; sans lui, la longueur
+ * de sa trace.
+ */
+export const workoutLengthM = (workout: LocationWorkout) => workout.distance_m ?? lineLengthM(workout.points)
+
+/** La distance du jour : la trace de l'iPhone, plus les séances. */
+export const totalLengthM = (day: DayLocations) => day.workouts.reduce((total, workout) => total + workoutLengthM(workout), traceLengthM(day))
 
 const KM = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 
@@ -62,8 +78,30 @@ export function placesCount(day: DayLocations): { arrived: number; earlier: stri
   return { arrived: day.places.length - earlier, earlier: earlier === 0 ? null : `et ${earlier} depuis la veille` }
 }
 
-/** La trace a au moins un morceau de deux points : il y a une longueur à dire. */
-export const hasTrace = (day: DayLocations) => day.segments.some((segment) => segment.points.length > 1)
+/** La trace de l'iPhone a au moins un morceau de deux points. */
+const hasPhoneTrace = (day: DayLocations) => day.segments.some((segment) => segment.points.length > 1)
+
+/** Il y a une longueur à dire : une trace de l'iPhone, ou une séance. */
+export const hasTrace = (day: DayLocations) => hasPhoneTrace(day) || day.workouts.length > 0
+
+/** « Course » donne « course », « Course sur tapis », « course sur tapis » : le nom dans une phrase. */
+const workoutNoun = (type: string) => workoutType(type).toLowerCase()
+
+/**
+ * Sous la distance, la part des séances : « dont 8,2 km de course », « dont 8,2 km de course et
+ * 12,0 km de vélo » ; une distance par type, dans l'ordre du jour. Rien sans séance.
+ */
+export function workoutsDetail(day: DayLocations): string | null {
+  const byType = new Map<string, number>()
+  for (const workout of day.workouts) {
+    const noun = workoutNoun(workout.activity_type)
+    byType.set(noun, (byType.get(noun) ?? 0) + workoutLengthM(workout))
+  }
+  const parts = [...byType].filter(([, meters]) => meters > 0).map(([noun, meters]) => `${distanceText(meters)} de ${noun}`)
+  if (parts.length === 0) return null
+  const last = parts.pop()!
+  return `dont ${parts.length === 0 ? last : `${parts.join(', ')} et ${last}`}`
+}
 
 /** Une ligne de la liste des lieux, dans l'ordre d'arrivée ; `number` est celui de l'épingle. */
 export interface PlaceRow {
@@ -95,6 +133,47 @@ function placeNote(place: LocationPlace, date: string, today: string): string | 
 
 const byArrival = (a: LocationPlace, b: LocationPlace) => Date.parse(a.arrival) - Date.parse(b.arrival)
 
+/** Une séance dans la liste, à son heure parmi les lieux : sans numéro, les numéros sont ceux des lieux. */
+export interface WorkoutRow {
+  key: string
+  /** « Course ». */
+  label: string
+  /** « 10:00 – 10:45 ». */
+  range: string
+  /** La distance, ou la durée d'une séance sans distance. */
+  figure: string
+  /** L'instant du début, en millisecondes. */
+  start: number
+}
+
+export function workoutRows(day: DayLocations): WorkoutRow[] {
+  return day.workouts.map((workout) => {
+    const meters = workoutLengthM(workout)
+    const start = Date.parse(workout.start)
+    return {
+      key: `workout-${workout.activity_id}`,
+      label: workoutType(workout.activity_type),
+      range: `${workout.start_time} – ${workout.end_time}`,
+      figure: meters > 0 ? distanceText(meters) : durationText((Date.parse(workout.end) - start) / 1000),
+      start,
+    }
+  })
+}
+
+/** Une ligne de la liste du jour : un lieu ou une séance. */
+export type DayRow = { kind: 'place'; row: PlaceRow } | { kind: 'workout'; row: WorkoutRow }
+
+/** Les lieux et les séances, dans l'ordre du temps : arrivée d'un lieu, début d'une séance. */
+export function dayRows(day: DayLocations, today: string): DayRow[] {
+  const rows: DayRow[] = [
+    ...placeRows(day, today).map((row) => ({ kind: 'place' as const, row })),
+    ...workoutRows(day).map((row) => ({ kind: 'workout' as const, row })),
+  ]
+  const at = (entry: DayRow) => (entry.kind === 'place' ? entry.row.arrival : entry.row.start)
+  // Tri stable : à égalité, le lieu d'abord.
+  return rows.sort((a, b) => at(a) - at(b))
+}
+
 /** Visites iOS et séjours détectés pareils : l'origine ne change ni la ligne ni l'épingle. */
 export function placeRows(day: DayLocations, today: string): PlaceRow[] {
   return [...day.places].sort(byArrival).map((place, index) => ({
@@ -122,9 +201,11 @@ export function hereText(arrival: number, now: number): { since: string; elapsed
   return { since: `Ici depuis ${when}`, elapsed: minutes === 0 ? "moins d'1 min" : formatMinutes(minutes) }
 }
 
-/** Ce que la carte dessine : les morceaux de trace, les points isolés et les épingles numérotées. */
+/** Ce que la carte dessine : les morceaux de trace, les séances, les points isolés et les épingles numérotées. */
 export interface MapDrawing {
   lines: LatLng[][]
+  /** Les traces des séances, dans la couleur des séances. */
+  workouts: LatLng[][]
   dots: LatLng[]
   /** `current` : le lieu où je suis encore, mis en évidence. */
   pins: { at: LatLng; label: string; current: boolean }[]
@@ -136,6 +217,7 @@ const SAME_PLACE_M = 50
 export function mapDrawing(day: DayLocations, today: string): MapDrawing | null {
   const lines = day.segments.filter((segment) => segment.points.length > 1).map((segment) => segment.points)
   const dots = day.segments.filter((segment) => segment.points.length === 1).map((segment) => segment.points[0])
+  const workouts = day.workouts.filter((workout) => workout.points.length > 1).map((workout) => workout.points)
   // Deux lieux au même endroit (la maison, le soir et la nuit d'avant) : une seule épingle, « 1 · 4 ».
   const pins: MapDrawing['pins'] = []
   for (const row of placeRows(day, today)) {
@@ -145,19 +227,21 @@ export function mapDrawing(day: DayLocations, today: string): MapDrawing | null 
       same.current ||= row.ongoing
     } else pins.push({ at: row.at, label: String(row.number), current: row.ongoing })
   }
-  return lines.length + dots.length + pins.length === 0 ? null : { lines, dots, pins }
+  return lines.length + workouts.length + dots.length + pins.length === 0 ? null : { lines, workouts, dots, pins }
 }
 
 /** Tous les points à faire tenir dans la carte. */
 export function drawingPoints(drawing: MapDrawing): LatLng[] {
-  return [...drawing.lines.flat(), ...drawing.dots, ...drawing.pins.map((pin) => pin.at)]
+  return [...drawing.lines.flat(), ...drawing.workouts.flat(), ...drawing.dots, ...drawing.pins.map((pin) => pin.at)]
 }
 
 /** Le texte de la carte pour un lecteur d'écran : la liste dessous en dit le détail. */
 export function mapLabel(day: DayLocations): string {
   const places = day.places.length
   const parts = [places === 0 ? 'aucun lieu' : places === 1 ? '1 lieu' : `${places} lieux`]
-  if (hasTrace(day)) parts.push(`${distanceText(traceLengthM(day))} de trace`)
+  if (hasPhoneTrace(day)) parts.push(`${distanceText(traceLengthM(day))} de trace`)
+  const workouts = day.workouts.length
+  if (workouts > 0) parts.push(workouts === 1 ? '1 séance' : `${workouts} séances`)
   const current = placeRows(day, day.date).find((row) => row.ongoing)
   if (current) parts.push(`lieu ${current.number} en cours`)
   return `Carte des déplacements : ${parts.join(', ')}`

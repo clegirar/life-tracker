@@ -2709,6 +2709,27 @@ button:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * Une séance parmi les lieux : pas de numéro, un trait court de la couleur de sa trace sur la carte,
+ * centré dans la place de la pastille pour garder les textes alignés.
+ */
+.visit-workout-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+}
+
+.visit-workout-mark::before {
+  content: '';
+  width: 16px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--workout);
+}
+
 /* L'épingle sur la carte : un liseré blanc pour se détacher des tuiles et de la trace. */
 .visit-pin {
   background: none;

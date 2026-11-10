@@ -585,15 +585,36 @@ export interface LocationPlace {
   horizontal_accuracy: number | null
 }
 
-/** Les déplacements d'un jour (iPhone, Overland). */
+/**
+ * Une séance de la montre qui a une trace, commencée ce jour-là. Pendant sa fenêtre, la montre
+ * l'emporte : l'iPhone n'y a ni point ni lieu (les lieux sont coupés autour).
+ */
+export interface LocationWorkout {
+  activity_id: number
+  /** Le type tel que Garmin le donne (`running`…). */
+  activity_type: string
+  start: string
+  end: string
+  /** Heures de Paris du début et de la fin. */
+  start_time: string
+  end_time: string
+  /** Le chiffre de Garmin ; nul s'il n'en donne pas. */
+  distance_m: number | null
+  /** `[lat, lon]`, simplifiés par le connecteur. */
+  points: [number, number][]
+}
+
+/** Les déplacements d'un jour (iPhone, Overland, et les séances Garmin qui ont une trace). */
 export interface DayLocations {
   date: string
   /** Le jour est dans la période suivie : faux, c'est un jour sans données, pas sans déplacement. */
   covered: boolean
   point_count: number
   segments: LocationSegment[]
-  /** Par arrivée. */
+  /** Par arrivée, coupés autour des séances. */
   places: LocationPlace[]
+  /** Par début. */
+  workouts: LocationWorkout[]
 }
 
 export const fetchDayLocations = (date: string) => read<DayLocations>(`/v1/days/${date}/locations`)

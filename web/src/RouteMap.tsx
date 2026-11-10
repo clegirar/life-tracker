@@ -1,6 +1,6 @@
 // Les cartes du jour, sur un fond OpenStreetMap : le parcours d'une séance, façon Garmin Connect (le
 // tracé en couleurs d'allure, un repère à chaque kilomètre), et les déplacements de l'iPhone (les morceaux de trace, les points
-// isolés et les lieux numérotés). Chargé à part (React.lazy), avec Leaflet et sa feuille de style.
+// isolés, les lieux numérotés, et les séances de la montre dans leur couleur). Chargé à part (React.lazy), avec Leaflet et sa feuille de style.
 // Au toucher, la carte ne capte pas le défilement : on fait défiler la page, pas la carte, sauf une fois
 // zoomée au-delà de sa vue d'origine, où un doigt la déplace. La molette ne zoome jamais : nos boutons.
 
@@ -260,6 +260,9 @@ export function LocationMap({ drawing, label }: { drawing: MapDrawing; label: st
     const tone = color(el, '--location')
     const style = { color: tone, weight: 4, opacity: 0.9, lineJoin: 'round', lineCap: 'round', interactive: false } as const
     for (const line of drawing.lines) L.polyline(line as L.LatLngTuple[], style).addTo(map)
+    // Une séance de la montre : la même ligne, dans la couleur des séances.
+    const workout = { ...style, color: color(el, '--workout') }
+    for (const line of drawing.workouts) L.polyline(line as L.LatLngTuple[], workout).addTo(map)
     // Un point isolé : un petit rond, pour ne pas le confondre avec un lieu.
     for (const dot of drawing.dots) {
       L.circleMarker(dot as L.LatLngTuple, { radius: 4, color: '#ffffff', weight: 1.5, fillColor: tone, fillOpacity: 1, interactive: false }).addTo(map)

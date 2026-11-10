@@ -282,6 +282,8 @@ Ouvert le 7 nov. 2026, à ma demande (l'idée « Déplacements via géolocalisat
 
 **10 nov. 2026, première vraie journée** : après 18 000 points en attente sur l'iPhone (Tailscale déconnecté depuis la veille), la trace et les lieux du 9 nov. sont arrivés, mais la distance affichait 50,8 km pour un aller-retour d'environ 6 km : les sauts du GPS à l'arrêt. Correctif (branche `fix/distance-sans-sejours`) : la trace ne garde plus les points pris pendant un lieu (voir le journal des décisions de [l'architecture](architecture.md)). À revérifier sur le 9 nov. après le déploiement.
 
+**10 nov. 2026, les séances Garmin** (à ma demande, branche `feat/deplacements-seances`) : la carte Déplacements montre aussi les séances du jour qui ont une trace, la montre faisant foi pendant la séance ; les lieux sont coupés autour d'elles, et la distance les compte avec leur détail (voir le journal des décisions de [l'architecture](architecture.md)). Tests : `backend/tests/location.rs` (séance pendant un séjour à la maison ; course avec le téléphone vers un lieu, puis retour en voiture), `location.test.ts`, `e2e/location.spec.ts`. À vérifier sur une vraie course, avec puis sans le téléphone.
+
 **Terminé quand**
 
 - Une journée réelle de déplacements apparaît sur la carte du jour, avec la trace et les visites.

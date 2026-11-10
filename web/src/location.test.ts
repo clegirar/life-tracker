@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { DayLocations, LocationPlace, SourcesHealth } from './api'
+import type { DayLocations, LocationPlace, LocationWorkout, SourcesHealth } from './api'
 import {
+  dayRows,
   distanceM,
   distanceText,
   drawingPoints,
@@ -13,9 +14,12 @@ import {
   mapLabel,
   placesCount,
   stillText,
+  totalLengthM,
   traceLengthM,
   uncoveredText,
   placeRows,
+  workoutRows,
+  workoutsDetail,
 } from './location'
 
 // Des coordonnées fictives, en mer au large de Marseille.
@@ -41,6 +45,24 @@ function place(overrides: Partial<LocationPlace> = {}): LocationPlace {
   }
 }
 
+function workout(overrides: Partial<LocationWorkout> = {}): LocationWorkout {
+  return {
+    activity_id: 4242,
+    activity_type: 'running',
+    start: '2026-10-20T09:00:00Z',
+    end: '2026-10-20T09:45:00Z',
+    start_time: '11:00',
+    end_time: '11:45',
+    distance_m: 8200,
+    points: [
+      [43.25, 5.3],
+      [43.26, 5.31],
+      [43.27, 5.3],
+    ],
+    ...overrides,
+  }
+}
+
 function day(overrides: Partial<DayLocations> = {}): DayLocations {
   return {
     date: DATE,
@@ -59,6 +81,7 @@ function day(overrides: Partial<DayLocations> = {}): DayLocations {
       },
     ],
     places: [place()],
+    workouts: [],
     ...overrides,
   }
 }
@@ -244,5 +267,58 @@ describe('la carte', () => {
     expect(mapLabel(day({ segments: [], places: [place(), place()] }))).toBe('Carte des déplacements : 2 lieux')
     const here = place({ arrival: '2026-10-20T16:00:00Z', departure: null, departure_time: null, ongoing: true })
     expect(mapLabel(day({ places: [place(), here] }))).toBe('Carte des déplacements : 2 lieux, 810 m de trace, lieu 2 en cours')
+  })
+})
+
+describe('les séances de la montre', () => {
+  it('comptent dans la distance du jour, par le chiffre de Garmin ou, sans lui, par leur trace', () => {
+    expect(totalLengthM(day({ workouts: [workout()] }))).toBeCloseTo(traceLengthM(day()) + 8200, 6)
+    const traced = workout({ distance_m: null })
+    const along = distanceM([43.25, 5.3], [43.26, 5.31]) + distanceM([43.26, 5.31], [43.27, 5.3])
+    expect(totalLengthM(day({ segments: [], workouts: [traced] }))).toBeCloseTo(along, 6)
+    expect(hasTrace(day({ segments: [], workouts: [workout()] }))).toBe(true)
+  })
+
+  it('se disent sous la distance, par type, dans l’ordre du jour', () => {
+    expect(workoutsDetail(day())).toBeNull()
+    expect(workoutsDetail(day({ workouts: [workout()] }))).toBe('dont 8,2 km de course')
+    const ride = workout({ activity_id: 2, activity_type: 'cycling', distance_m: 12_000 })
+    const again = workout({ activity_id: 3, distance_m: 1800 })
+    expect(workoutsDetail(day({ workouts: [workout(), ride, again] }))).toBe('dont 10,0 km de course et 12,0 km de vélo')
+    const walk = workout({ activity_id: 4, activity_type: 'walking', distance_m: 950 })
+    expect(workoutsDetail(day({ workouts: [workout(), ride, walk] }))).toBe('dont 8,2 km de course, 12,0 km de vélo et 950 m de marche')
+    expect(workoutsDetail(day({ workouts: [workout({ distance_m: null })] }))).toBe('dont 2,8 km de course')
+  })
+
+  it('prennent leur place dans la liste, à leur heure, sans changer les numéros des lieux', () => {
+    const after = place({ arrival: '2026-10-20T09:45:00Z', departure: '2026-10-20T11:00:00Z', arrival_time: '11:45', departure_time: '13:00' })
+    const rows = dayRows(day({ places: [after, place()], workouts: [workout()] }), TODAY)
+    expect(rows.map((entry) => entry.kind)).toEqual(['place', 'workout', 'place'])
+    expect(rows.flatMap((entry) => (entry.kind === 'place' ? [entry.row.number] : []))).toEqual([1, 2])
+    expect(rows[1].row).toMatchObject({ label: 'Course', range: '11:00 – 11:45', figure: '8,2 km' })
+  })
+
+  it('disent leur durée sans distance ni trace', () => {
+    const still = workout({ distance_m: null, points: [[43.25, 5.3]] })
+    expect(workoutRows(day({ workouts: [still] }))[0].figure).toBe('45 min')
+  })
+
+  it('font d’un jour sans trace ni lieu, voire sans données de l’iPhone, un jour avec déplacements', () => {
+    expect(locationKind(day({ segments: [], places: [], workouts: [workout()] }))).toBe('moved')
+    expect(locationKind(day({ covered: false, segments: [], places: [], workouts: [workout()] }))).toBe('moved')
+  })
+
+  it('se dessinent sur la carte et en élargissent le cadre', () => {
+    const drawing = mapDrawing(day({ workouts: [workout(), workout({ activity_id: 2, points: [[43.3, 5.3]] })] }), TODAY)!
+    expect(drawing.workouts).toEqual([workout().points])
+    expect(drawingPoints(drawing)).toHaveLength(6)
+    expect(mapDrawing(day({ segments: [], places: [], workouts: [workout()] }), TODAY)!.workouts).toHaveLength(1)
+  })
+
+  it('se comptent pour un lecteur d’écran', () => {
+    expect(mapLabel(day({ workouts: [workout()] }))).toBe('Carte des déplacements : 1 lieu, 810 m de trace, 1 séance')
+    expect(mapLabel(day({ segments: [], places: [], workouts: [workout(), workout({ activity_id: 2 })] }))).toBe(
+      'Carte des déplacements : aucun lieu, 2 séances',
+    )
   })
 })
