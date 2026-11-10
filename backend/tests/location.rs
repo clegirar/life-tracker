@@ -668,3 +668,58 @@ async fn a_single_point_becomes_an_ongoing_stay_after_ten_minutes() {
     let unheard = app.locations_at("2026-11-04", "2026-11-04T14:30:00Z").await;
     assert_eq!(unheard["places"], json!([]));
 }
+
+#[tokio::test]
+async fn the_jitter_of_a_stay_is_no_trace() {
+    let app = App::new().await;
+    // Un trajet, une heure sur place avec un point toutes les 2 min qui saute de 33 m, puis un départ.
+    let mut at: Vec<(String, f64, f64)> = vec![
+        ("08:00".into(), MOVING[0].0, MOVING[0].1),
+        ("08:01".into(), MOVING[1].0, MOVING[1].1),
+        ("08:02".into(), 43.3, 5.35),
+    ];
+    for i in 1..=30 {
+        let minutes = 2 + 2 * i;
+        let lat = 43.3 + f64::from(i % 2) * 3e-4;
+        at.push((
+            format!("{:02}:{:02}", 8 + minutes / 60, minutes % 60),
+            lat,
+            5.35,
+        ));
+    }
+    at.push(("09:04".into(), 43.31, 5.35));
+    at.push(("09:05".into(), 43.32, 5.35));
+    let at: Vec<(&str, f64, f64)> = at
+        .iter()
+        .map(|(t, la, lo)| (t.as_str(), *la, *lo))
+        .collect();
+    assert_eq!(app.post(&points("2026-11-05", &at)).await.0, 200);
+
+    let day = app.locations("2026-11-05").await;
+    assert_eq!(day["places"].as_array().unwrap().len(), 1);
+    assert_eq!(day["places"][0]["arrival"], "2026-11-05T08:02:00Z");
+    assert_eq!(day["places"][0]["departure"], "2026-11-05T09:04:00Z");
+    let segments = day["segments"].as_array().unwrap();
+    let bounds: Vec<(&Value, &Value)> = segments.iter().map(|s| (&s["start"], &s["end"])).collect();
+    assert_eq!(
+        bounds,
+        [
+            (
+                &json!("2026-11-05T08:00:00Z"),
+                &json!("2026-11-05T08:02:00Z")
+            ),
+            (
+                &json!("2026-11-05T09:04:00Z"),
+                &json!("2026-11-05T09:05:00Z")
+            ),
+        ],
+        "le trajet jusqu'à l'arrivée, puis depuis le départ, sans les sauts sur place"
+    );
+    assert!(
+        segments
+            .iter()
+            .flat_map(|s| s["points"].as_array().unwrap())
+            .all(|p| p[0] != json!(43.3003)),
+        "aucun point pris sur place"
+    );
+}

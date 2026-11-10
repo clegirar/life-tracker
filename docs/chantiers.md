@@ -280,6 +280,8 @@ Ouvert le 7 nov. 2026, à ma demande (l'idée « Déplacements via géolocalisat
 
 **7 nov. 2026, web** (même branche) : la carte « Déplacements » lit `places`. Tous les lieux, visites iOS et séjours détectés sans distinction, avec leur durée (`HH:MM – HH:MM` et « 1 h 45 », ou « depuis 17:14 » et « en cours ») ; le chiffre « Lieux » compte cette liste, par arrivée, et peut dépasser la case du mois, qui ne compte que les visites iOS. Le lieu où je suis encore s'annonce en tête de carte, « Ici depuis 17 h 14 · 1 h 12 », le temps passé avançant à chaque minute d'horloge (`useMinute.ts`), et son épingle porte un halo fixe, comme sa pastille dans la liste. Tests : `location.test.ts`, `e2e/location.spec.ts` (séjours par points horaires, séjour recouvert par une visite iOS, séjour en cours aujourd'hui), captures `deplacements-sejours` et `deplacements-en-cours`.
 
+**10 nov. 2026, première vraie journée** : après 18 000 points en attente sur l'iPhone (Tailscale déconnecté depuis la veille), la trace et les lieux du 9 nov. sont arrivés, mais la distance affichait 50,8 km pour un aller-retour d'environ 6 km : les sauts du GPS à l'arrêt. Correctif (branche `fix/distance-sans-sejours`) : la trace ne garde plus les points pris pendant un lieu (voir le journal des décisions de [l'architecture](architecture.md)). À revérifier sur le 9 nov. après le déploiement.
+
 **Terminé quand**
 
 - Une journée réelle de déplacements apparaît sur la carte du jour, avec la trace et les visites.
