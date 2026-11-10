@@ -1,0 +1,77 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT w.activity_id AS \"activity_id!\", w.activity_type AS \"activity_type!\",\n                  w.start AS \"start!\", w.finish AS \"end!\", w.distance_m, w.points AS \"points!\",\n                  to_char(w.start AT TIME ZONE (SELECT timezone FROM core.settings), 'HH24:MI') AS \"start_time!\",\n                  to_char(w.finish AT TIME ZONE (SELECT timezone FROM core.settings), 'HH24:MI') AS \"end_time!\"\n           FROM (\n             SELECT DISTINCT ON (e.details->'activity_id')\n                    (e.details->>'activity_id')::int8 AS activity_id,\n                    e.details->>'type' AS activity_type,\n                    e.occurred_at AS start,\n                    e.occurred_at + make_interval(secs => round(COALESCE((e.details->>'duration_s')::float8, 0))) AS finish,\n                    (e.details->>'distance_m')::float8 AS distance_m,\n                    t.points\n             FROM derived.live_events e\n             CROSS JOIN LATERAL (\n               SELECT tr.details->'points' AS points\n               FROM derived.live_events tr\n               WHERE tr.generation = e.generation AND tr.metric = 'workout.track'\n                 AND tr.details->'activity_id' = e.details->'activity_id'\n               ORDER BY tr.seq DESC\n               LIMIT 1) t\n             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')\n               AND e.metric = 'workout'\n               AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n               AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))\n             ORDER BY e.details->'activity_id', e.seq DESC) w\n           ORDER BY w.start, w.activity_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "activity_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "activity_type!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "start!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "derived.live_events",
+            "name": "occurred_at"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "end!",
+        "type_info": "Timestamptz",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "distance_m",
+        "type_info": "Float8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "points!",
+        "type_info": "Jsonb",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "start_time!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 7,
+        "name": "end_time!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Date"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      true,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "b016298a3d3cd780fca81c0d08f6fc6531ae1c44c1e541d32c2106a991a4283b"
+}

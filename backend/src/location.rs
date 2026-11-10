@@ -1,4 +1,5 @@
-//! La carte Déplacements de la page du jour : la trace de l'iPhone et les lieux où je suis resté. Une
+//! La carte Déplacements de la page du jour : la trace de l'iPhone, les séances de la montre qui ont
+//! une trace, et les lieux où je suis resté. Une
 //! lecture de la web app seulement, derrière la session : elle donne des coordonnées, que le MCP ne voit
 //! jamais (hors de `READ_ROUTES`, voir l'architecture). Le MCP ne lit des lieux que leurs détails
 //! partagés, à travers les zones de confidentialité.
@@ -15,7 +16,20 @@
 //!   suivant, et la trace ne les relie jamais ;
 //! - les lieux qui touchent ce jour-là, arrivés la veille compris (une nuit à la maison) : les visites
 //!   iOS complètes, et les séjours détectés dans les points (voir plus bas), dont un éventuel séjour en
-//!   cours.
+//!   cours ;
+//! - les séances Garmin commencées ce jour-là qui ont une trace (`workout.track`, la plus récente si
+//!   plusieurs restent vivantes), par début : leur fenêtre va du début à la fin (début plus
+//!   `duration_s`), et leurs points sont ceux de la trace, sans les secondes.
+//!
+//! **Pendant une séance, la montre l'emporte.** Je cours souvent sans le téléphone, et quand je l'ai,
+//! la montre trace mieux : les points de l'iPhone strictement dans la fenêtre d'une séance tombent, et
+//! la trace de l'iPhone ne se relie jamais par-dessus. Un lieu qui recouvre une séance est coupé
+//! autour d'elle (`cut_places`) : une partie jusqu'au début de la séance, une autre depuis sa fin.
+//! Une partie terminée de moins de `MIN_STAY_SECONDS` disparaît : c'est le bord d'un lieu qui déborde
+//! sur la séance (le départ de la maison noté au premier point après la sortie, une minute après le
+//! début de la course ; l'arrivée notée pendant le retour au calme), pas un séjour. Une partie en
+//! cours reste dès qu'elle a une durée. Tout cela se calcule à la lecture, sur cette route de session
+//! seulement : la mesure `place.visit`, le calendrier et le MCP ne changent pas.
 //!
 //! **Séjours détectés.** Une visite iOS n'entre au journal qu'une fois terminée, et jamais si iOS ne
 //! connaît pas son arrivée : le lieu où je suis en ce moment n'en a pas. Un séjour est une suite
@@ -83,7 +97,7 @@ pub struct Segment {
 }
 
 /// Un lieu où je suis resté : une visite iOS ou un séjour détecté dans les points.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct Place {
     /// `visit` (une visite iOS) ou `points` (un séjour détecté).
     origin: &'static str,
@@ -105,6 +119,23 @@ pub struct Place {
     horizontal_accuracy: Option<f64>,
 }
 
+/// Une séance de la montre qui a une trace.
+#[derive(Serialize)]
+pub struct WorkoutTrace {
+    activity_id: u64,
+    /// Le type tel que Garmin le donne (`running`…).
+    activity_type: String,
+    start: DateTime<Utc>,
+    /// Le début plus la durée de la séance, à la seconde.
+    end: DateTime<Utc>,
+    /// Heure de Paris, `HH:MM`, du début et de la fin.
+    start_time: String,
+    end_time: String,
+    distance_m: Option<f64>,
+    /// `[lat, lon]` au millionième, tels que le connecteur les a simplifiés.
+    points: Vec<[f64; 2]>,
+}
+
 #[derive(Serialize)]
 pub struct DayLocations {
     date: NaiveDate,
@@ -114,8 +145,10 @@ pub struct DayLocations {
     point_count: i64,
     /// Dans l'ordre du temps.
     segments: Vec<Segment>,
-    /// Par arrivée.
+    /// Par arrivée, coupés autour des séances.
     places: Vec<Place>,
+    /// Par début.
+    workouts: Vec<WorkoutTrace>,
 }
 
 struct Point {
@@ -214,7 +247,8 @@ pub async fn day(
         horizontal_accuracy: v.accuracy,
     })
     .collect();
-    let places = with_stays(pool, date, now, visits).await?;
+    let workouts = workouts(pool, date).await?;
+    let places = cut_places(with_stays(pool, date, now, visits).await?, &workouts, now);
 
     let covered = sqlx::query_scalar!(
         r#"WITH bounds AS (
@@ -238,9 +272,108 @@ pub async fn day(
         date,
         covered,
         point_count,
-        segments: segments(&points, &stops(&places, now)),
+        segments: segments(&points, &stops(&places, &workouts, now)),
         places,
+        workouts,
     })
+}
+
+/// Les séances commencées ce jour-là à Paris qui ont une trace vivante, par début. Une séance restée
+/// vivante en plusieurs versions (annulation manquée) n'est comptée qu'une fois, la plus récente.
+async fn workouts(pool: &PgPool, date: NaiveDate) -> Result<Vec<WorkoutTrace>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"SELECT w.activity_id AS "activity_id!", w.activity_type AS "activity_type!",
+                  w.start AS "start!", w.finish AS "end!", w.distance_m, w.points AS "points!",
+                  to_char(w.start AT TIME ZONE (SELECT timezone FROM core.settings), 'HH24:MI') AS "start_time!",
+                  to_char(w.finish AT TIME ZONE (SELECT timezone FROM core.settings), 'HH24:MI') AS "end_time!"
+           FROM (
+             SELECT DISTINCT ON (e.details->'activity_id')
+                    (e.details->>'activity_id')::int8 AS activity_id,
+                    e.details->>'type' AS activity_type,
+                    e.occurred_at AS start,
+                    e.occurred_at + make_interval(secs => round(COALESCE((e.details->>'duration_s')::float8, 0))) AS finish,
+                    (e.details->>'distance_m')::float8 AS distance_m,
+                    t.points
+             FROM derived.live_events e
+             CROSS JOIN LATERAL (
+               SELECT tr.details->'points' AS points
+               FROM derived.live_events tr
+               WHERE tr.generation = e.generation AND tr.metric = 'workout.track'
+                 AND tr.details->'activity_id' = e.details->'activity_id'
+               ORDER BY tr.seq DESC
+               LIMIT 1) t
+             WHERE e.generation = (SELECT id FROM derived.generations WHERE state = 'active')
+               AND e.metric = 'workout'
+               AND e.occurred_at >= ($1::date::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+               AND e.occurred_at < (($1::date + 1)::timestamp AT TIME ZONE (SELECT timezone FROM core.settings))
+             ORDER BY e.details->'activity_id', e.seq DESC) w
+           ORDER BY w.start, w.activity_id"#,
+        date,
+    )
+    .fetch_all(pool)
+    .await?;
+    let round = |v: f64| (v * 1e6).round() / 1e6;
+    Ok(rows
+        .into_iter()
+        .map(|r| WorkoutTrace {
+            activity_id: r.activity_id as u64,
+            activity_type: r.activity_type,
+            start: r.start,
+            end: r.end,
+            start_time: r.start_time,
+            end_time: r.end_time,
+            distance_m: r.distance_m,
+            // L'interprète a validé chaque point : `[lat, lon, secondes]`.
+            points: r
+                .points
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|p| Some([round(p.get(0)?.as_f64()?), round(p.get(1)?.as_f64()?)]))
+                .collect(),
+        })
+        .collect())
+}
+
+/// Les lieux coupés autour des séances : la partie d'avant finit au début de la séance, celle d'après
+/// commence à sa fin et garde le départ du lieu (en cours compris). Une partie terminée de moins de
+/// `MIN_STAY_SECONDS` disparaît (un bord du lieu qui déborde sur la séance) ; une partie en cours
+/// reste dès qu'elle a une durée.
+fn cut_places(places: Vec<Place>, workouts: &[WorkoutTrace], now: DateTime<Utc>) -> Vec<Place> {
+    let mut places = places;
+    for workout in workouts {
+        places = places
+            .into_iter()
+            .flat_map(|place| {
+                let end = place.departure.unwrap_or(now);
+                if workout.end <= place.arrival || end <= workout.start {
+                    return vec![place];
+                }
+                let before = Place {
+                    departure: Some(workout.start),
+                    departure_time: Some(workout.start_time.clone()),
+                    departed_after: false,
+                    ongoing: false,
+                    duration_s: (workout.start - place.arrival).num_seconds(),
+                    ..place.clone()
+                };
+                // La séance commence ce jour-là : la partie d'après aussi.
+                let after = Place {
+                    arrival: workout.end,
+                    arrival_time: workout.end_time.clone(),
+                    arrived_before: false,
+                    duration_s: (end - workout.end).num_seconds(),
+                    ..place
+                };
+                [before, after]
+                    .into_iter()
+                    .filter(|p| p.duration_s >= MIN_STAY_SECONDS || (p.ongoing && p.duration_s > 0))
+                    .collect()
+            })
+            .collect();
+    }
+    places.sort_by_key(|p| p.arrival);
+    places
 }
 
 /// Les visites iOS, plus les séjours détectés qui ne recouvrent aucune d'elles, par arrivée.
@@ -434,16 +567,22 @@ fn stays(points: &[StayPoint]) -> (Vec<Range<usize>>, Option<Range<usize>>) {
     (found, None)
 }
 
-/// L'arrivée et le départ de chaque lieu ; maintenant pour un séjour en cours.
-fn stops(places: &[Place], now: DateTime<Utc>) -> Vec<(DateTime<Utc>, DateTime<Utc>)> {
+/// L'arrivée et le départ de chaque lieu, maintenant pour un séjour en cours ; le début et la fin de
+/// chaque séance.
+fn stops(
+    places: &[Place],
+    workouts: &[WorkoutTrace],
+    now: DateTime<Utc>,
+) -> Vec<(DateTime<Utc>, DateTime<Utc>)> {
     places
         .iter()
         .map(|p| (p.arrival, p.departure.unwrap_or(now)))
+        .chain(workouts.iter().map(|w| (w.start, w.end)))
         .collect()
 }
 
-/// Les morceaux de la trace : sans les points pris pendant un lieu, coupés aux lieux et aux silences,
-/// puis simplifiés.
+/// Les morceaux de la trace : sans les points pris pendant un lieu ou une séance, coupés là où l'un
+/// d'eux passe entre deux points et aux silences, puis simplifiés.
 fn segments(points: &[Point], stops: &[(DateTime<Utc>, DateTime<Utc>)]) -> Vec<Segment> {
     let moving: Vec<&Point> = points
         .iter()
@@ -452,7 +591,7 @@ fn segments(points: &[Point], stops: &[(DateTime<Utc>, DateTime<Utc>)]) -> Vec<S
     moving
         .chunk_by(|a, b| {
             (b.at - a.at).num_seconds() <= MAX_GAP_SECONDS
-                && !stops.iter().any(|(from, to)| *from <= a.at && b.at <= *to)
+                && !stops.iter().any(|(from, to)| *from < b.at && a.at < *to)
         })
         .map(|chunk| {
             let (first, last) = (&chunk[0], &chunk[chunk.len() - 1]);
@@ -555,5 +694,164 @@ mod tests {
         let (found, trailing) = stays(&points[..4]);
         assert_eq!((found.len(), &found[0], trailing), (1, &(2..4), None));
         assert_eq!(stays(&[]), (vec![], None));
+    }
+
+    fn time(minutes: i64) -> DateTime<Utc> {
+        at(minutes, 0.0, 0.0).at
+    }
+
+    /// Un lieu de `from` à `to` minutes après 08:00 UTC ; en cours sans `to`.
+    fn place(from: i64, to: Option<i64>) -> Place {
+        Place {
+            origin: "points",
+            lat: 43.3,
+            lon: 5.35,
+            arrival: time(from),
+            departure: to.map(time),
+            arrival_time: format!("a{from}"),
+            departure_time: to.map(|t| format!("d{t}")),
+            arrived_before: true,
+            departed_after: to.is_some(),
+            duration_s: (to.map_or(time(600), time) - time(from)).num_seconds(),
+            ongoing: to.is_none(),
+            horizontal_accuracy: Some(12.0),
+        }
+    }
+
+    fn workout(from: i64, to: i64) -> WorkoutTrace {
+        WorkoutTrace {
+            activity_id: 1,
+            activity_type: "running".into(),
+            start: time(from),
+            end: time(to),
+            start_time: format!("s{from}"),
+            end_time: format!("e{to}"),
+            distance_m: None,
+            points: vec![],
+        }
+    }
+
+    /// `(arrivée, départ, durée en minutes)` en minutes après 08:00 UTC.
+    fn spans(places: &[Place]) -> Vec<(i64, Option<i64>, i64)> {
+        places
+            .iter()
+            .map(|p| {
+                let minutes = |t: DateTime<Utc>| (t - time(0)).num_minutes();
+                (
+                    minutes(p.arrival),
+                    p.departure.map(minutes),
+                    p.duration_s / 60,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_workout_cuts_its_place_in_two() {
+        let now = time(600);
+        let cut = cut_places(vec![place(0, Some(300))], &[workout(60, 105)], now);
+        assert_eq!(spans(&cut), [(0, Some(60), 60), (105, Some(300), 195)]);
+        let (before, after) = (&cut[0], &cut[1]);
+        assert_eq!(
+            (
+                before.departure_time.as_deref(),
+                before.departed_after,
+                before.arrived_before
+            ),
+            (Some("s60"), false, true)
+        );
+        assert_eq!(
+            (
+                after.arrival_time.as_str(),
+                after.arrived_before,
+                after.departed_after
+            ),
+            ("e105", false, true)
+        );
+        assert_eq!(after.departure_time.as_deref(), Some("d300"));
+        assert!(
+            cut.iter().all(|p| p.origin == "points"
+                && p.lat == 43.3
+                && p.horizontal_accuracy == Some(12.0))
+        );
+    }
+
+    #[test]
+    fn a_workout_at_the_edge_of_a_place_leaves_one_part() {
+        let now = time(600);
+        let cut = cut_places(vec![place(0, Some(300))], &[workout(-30, 45)], now);
+        assert_eq!(spans(&cut), [(45, Some(300), 255)]);
+        let cut = cut_places(vec![place(0, Some(300))], &[workout(250, 320)], now);
+        assert_eq!(spans(&cut), [(0, Some(250), 250)]);
+        // Une séance qui commence au départ ne touche pas le lieu.
+        let cut = cut_places(vec![place(0, Some(300))], &[workout(300, 340)], now);
+        assert_eq!(spans(&cut), [(0, Some(300), 300)]);
+    }
+
+    #[test]
+    fn the_sliver_of_a_place_beside_a_workout_disappears() {
+        let now = time(600);
+        // Le séjour se termine 5 min après la fin de la séance, ou commence 5 min avant son début.
+        let cut = cut_places(vec![place(30, Some(110))], &[workout(60, 105)], now);
+        assert_eq!(spans(&cut), [(30, Some(60), 30)]);
+        let cut = cut_places(vec![place(55, Some(300))], &[workout(60, 105)], now);
+        assert_eq!(spans(&cut), [(105, Some(300), 195)]);
+        // Juste 15 min : un séjour.
+        let cut = cut_places(vec![place(45, Some(300))], &[workout(60, 105)], now);
+        assert_eq!(spans(&cut), [(45, Some(60), 15), (105, Some(300), 195)]);
+        // En cours, une partie de 2 min reste.
+        let cut = cut_places(vec![place(0, None)], &[workout(60, 105)], time(107));
+        assert_eq!(spans(&cut), [(0, Some(60), 60), (105, None, 2)]);
+        assert!(cut[1].ongoing);
+    }
+
+    #[test]
+    fn a_workout_in_an_ongoing_place_leaves_it_ongoing_after() {
+        let now = time(600);
+        let cut = cut_places(vec![place(0, None)], &[workout(60, 105)], now);
+        assert_eq!(spans(&cut), [(0, Some(60), 60), (105, None, 495)]);
+        assert_eq!((cut[0].ongoing, cut[1].ongoing), (false, true));
+        assert_eq!(cut[1].departure_time, None);
+    }
+
+    #[test]
+    fn a_workout_outside_a_place_changes_nothing() {
+        let now = time(600);
+        let places = vec![place(0, Some(50)), place(120, Some(300))];
+        let cut = cut_places(places, &[workout(60, 105)], now);
+        assert_eq!(spans(&cut), [(0, Some(50), 50), (120, Some(300), 180)]);
+        assert_eq!(cut[0].departure_time.as_deref(), Some("d50"));
+    }
+
+    #[test]
+    fn two_workouts_in_a_place_leave_three_parts() {
+        let now = time(600);
+        let cut = cut_places(
+            vec![place(0, Some(300))],
+            &[workout(200, 230), workout(60, 105)],
+            now,
+        );
+        assert_eq!(
+            spans(&cut),
+            [
+                (0, Some(60), 60),
+                (105, Some(200), 95),
+                (230, Some(300), 70)
+            ]
+        );
+    }
+
+    #[test]
+    fn the_iphone_trace_gives_way_to_a_workout() {
+        // Un point par minute de 0 à 30 : la séance de 10 à 20 en efface l'intérieur et coupe la
+        // trace, même sans silence de 15 min.
+        let points: Vec<Point> = (0..=30)
+            .map(|i| at(i, 43.0, 5.0 + i as f64 * 1e-3))
+            .collect();
+        let windows = stops(&[], &[workout(10, 20)], time(600));
+        let cut = segments(&points, &windows);
+        assert_eq!(cut.len(), 2);
+        assert_eq!((cut[0].start, cut[0].end), (time(0), time(10)));
+        assert_eq!((cut[1].start, cut[1].end), (time(20), time(30)));
     }
 }

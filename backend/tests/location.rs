@@ -180,6 +180,55 @@ impl App {
         .unwrap();
     }
 
+    /// La source `garmin`, avec les séances et leurs traces ; renvoie son token.
+    async fn garmin(&self) -> String {
+        let token = admin::create_source(&self.db.admin, "garmin", Some("12 hours"), None)
+            .await
+            .unwrap();
+        for kind in ["garmin.activity", "garmin.activity_track"] {
+            admin::grant_kind(&self.db.admin, "garmin", kind)
+                .await
+                .unwrap();
+        }
+        token
+    }
+
+    /// Une séance comme le connecteur Garmin l'envoie, avec sa trace `[lat, lon, secondes]` s'il y en a
+    /// une.
+    #[allow(clippy::too_many_arguments)]
+    async fn workout(
+        &self,
+        token: &str,
+        id: u64,
+        kind: &str,
+        start: &str,
+        duration_s: f64,
+        distance_m: Option<f64>,
+        track: Option<Value>,
+    ) {
+        let mut records = vec![json!({
+            "key": format!("activity:{id}"), "kind": "garmin.activity", "schema_version": 1,
+            "occurred_at": start,
+            "payload": {"activity_id": id, "type": kind, "duration_s": duration_s,
+                        "distance_m": distance_m},
+        })];
+        if let Some(points) = track {
+            records.push(json!({
+                "key": format!("track:{id}"), "kind": "garmin.activity_track", "schema_version": 1,
+                "occurred_at": start, "payload": {"activity_id": id, "points": points},
+            }));
+        }
+        let response = self
+            .http
+            .post(format!("{}/v1/records", self.base))
+            .bearer_auth(token)
+            .json(&json!({ "records": records }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+    }
+
     async fn records(&self, kind: &str) -> i64 {
         self.db
             .count(&format!(
@@ -721,5 +770,218 @@ async fn the_jitter_of_a_stay_is_no_trace() {
             .flat_map(|s| s["points"].as_array().unwrap())
             .all(|p| p[0] != json!(43.3003)),
         "aucun point pris sur place"
+    );
+}
+
+#[tokio::test]
+async fn a_workout_with_a_track_cuts_the_place_and_silences_the_iphone() {
+    let app = App::new().await;
+    // La matinée à la maison, un point toutes les 10 min de 07:00 à 12:00 UTC, à quelques mètres près.
+    let home: Vec<(String, f64, f64)> = (0..=30)
+        .map(|i| {
+            let minutes = 7 * 60 + 10 * i;
+            let jitter = f64::from(i % 3) * 1e-4;
+            (
+                format!("{:02}:{:02}", minutes / 60, minutes % 60),
+                43.3 + jitter,
+                5.35,
+            )
+        })
+        .collect();
+    let home: Vec<(&str, f64, f64)> = home.iter().map(|(t, a, o)| (t.as_str(), *a, *o)).collect();
+    assert_eq!(app.post(&points("2026-11-06", &home)).await.0, 200);
+
+    // Une course de 09:00 à 09:45 UTC avec sa trace, et une séance sans trace l'après-midi.
+    let garmin = app.garmin().await;
+    let track = json!([
+        [43.25, 5.3, 0],
+        [43.26, 5.31, 1200],
+        [43.2700004, 5.3, 2700]
+    ]);
+    app.workout(
+        &garmin,
+        4242,
+        "running",
+        "2026-11-06T10:00:00+01:00",
+        2700.4,
+        Some(8200.0),
+        Some(track),
+    )
+    .await;
+    app.workout(
+        &garmin,
+        4343,
+        "strength_training",
+        "2026-11-06T15:00:00+01:00",
+        1800.0,
+        None,
+        None,
+    )
+    .await;
+
+    let day = app.locations("2026-11-06").await;
+    assert_eq!(
+        day["workouts"],
+        json!([{"activity_id": 4242, "activity_type": "running",
+                "start": "2026-11-06T09:00:00Z", "end": "2026-11-06T09:45:00Z",
+                "start_time": "10:00", "end_time": "10:45", "distance_m": 8200.0,
+                "points": [[43.25, 5.3], [43.26, 5.31], [43.27, 5.3]]}]),
+        "la séance sans trace n'y est pas"
+    );
+    let places: Vec<(&Value, &Value, &Value, &Value)> = day["places"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (
+                &p["arrival"],
+                &p["departure"],
+                &p["departure_time"],
+                &p["duration_s"],
+            )
+        })
+        .collect();
+    assert_eq!(
+        places,
+        [
+            (
+                &json!("2026-11-06T07:00:00Z"),
+                &json!("2026-11-06T09:00:00Z"),
+                &json!("10:00"),
+                &json!(7200)
+            ),
+            (
+                &json!("2026-11-06T09:45:00Z"),
+                &json!("2026-11-06T12:00:00Z"),
+                &json!("13:00"),
+                &json!(8100)
+            ),
+        ],
+        "le séjour coupé autour de la course"
+    );
+    assert_eq!(day["places"][1]["arrival_time"], "10:45");
+    let during = |at: &Value| {
+        let at = at.as_str().unwrap();
+        ("2026-11-06T09:00:00Z" < at) && (at < "2026-11-06T09:45:00Z")
+    };
+    for segment in day["segments"].as_array().unwrap() {
+        assert!(
+            !during(&segment["start"]) && !during(&segment["end"]),
+            "aucun point de l'iPhone pendant la course : {segment}"
+        );
+        assert!(
+            !(segment["start"].as_str() < Some("2026-11-06T09:45:00Z")
+                && segment["end"].as_str() > Some("2026-11-06T09:00:00Z")),
+            "la trace de l'iPhone ne passe pas par-dessus la course : {segment}"
+        );
+    }
+    // La veille, sans séance.
+    assert_eq!(app.locations("2026-11-05").await["workouts"], json!([]));
+}
+
+#[tokio::test]
+async fn a_run_to_a_friend_then_a_drive_home_is_drawn_once() {
+    let app = App::new().await;
+    // Une course de la maison (43.3, 5.35) jusqu'à X (43.36, 5.42), avec la montre et le téléphone, de
+    // 10:00 à 10:45 UTC ; trois heures chez X, le retour en voiture sans la montre, puis la maison.
+    let (home, x) = ((43.3, 5.35), (43.36, 5.42));
+    let along = |k: u32| {
+        let f = f64::from(k) / 14.0;
+        (home.0 + (x.0 - home.0) * f, home.1 + (x.1 - home.1) * f)
+    };
+    let mut at: Vec<(String, f64, f64)> = Vec::new();
+    let mut push = |minutes: u32, (lat, lon): (f64, f64)| {
+        at.push((format!("{:02}:{:02}", minutes / 60, minutes % 60), lat, lon));
+    };
+    for i in 0..12 {
+        // La matinée à la maison, à quelques mètres près.
+        push(8 * 60 + 10 * i, (home.0 + f64::from(i % 3) * 1e-4, home.1));
+    }
+    for k in 1..=13 {
+        // Le téléphone court aussi : un point toutes les 3 min, le premier une minute après le départ.
+        push(10 * 60 - 2 + 3 * k, along(k));
+    }
+    for minutes in [
+        10 * 60 + 40,
+        10 * 60 + 45,
+        11 * 60,
+        12 * 60,
+        13 * 60,
+        13 * 60 + 45,
+    ] {
+        // L'arrivée chez X notée pendant le retour au calme, 5 min avant la fin de la séance.
+        push(minutes, (x.0 + 2e-4, x.1));
+    }
+    for (j, k) in [12, 10, 8, 6, 4, 2].into_iter().enumerate() {
+        // Le retour en voiture.
+        push(13 * 60 + 50 + 5 * j as u32, along(k));
+    }
+    for minutes in [14 * 60 + 20, 15 * 60, 16 * 60, 17 * 60] {
+        push(minutes, home);
+    }
+    let at: Vec<(&str, f64, f64)> = at.iter().map(|(t, a, o)| (t.as_str(), *a, *o)).collect();
+    assert_eq!(app.post(&points("2026-11-07", &at)).await.0, 200);
+    let garmin = app.garmin().await;
+    let track = json!([[43.3, 5.35, 0], [43.33, 5.39, 1300], [43.36, 5.42, 2700]]);
+    let start = "2026-11-07T11:00:00+01:00";
+    app.workout(
+        &garmin,
+        77,
+        "running",
+        start,
+        2700.0,
+        Some(9100.0),
+        Some(track),
+    )
+    .await;
+
+    let day = app.locations("2026-11-07").await;
+    assert_eq!(day["workouts"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        (
+            &day["workouts"][0]["activity_type"],
+            &day["workouts"][0]["distance_m"]
+        ),
+        (&json!("running"), &json!(9100.0))
+    );
+    assert_eq!(
+        day["workouts"][0]["points"],
+        json!([[43.3, 5.35], [43.33, 5.39], [43.36, 5.42]])
+    );
+    let places: Vec<(&str, &str)> = day["places"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (
+                p["arrival"].as_str().unwrap(),
+                p["departure"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        places,
+        [
+            ("2026-11-07T08:00:00Z", "2026-11-07T10:00:00Z"),
+            ("2026-11-07T10:45:00Z", "2026-11-07T13:50:00Z"),
+            ("2026-11-07T14:20:00Z", "2026-11-07T17:00:00Z"),
+        ],
+        "la maison jusqu'au départ de la course, X depuis sa fin, sans bord de quelques minutes, la maison au retour"
+    );
+    let segments: Vec<(&str, &str)> = day["segments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["start"].as_str().unwrap(), s["end"].as_str().unwrap()))
+        .collect();
+    assert!(
+        segments
+            .iter()
+            .all(|(from, to)| *to <= "2026-11-07T10:00:00Z" || *from >= "2026-11-07T10:45:00Z"),
+        "aucun point de l'iPhone pendant la course : {segments:?}"
+    );
+    assert!(
+        segments.contains(&("2026-11-07T13:50:00Z", "2026-11-07T14:20:00Z")),
+        "le retour en voiture, du départ de X à l'arrivée à la maison : {segments:?}"
     );
 }

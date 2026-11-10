@@ -2,6 +2,7 @@ import { lazy, useMemo, useRef, useState } from 'react'
 import type { SourcesHealth } from './api'
 import { MapFigure } from './ActivityCard'
 import {
+  dayRows,
   distanceText,
   hasTrace,
   hereText,
@@ -9,12 +10,13 @@ import {
   locationKind,
   mapDrawing,
   mapLabel,
-  placeRows,
   placesCount,
   stillText,
-  traceLengthM,
+  totalLengthM,
   uncoveredText,
+  workoutsDetail,
   type PlaceRow,
+  type WorkoutRow,
 } from './location'
 import { MoreButton } from './MusicCard'
 import { visibleRows } from './music'
@@ -52,6 +54,23 @@ function PlaceLine({ row }: { row: PlaceRow }) {
 }
 
 /**
+ * Une séance de la montre, à son heure parmi les lieux : sans numéro (les numéros sont ceux des
+ * épingles), un trait de la couleur de sa trace sur la carte à la place de la pastille.
+ */
+function WorkoutLine({ row }: { row: WorkoutRow }) {
+  return (
+    <li className="row visit" data-testid="visit-workout">
+      <span className="visit-workout-mark" aria-hidden="true" />
+      <div className="row-text visit-text">
+        <p className="row-name">{row.label}</p>
+        <p className="row-detail">{row.range}</p>
+      </div>
+      <span className="row-count">{row.figure}</span>
+    </li>
+  )
+}
+
+/**
  * Le lieu où je suis encore, en haut de la carte : « Ici depuis 17 h 14 · 1 h 12 », avec la pastille de
  * son épingle. Le temps passé avance à chaque minute, sans animation. Un composant à part : seul lui se
  * redessine chaque minute, pas la carte.
@@ -80,12 +99,13 @@ export function LocationCard({ date, today, state, health }: Props) {
   const unfolded = unfoldedOn === date
 
   const kind = locations ? locationKind(locations) : null
-  const rows = useMemo(() => (locations ? placeRows(locations, today) : []), [locations, today])
-  const here = rows.find((row) => row.ongoing) ?? null
+  const rows = useMemo(() => (locations ? dayRows(locations, today) : []), [locations, today])
+  const here = rows.flatMap((entry) => (entry.kind === 'place' && entry.row.ongoing ? [entry.row] : [])).at(0) ?? null
   // Le même objet tant que les données ne changent pas : la carte ne se redessine pas à chaque relecture.
   const drawing = useMemo(() => (locations ? mapDrawing(locations, today) : null), [locations, today])
   const shownRows = visibleRows(rows, unfolded).shown
   const places = locations ? placesCount(locations) : null
+  const detail = locations ? workoutsDetail(locations) : null
 
   return (
     <section className="card card-location" aria-labelledby="titre-deplacements" data-testid="location">
@@ -133,9 +153,14 @@ export function LocationCard({ date, today, state, health }: Props) {
             <div>
               <dt>Distance</dt>
               <dd className="stat-value" data-testid="location-distance">
-                {hasTrace(locations) ? distanceText(traceLengthM(locations)) : '–'}
+                {hasTrace(locations) ? distanceText(totalLengthM(locations)) : '–'}
               </dd>
               {!hasTrace(locations) && <dd className="stat-note">Aucune trace</dd>}
+              {detail && (
+                <dd className="stat-note" data-testid="location-distance-detail">
+                  {detail}
+                </dd>
+              )}
             </div>
           </dl>
 
@@ -154,9 +179,9 @@ export function LocationCard({ date, today, state, health }: Props) {
             ) : (
               <>
                 <ol className="rows visit-rows">
-                  {shownRows.map((row) => (
-                    <PlaceLine key={row.key} row={row} />
-                  ))}
+                  {shownRows.map((entry) =>
+                    entry.kind === 'place' ? <PlaceLine key={entry.row.key} row={entry.row} /> : <WorkoutLine key={entry.row.key} row={entry.row} />,
+                  )}
                 </ol>
                 <MoreButton total={rows.length} expanded={unfolded} onToggle={() => setUnfoldedOn(unfolded ? null : date)} section={placesSection} />
               </>
