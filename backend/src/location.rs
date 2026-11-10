@@ -8,6 +8,11 @@
 //!   les antennes), coupés en morceaux là où deux points s'écartent de plus de `MAX_GAP_SECONDS` (le
 //!   téléphone immobile ou hors suivi : on ne trace pas de ligne à travers), puis chaque morceau
 //!   simplifié par Douglas–Peucker à `TOLERANCE_M`, comme la trace d'une séance ;
+//! - **sans les points pris pendant un lieu** (voir plus bas) : à l'arrêt, iOS continue de relever des
+//!   positions qui sautent de quelques dizaines de mètres, et leur somme faisait des dizaines de
+//!   kilomètres pour une journée à la maison. Seuls les points strictement entre l'arrivée et le départ
+//!   d'un lieu tombent : le point d'arrivée finit le trajet qui y mène, celui du départ ouvre le
+//!   suivant, et la trace ne les relie jamais ;
 //! - les lieux qui touchent ce jour-là, arrivés la veille compris (une nuit à la maison) : les visites
 //!   iOS complètes, et les séjours détectés dans les points (voir plus bas), dont un éventuel séjour en
 //!   cours.
@@ -233,7 +238,7 @@ pub async fn day(
         date,
         covered,
         point_count,
-        segments: segments(&points),
+        segments: segments(&points, &stops(&places, now)),
         places,
     })
 }
@@ -429,10 +434,26 @@ fn stays(points: &[StayPoint]) -> (Vec<Range<usize>>, Option<Range<usize>>) {
     (found, None)
 }
 
-/// Les morceaux de la trace : coupés aux silences, puis simplifiés.
-fn segments(points: &[Point]) -> Vec<Segment> {
-    points
-        .chunk_by(|a, b| (b.at - a.at).num_seconds() <= MAX_GAP_SECONDS)
+/// L'arrivée et le départ de chaque lieu ; maintenant pour un séjour en cours.
+fn stops(places: &[Place], now: DateTime<Utc>) -> Vec<(DateTime<Utc>, DateTime<Utc>)> {
+    places
+        .iter()
+        .map(|p| (p.arrival, p.departure.unwrap_or(now)))
+        .collect()
+}
+
+/// Les morceaux de la trace : sans les points pris pendant un lieu, coupés aux lieux et aux silences,
+/// puis simplifiés.
+fn segments(points: &[Point], stops: &[(DateTime<Utc>, DateTime<Utc>)]) -> Vec<Segment> {
+    let moving: Vec<&Point> = points
+        .iter()
+        .filter(|p| !stops.iter().any(|(from, to)| *from < p.at && p.at < *to))
+        .collect();
+    moving
+        .chunk_by(|a, b| {
+            (b.at - a.at).num_seconds() <= MAX_GAP_SECONDS
+                && !stops.iter().any(|(from, to)| *from <= a.at && b.at <= *to)
+        })
         .map(|chunk| {
             let (first, last) = (&chunk[0], &chunk[chunk.len() - 1]);
             let raw: Vec<[f64; 3]> = chunk
@@ -474,12 +495,35 @@ mod tests {
             .map(|i| at(i, 43.0, 5.0 + i as f64 * 1e-3))
             .collect();
         points.push(at(40, 43.1, 5.1));
-        let cut = segments(&points);
+        let cut = segments(&points, &[]);
         assert_eq!(cut.len(), 2);
         assert_eq!(cut[0].points, [[43.0, 5.0], [43.0, 5.009]]);
         assert_eq!(cut[1].points, [[43.1, 5.1]]);
         assert_eq!((cut[0].end - cut[0].start).num_minutes(), 9);
-        assert!(segments(&[]).is_empty());
+        assert!(segments(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn the_jitter_of_a_stay_is_no_trace() {
+        // Un trajet de 10 min, une heure au même endroit avec des sauts de 30 m chaque minute, puis le
+        // départ : seuls les deux trajets restent, coupés au lieu.
+        let mut points: Vec<Point> = (0..10)
+            .map(|i| at(i, 43.0, 5.0 + i as f64 * 1e-3))
+            .collect();
+        points.extend((10..70).map(|i| at(i, 43.0 + (i % 2) as f64 * 3e-4, 5.01)));
+        points.extend((70..80).map(|i| at(i, 43.0, 5.01 + (i - 69) as f64 * 1e-3)));
+        let stop = (points[10].at, points[70].at);
+        let cut = segments(&points, &[stop]);
+        assert_eq!(cut.len(), 2);
+        assert_eq!(cut[0].points, [[43.0, 5.0], [43.0, 5.01]]);
+        assert_eq!(cut[1].points, [[43.0, 5.011], [43.0, 5.02]]);
+        assert_eq!(
+            (cut[0].end, cut[1].start),
+            stop,
+            "le point d'arrivée et celui du départ restent"
+        );
+        // Sans le lieu, les sauts font la trace.
+        assert!(segments(&points, &[])[0].points.len() > 30);
     }
 
     fn stay_point(minutes: i64, lat: f64, lon: f64) -> StayPoint {
