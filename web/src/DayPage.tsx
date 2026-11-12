@@ -15,11 +15,11 @@ import { useHealth, useKnownMetrics, usePrefetch } from './queries'
 import { addDays, dayTitle, emptyLabel, longDate, parisInstant, parisTime } from './time'
 import type { useCoffee } from './useCoffee'
 import { useMonth } from './useMonth'
-import { useSteam } from './useSteam'
+import { useGames } from './useGames'
 import { useGithub } from './useGithub'
 import { useTwitch } from './useTwitch'
 import { useVideo } from './useVideo'
-import { SteamCard } from './SteamCard'
+import { GamesCard } from './GamesCard'
 import { GithubCard } from './GithubCard'
 import { useMasonry } from './useMasonry'
 import { TwitchCard } from './TwitchCard'
@@ -93,7 +93,7 @@ export function DayPage({
   const activity = useActivity(date, activityShown.length > 0)
   const video = useVideo(date, shows('video.watch'))
   const twitch = useTwitch(date, shows('stream.watch'))
-  const steam = useSteam(date, shows('game.play'))
+  const games = useGames(date, shows('game.play'))
   const github = useGithub(date, shows('code.commit') || shows('code.pull_request'))
   const locations = useLocations(date, shows('place.visit'))
   const prefetch = usePrefetch()
@@ -287,8 +287,8 @@ export function DayPage({
         {shows('music.listen') && <MusicCard date={date} today={today} state={music} health={health} />}
         {shows('video.watch') && <VideoCard date={date} today={today} state={video} health={health} />}
         {shows('stream.watch') && <TwitchCard date={date} today={today} state={twitch} health={health} calendarDay={calendarDay} />}
-        {/* Les succès n'ont pas de filtre : la carte les montre avec le temps de jeu. */}
-        {shows('game.play') && <SteamCard date={date} today={today} state={steam} health={health} calendarDay={calendarDay} />}
+        {/* Ni les succès ni les parties n'ont de filtre : la carte « Jeux » les montre avec le temps de jeu. */}
+        {shows('game.play') && <GamesCard date={date} today={today} state={games} health={health} calendarDay={calendarDay} />}
         {/* Reviews, issues et commentaires n'ont pas de filtre : la carte les montre avec les commits et les pull requests. */}
         {(shows('code.commit') || shows('code.pull_request')) && <GithubCard date={date} today={today} state={github} health={health} calendarDay={calendarDay} />}
         {/* La trace n'a pas de filtre (`location.point` est hors du calendrier) : elle suit les lieux. */}

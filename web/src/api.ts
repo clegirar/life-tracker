@@ -445,6 +445,35 @@ export interface DayGames {
   games: DayGame[]
   /** Les jeux joués ce jour-là pour la première fois, par première heure ; jamais un jeu déjà joué avant le suivi. */
   discoveries: GameDiscovery[]
+  /** Les parties de LoL, TFT et VALORANT commencées ce jour-là, par heure de début. */
+  matches: GameMatch[]
+}
+
+/** Une partie de League of Legends, Teamfight Tactics ou VALORANT, au jour de son début. */
+export interface GameMatch {
+  /** `<jeu>:<identifiant de la partie>`, unique. */
+  key: string
+  /** Heure de Paris du début. */
+  time: string
+  /** La clé du jeu (`riot:lol`, `riot:tft`, `riot:valorant`), celle de sa ligne dans `games`. */
+  game: string
+  game_name: string
+  /** Le nom de la file (« Classée solo/duo », « Double Up »…). */
+  queue: string | null
+  /** `null` en TFT (la place en tient lieu), ou sans équipe. */
+  result: 'win' | 'loss' | 'remake' | 'draw' | null
+  /** Le champion (LoL) ou l'agent (VALORANT). */
+  character: string | null
+  /** Le poste en LoL : `TOP`, `JUNGLE`, `MIDDLE`, `BOTTOM`, `UTILITY`. */
+  position: string | null
+  /** La carte en VALORANT. */
+  map: string | null
+  /** La place en TFT, de 1 à 8. */
+  placement: number | null
+  rounds_won: number | null
+  rounds_lost: number | null
+  /** Le temps joué, en minutes (en TFT, jusqu'à mon élimination). */
+  minutes: number
 }
 
 /** Un jeu joué pour la première fois ce jour-là. */

@@ -14,6 +14,7 @@ Le [POC](poc.md) est validé depuis le 4 nov. 2026. Chaque chantier a sa section
 | Steam | En production depuis le 7 nov. 2026 (v0.12.0, corrigé en v0.12.1) ; restent une vraie partie (prévue le 14-15 nov.), les totaux, les succès au bon jour, minuit et l'affichage sur les vrais appareils |
 | Déplacements (iPhone, Overland) | Backend et web app construits le 7 nov. 2026 (branche `feat/position-iphone`) ; restent la mise en service et une vraie journée |
 | GitHub | En production depuis le 8 nov. 2026 (v0.15.0), vérifié le même jour ; restent la carte d'état avec un token refusé et un commit poussé tard |
+| Riot (LoL, TFT, VALORANT) | Backend construit le 12 nov. 2026 (branche `feat/riot`) ; restent la web app et le MCP, puis la mise en service |
 | Twitch : import de l'historique (export RGPD) | À faire, quand je le demanderai (l'export est demandé à Twitch) |
 | Ouvrir la web app sur Internet | À faire, quand je le demanderai |
 
@@ -331,6 +332,51 @@ Restent la carte d'état avec un token refusé, puis revenue, et un commit pouss
 - Un commit poussé tard sur la branche par défaut apparaît à son jour.
 - La carte d'état passe en alerte avec un token révoqué, puis revient ; l'échéance du token s'affiche.
 - Ni token, ni titre, ni nom de dépôt dans les logs ou le dépôt ; le connecteur n'a pas accès à la base.
+- La carte est vérifiée aux largeurs iPhone et Mac, en clair et en sombre.
+
+## Riot
+
+Ouvert le 12 nov. 2026, à ma demande. Je joue souvent à League of Legends, Teamfight Tactics et VALORANT, qui ne passent pas par Steam : noter chaque partie (heure, durée, file, résultat, champion, agent ou place), pour que le calendrier, la carte du jour et le MCP répondent à « combien d'heures de LoL ce mois-ci » ou « mon taux de victoire en classée ». Les choix sont au journal des décisions de [l'architecture](architecture.md), 12 nov. 2026.
+
+**Accès.** Deux sources, deux connecteurs du collecteur, toutes les 15 min :
+
+- `riot` (« Riot Games (LoL, TFT) »), par l'API officielle de Riot, routage `europe` : `account-v1` donne le PUUID depuis le Riot ID, `match-v5` (LoL) et `tft-match-v1` (TFT) les listes et le détail des parties. Riot exige un produit personnel par jeu : deux clés (`RIOT_LOL_API_KEY`, `RIOT_TFT_API_KEY`, en-tête `X-Riot-Token`), et le PUUID est chiffré par clé. Une clé personnelle approuvée n'expire pas ; limite de 20 appels par seconde et 100 par 2 min.
+- `valorant` (« Valorant (HenrikDev) »), par l'API **non officielle** HenrikDev (`api.henrikdev.xyz`, clé « VALORANT Basic », en-tête `Authorization`) : Riot ne donne pas l'historique de VALORANT à une clé personnelle. Limite de 30 unités par minute, une page pouvant en coûter une dizaine.
+
+**Historique.** Deux ans chez Riot : 624 parties de LoL (depuis le 24 nov. 2024) et 293 de TFT (depuis le 22 nov. 2024), toutes reprises au premier passage. VALORANT : les 36 dernières parties seulement (depuis le 11 avr. 2025), la fenêtre de Riot ; une fois en service, rien ne se perd tant que le collecteur tourne (seule une panne de plus de ≈ 36 parties en perdrait, et la carte d'état alerte bien avant). Le passé plus ancien viendra peut-être de l'export RGPD demandé le 12 nov. 2026 (réponse vers le 12 déc.), à décider à sa réception.
+
+**Ce qui compte.** Une partie, à son début, avec sa durée : toute la partie en LoL (un remake compte aussi), **mon temps jusqu'à mon élimination** en TFT (`time_eliminated`, pas la durée de la partie ; le début est `gameCreation`, `game_datetime` en est la fin), la durée de la partie en VALORANT (parties terminées seulement). Le temps entre dans `game.play`, comme Steam, sous les jeux « League of Legends », « Teamfight Tactics » et « VALORANT » ; une partie à cheval sur minuit se répartit entre les deux jours, mais la partie elle-même est rangée au jour de son début. Ma ligne seulement : jamais les pseudos ni les données des autres joueurs.
+
+**Mes choix** (à corriger si besoin) : seuil de silence de 2 jours pour chaque source ; pas de seuil de fraîcheur (une semaine sans jouer est normale) ; ces trois jeux ne sont jamais des découvertes (joués depuis bien avant le suivi) ; les « stored matches » de HenrikDev (34 parties éparses, sans durée) sont écartés ; le résultat est la victoire, la défaite ou le remake en LoL, la place en TFT (sans victoire ni défaite), la victoire, la défaite ou le nul (rounds égaux) en VALORANT ; le nom des files vient d'une table figée (file inconnue : « File {id} »).
+
+**Étapes** :
+
+0. **Essai, avant tout code** (fait le 12 nov. 2026, quelques `curl` avec mes clés, jamais dans le dépôt ; structure seulement) :
+   - `account-v1` : Riot ID → PUUID (78 caractères) ; une clé neuve est refusée (401 « Unknown apikey ») quelques dizaines de secondes ;
+   - LoL : `gameStartTimestamp`, `gameEndTimestamp` (ms), `gameDuration` (s), `queueId`, `gameMode`, `endOfGameResult` ; ma ligne : `championName`, `win`, `teamPosition`, `gameEndedInEarlySurrender` (remake : 13 sur 624) ; files de mon historique : 420 (210), 440 (145), 450 (138), 400 (123), 900 (6), 1700 (1), 1750 (1, `CHERRY`, une variante d'Arena) ;
+   - TFT : `gameCreation` (début), `game_datetime` (fin ; l'écart avec `game_length` va de 2 à 244 s, l'attente du lobby), `game_length`, `queue_id`, `tft_game_type`, `tft_set_number` ; ma ligne : `placement`, `time_eliminated`, `partner_group_id` ; files : 1100 (209), 1160 (42, Double Up), 6130 (30, « Ao Shin's Ascent »), 1130 (6, Hyper Roll), 1090 (6) ;
+   - VALORANT (HenrikDev) : `v4/matches/eu/pc/{nom}/{tag}?start&size=10`, 36 parties ; `match_id`, `started_at`, `game_length_in_ms`, `queue`, `map`, `is_completed`, ma ligne (`agent`, `team_id`), `teams[]` (`won`, `rounds`) ; en-têtes `x-ratelimit-remaining` et `x-ratelimit-reset`, 429 au-delà ;
+   - premier passage réel (917 détails et les listes) en ≈ 20 min à 1,25 s par appel, sans erreur.
+1. **Docs** : cette section, le journal des décisions, le runbook, `CLAUDE.md`.
+2. **Backend**, branche `feat/riot` : migration, interprètes, deux connecteurs, `/games`, tests.
+3. **Web et MCP** : section « Parties » de la carte du jour, deux cartes d'état, deux fiches Sources, `web/e2e/riot.spec.ts`, un cas MCP de bout en bout, captures iPhone et Mac, en clair et en sombre.
+4. **PR** `feat: tracker Riot, parties de LoL, TFT et Valorant`, avec les actions sur le NAS (`compose.yaml`, sources, clés : `docs/deploiement.md`, « Mise à jour : Riot »).
+
+**Construit le 12 nov. 2026, backend** : migration `20261112120000_riot.sql` (types `riot.lol_match`, `riot.tft_match`, `valorant.match` ; métrique `game.match`, événement riche, niveaux `game` et `character`, sans valeur du jour depuis la révision ci-dessous ; description de `game.play` élargie), interprètes `riot_lol_match`, `riot_tft_match` et `valorant_match` (temps en tranches d'une heure au plus depuis le début, `game.known` à chaque partie, la partie avec ses détails), connecteurs `collector::riot` (`RIOT_LOL_API_KEY`, `RIOT_TFT_API_KEY`, `RIOT_ID`, `RIOT_TOKEN`, état `riot-state.json`) et `collector::valorant` (`HENRIK_API_KEY`, `VALORANT_RIOT_ID`, `VALORANT_TOKEN`, état `valorant-state.json`), les parties du jour dans `GET /v1/days/{date}/games` (champ `matches`), le contrôle de santé du collecteur et le runbook. Testé par `backend/tests/riot.rs` et `backend/tests/valorant.rs` contre une API de Riot et un HenrikDev simulés (premier passage paginé puis seulement les nouvelles parties, état perdu sans doublon, 429 puis reprise, clé refusée puis revenue, une clé de jeu refusée sans bloquer l'autre, TFT au temps d'élimination, remake, minuit, rejeu identique, contrat, logs du vrai binaire). Restent la web app et le MCP (étape 3), puis la mise en service.
+
+**Construit le 12 nov. 2026, web app et MCP** : la carte Steam devient la carte « Jeux » de tous les jeux ; chaque partie se range sous la ligne de son jeu (heure, résultat en couleur : Victoire, Défaite, Remake, Égalité, ou la place en TFT, « 1re », « 4e » ; champion et poste, ou agent et carte, avec la file et les rounds dessous ; durée), le jeu dit le nombre de parties et le bilan du jour (« 4 V – 2 D · 1 remake », « Top 4 : 2 sur 3 » en TFT), au-delà de six parties les cinq premières puis « N autres parties ». Page d'état : cartes `riot` et `valorant` (« Dernière partie » une seule fois, celle de `game.match` ; marche à suivre pour la clé refusée, la limite et la panne, HenrikDev rappelé non officiel avec sa fenêtre de ≈ 36 parties). Page Sources : fiches « Riot Games (LoL, TFT) » et « Valorant (HenrikDev) ». MCP : `discovery` ne renvoie plus la liste des marques « déjà connu » (une par partie) mais `first_marked_at` et `marks`.
+
+**Revu le 12 nov. 2026, à ma demande** : une seule carte « Jeux » et un seul filtre « Jeux ». `game.match` passe à l'agrégat `none`, comme les succès Steam (migration `20261112120000_riot.sql` modifiée, pas encore déployée) : ni case du calendrier, ni pastille, ni place dans `day_summary` ; le MCP lit toujours les parties par `occurrences` et `top`. La carte, montrée si « Jeux » est choisi, garde en tête le temps de jeu du jour, le nombre de parties (s'il y en a) et de succès, puis deux sections à intertitre : « Steam » (temps, heures, total, succès ; une découverte porte l'étiquette « Découverte » sur sa ligne, au lieu d'une liste à part qui la répétait) et « Riot » (LoL, TFT, VALORANT, leurs parties et leurs bilans). Une section vide ce jour-là ne s'affiche pas ; un jour sans rien du tout se dit pour toute la carte (« pas de données » ≠ « pas de jeu »), et le silence d'une source par l'alerte du haut. Bilans en espaces insécables (« 1 remake » ne se coupe plus). Fichiers renommés : `GamesCard.tsx`, `games.ts`, `useGames.ts`. Les sections « Steam » et « Riot » se plient et se déplient par leur intertitre (bouton à chevron, `aria-expanded`, `aria-controls`, clavier) ; ouvertes par défaut, une section pliée garde son résumé sur l'intertitre (« 5 h 49 · 12 parties », « 45 min · 1 jeu »), et le pli de chacune est gardé dans le navigateur (`games.folded`), pour tous les jours ; repli en hauteur par une transition de 220 ms, en simple fondu si le mouvement est réduit. Testé par `web/e2e/riot.spec.ts` (Steam et Riot le même soir, Riot seul, un jour sans partie, le mois sans « Parties », les cartes d'état en alerte, les fiches, captures iPhone et Mac en clair et en sombre), `web/e2e/steam.spec.ts`, des tests unitaires (`games.test.ts`, `status.test.ts`), `backend/tests/riot.rs` (pas de case pour les parties) et un cas de bout en bout du MCP (`cumulative_duration` sur `riot:lol` et `riot:tft`, `top` des personnages, `occurrences` de `game.match`, `discovery`). Reste la mise en service.
+
+**Terminé quand**
+
+- Le premier passage est complet : 624 parties de LoL, 293 de TFT et les 36 de VALORANT acceptées.
+- Le collecteur relancé ne crée aucun doublon (`accepted: 0`).
+- Une soirée de jeu apparaît au bon jour dans le calendrier, la carte du jour et le MCP (`cumulative_duration`, `occurrences`), au bon temps par jeu.
+- Une partie de TFT compte mon temps jusqu'à mon élimination, depuis le début de la partie.
+- La carte d'état de chaque source passe en alerte avec une clé refusée, puis revient.
+- `admin rebuild` ne donne aucune différence.
+- Aucune clé, aucun Riot ID, champion, agent ni nom de carte dans le dépôt ou dans les logs.
 - La carte est vérifiée aux largeurs iPhone et Mac, en clair et en sombre.
 
 ## Twitch : import de l'historique (export RGPD)

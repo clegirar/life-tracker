@@ -601,7 +601,8 @@ async fn concurrent_starters_establish_one_active_generation() {
                "steam.playtime": 1, "steam.achievement": 1,
                "github.commit": 1, "github.pull_request": 1, "github.review": 1,
                "github.issue": 1, "github.comment": 1,
-               "overland.location": 1, "overland.visit": 1})
+               "overland.location": 1, "overland.visit": 1,
+               "riot.lol_match": 1, "riot.tft_match": 1, "valorant.match": 1})
     );
 }
 

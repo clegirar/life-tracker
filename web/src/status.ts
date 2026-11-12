@@ -33,6 +33,8 @@ const isTwitch = (name: string) => /^twitch\b/.test(name)
 const isSteam = (name: string) => /^steam\b/.test(name)
 const isIphone = (name: string) => /^iphone\b/.test(name)
 const isGithub = (name: string) => /^github\b/.test(name)
+const isRiot = (name: string) => /^riot\b/.test(name)
+const isValorant = (name: string) => /^valorant\b/.test(name)
 
 /** Comment une source dit son échéance. */
 interface ExpiryPolicy {
@@ -203,7 +205,28 @@ const GITHUB_NOTE = "Rien n'est perdu : la passe suivante relit les 30 derniers 
 const KEY_VARIABLE: [RegExp, string][] = [
   [/^lastfm\b/, 'LASTFM_API_KEY'],
   [/^steam\b/, 'STEAM_API_KEY'],
+  [/^valorant\b/, 'HENRIK_API_KEY'],
 ]
+
+const RESTART = 'Relance le collecteur : `sudo docker compose up -d collector`.'
+
+/**
+ * Riot : une clé personnelle par produit (LoL, TFT). Rien ne se perd pendant la panne : Riot garde deux
+ * ans d'historique, et la passe suivante reprend depuis la dernière partie reçue.
+ */
+const RIOT_KEY: Guidance = {
+  title: 'Riot refuse une clé du collecteur : elle a été régénérée, ou le produit est à revoir.',
+  steps: [
+    'Sur developer.riotgames.com, Apps : ouvre le produit personnel du jeu refusé (League of Legends ou Teamfight Tactics). Un produit refusé ou suspendu ? Lis le message de Riot et corrige la demande.',
+    "Régénère sa clé si elle a pu fuiter ; sinon reprends la clé affichée (une clé neuve est refusée quelques dizaines de secondes).",
+    'Sur le NAS, dans `secrets/collector.env`, remplace `RIOT_LOL_API_KEY` ou `RIOT_TFT_API_KEY` par la clé du produit (la même valeur dans les deux si une clé lit les deux jeux).',
+    RESTART,
+  ],
+  note: "Rien n'est perdu : Riot garde deux ans d'historique, et la passe suivante reprend où elle s'est arrêtée. Une clé refusée n'empêche pas l'autre jeu d'entrer.",
+}
+
+/** HenrikDev ne garde que les ≈ 36 dernières parties : une longue panne en perd. */
+const VALORANT_WINDOW = 'HenrikDev ne garde que les 36 dernières parties environ : seule une panne plus longue que ces parties en perdrait.'
 
 function keyRejected(name: string): Guidance {
   if (isGarmin(name)) {
@@ -213,6 +236,18 @@ function keyRejected(name: string): Guidance {
     return { title: "GitHub refuse le token d'accès personnel : il a expiré ou a été révoqué.", steps: GITHUB_TOKEN_STEPS, note: GITHUB_NOTE }
   }
   const variable = KEY_VARIABLE.find(([pattern]) => pattern.test(name))?.[1]
+  if (isRiot(name)) return RIOT_KEY
+  if (isValorant(name)) {
+    return {
+      title: 'HenrikDev refuse la clé du collecteur : elle a été révoquée, ou a changé.',
+      steps: [
+        "Sur le Discord de HenrikDev, redemande une clé « VALORANT Basic » (l'API est non officielle : pas de console, la clé se demande là).",
+        `Sur le NAS, dans \`secrets/collector.env\`, remplace \`${variable}\` par la nouvelle clé.`,
+        RESTART,
+      ],
+      note: VALORANT_WINDOW,
+    }
+  }
   if (isSteam(name)) {
     return {
       title: 'Steam refuse la clé du collecteur : elle a été révoquée, ou le compte a changé.',
@@ -334,6 +369,20 @@ function byReason(source: SourceStatus, reason: ReportedStatus['reason'], now: n
         note: "Le reste continue : seuls les dépôts de cette organisation attendent, et rien n'est perdu.",
       }
     case 'rate_limited':
+      if (isRiot(source.name)) {
+        return {
+          title: "Riot limite les appels pour l'instant (100 par 2 min avec une clé personnelle).",
+          steps: [],
+          note: "Le collecteur reprend seul après le délai demandé. Normal pendant le premier passage, qui relit deux ans d'historique (une vingtaine de minutes) ; à regarder seulement si cela dure plus d'un jour.",
+        }
+      }
+      if (isValorant(source.name)) {
+        return {
+          title: "HenrikDev limite les appels pour l'instant (30 unités par minute).",
+          steps: [],
+          note: `Le collecteur reprend seul à la passe suivante. ${VALORANT_WINDOW}`,
+        }
+      }
       if (isGithub(source.name)) {
         return {
           title: "GitHub limite les appels pour l'heure en cours (5 000 points par heure).",
@@ -347,6 +396,23 @@ function byReason(source: SourceStatus, reason: ReportedStatus['reason'], now: n
         note: "Le collecteur réessaie seul à la prochaine passe. Rien à faire, sauf si cela dure plus d'un jour.",
       }
     case 'service_unavailable':
+      if (isValorant(source.name)) {
+        return {
+          title: 'HenrikDev ne répond pas, ou refuse la demande.',
+          steps: [
+            "HenrikDev est une API non officielle : elle peut tomber, changer ou disparaître sans prévenir. Son Discord annonce les pannes et les changements.",
+            'Regarde les logs du collecteur sur le NAS : `sudo docker compose logs collector`.',
+          ],
+          note: `Le collecteur réessaie seul à chaque passe. ${VALORANT_WINDOW}`,
+        }
+      }
+      if (isRiot(source.name)) {
+        return {
+          title: 'Riot ne répond pas, ou refuse la demande.',
+          steps: [],
+          note: `Le collecteur réessaie seul, et rien ne se perd : Riot garde deux ans d'historique ; ${LOGS}`,
+        }
+      }
       return {
         title: 'Le service ne répond pas, ou refuse la demande.',
         steps: [],
@@ -396,7 +462,17 @@ function silence(source: SourceStatus): Guidance {
       note: "Firefox simplement fermé ? Rien n'est perdu : ce qu'il n'a pas pu envoyer part à sa réouverture.",
     }
   }
-  const service = isLastfm(source.name) ? 'avec Last.fm ' : isSteam(source.name) ? 'avec Steam ' : isGithub(source.name) ? 'avec GitHub ' : ''
+  const service = isLastfm(source.name)
+    ? 'avec Last.fm '
+    : isSteam(source.name)
+      ? 'avec Steam '
+      : isGithub(source.name)
+        ? 'avec GitHub '
+        : isRiot(source.name)
+          ? 'avec Riot '
+          : isValorant(source.name)
+            ? 'avec HenrikDev '
+            : ''
   return {
     title: `Aucun contact réussi ${service}depuis plus de ${threshold} : des données peuvent manquer.`,
     steps: [
@@ -431,6 +507,7 @@ const LAST_OF: Record<string, string> = {
   'stream.watch': 'Dernier visionnage',
   'game.play': 'Dernière partie',
   'game.achievement': 'Dernier succès',
+  'game.match': 'Dernière partie',
   'place.visit': 'Dernier lieu',
   'location.point': 'Dernière position',
   'code.commit': 'Dernier commit',
@@ -510,7 +587,11 @@ export function sourceCard(source: SourceStatus, now: number): Card {
   if (next !== null && next > now) lines.push({ label: isYoutube(source.name) ? 'Prochain export' : 'Prochaine passe', value: until(next, now) })
   const expiry = expiryLine(source, now)
   if (expiry) lines.push(expiry)
-  lines.push(...(isGithub(source.name) ? githubLines(source.metrics, now) : source.metrics.map((metric) => metricLine(metric, now))))
+  // Riot et VALORANT donnent le temps (`game.play`) et la partie (`game.match`) : « Dernière partie » une
+  // fois, à son début.
+  const matched = source.metrics.some((metric) => metric.metric === 'game.match')
+  const metrics = matched ? source.metrics.filter((metric) => metric.metric !== 'game.play') : source.metrics
+  lines.push(...(isGithub(source.name) ? githubLines(metrics, now) : metrics.map((metric) => metricLine(metric, now))))
 
   let hint: string | null = null
   const listen = source.metrics.find((metric) => metric.metric === 'music.listen')

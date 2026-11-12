@@ -1096,6 +1096,69 @@ Puis, par le MCP, `inventory` : le nombre de « Vidéos YouTube » tombe à ≈1
 
 **Retour arrière.** Couper GitHub seul : retirer les trois lignes `GITHUB_*` de `secrets/collector.env`, puis `sudo docker compose up -d collector`. Le journal garde ce qui est entré ; `admin revoke-source github` coupe le token de la source, et révoquer le token sur github.com coupe l'accès à GitHub. Revenir à une image d'avant : la migration ajoute des registres que l'ancienne version ignore, sauf le calendrier, qui montre alors les métriques comme des sommes vides ; rien n'est perdu.
 
+## Mise à jour : Riot
+
+À faire une fois, sur le NAS déjà en service. La PR part en production à la fusion, migration comprise (`20261112120000_riot.sql`, par le service `migrate` : trois types, une métrique `game.match`, la description de `game.play` ; pas de `rebuild`) : les connecteurs Riot et VALORANT ne démarrent que lorsque leurs variables sont dans `secrets/collector.env`, donc rien ne change pour les autres connecteurs d'ici là. Les parties n'ont ni pastille ni case du calendrier : elles vivent dans la carte « Jeux » du jour (section « Riot »), vide jusqu'au premier passage. Je ne lance rien de tout cela depuis le dépôt, et je tape moi-même chaque secret.
+
+1. **Avant la fusion**, recopier `compose.yaml` comme à l'étape 4 de « Mise à jour vers l'étape 5 » : son contrôle de santé vérifie aussi `riot-state.json` et `valorant-state.json`.
+
+2. **Les clés.**
+   - Riot (developer.riotgames.com) : la clé du produit personnel League of Legends et celle du produit Teamfight Tactics (Riot exige un produit par jeu ; si une seule clé lit les deux, la même valeur va dans les deux variables). Une clé personnelle approuvée n'expire pas ; une clé régénérée est refusée quelques dizaines de secondes. Toute clé passée par une capture ou ailleurs que sur le NAS se régénère d'abord.
+   - HenrikDev (docs.henrikdev.xyz, clé « VALORANT Basic ») : une API non officielle, qui peut changer ou fermer.
+   - Le Riot ID, `nom#tag`, celui du compte LoL et TFT, et celui du compte VALORANT (le même en général).
+   - Toutes vont dans le gestionnaire de mots de passe et dans `secrets/collector.env`, nulle part ailleurs. Le collecteur joint `europe.api.riotgames.com` et `api.henrikdev.xyz` par le réseau `egress`.
+
+3. Après le déploiement de la version, sur le NAS, en root dans le dossier en `700` :
+
+   ```sh
+   sudo -i
+   cd /volume1/docker/life-tracker
+   sudo docker compose logs migrate | tail -3   # « migrations à jour »
+   RIOT=$(sudo docker compose run --rm -T admin create-source riot --silence-threshold "2 days" --label "Riot Games (LoL, TFT)" </dev/null)
+   VALORANT=$(sudo docker compose run --rm -T admin create-source valorant --silence-threshold "2 days" --label "Valorant (HenrikDev)" </dev/null)
+   [ "${#RIOT}" = 64 ] && [ "${#VALORANT}" = 64 ] && echo "tokens ok" || echo "ÉCHEC : ne pas continuer"
+   for kind in riot.lol_match riot.tft_match; do
+     sudo docker compose run --rm -T admin grant-kind riot "$kind" </dev/null
+   done
+   sudo docker compose run --rm -T admin grant-kind valorant valorant.match </dev/null
+   read -rs RIOT_LOL_API_KEY   # la clé du produit LoL, sans écho
+   read -rs RIOT_TFT_API_KEY   # la clé du produit TFT
+   read -rs HENRIK_API_KEY     # la clé HenrikDev
+   read -r RIOT_ID             # nom#tag
+   read -r VALORANT_RIOT_ID    # nom#tag du compte VALORANT
+   (umask 077; printf 'RIOT_LOL_API_KEY=%s\nRIOT_TFT_API_KEY=%s\nRIOT_ID=%s\nRIOT_TOKEN=%s\nHENRIK_API_KEY=%s\nVALORANT_RIOT_ID=%s\nVALORANT_TOKEN=%s\n' \
+     "$RIOT_LOL_API_KEY" "$RIOT_TFT_API_KEY" "$RIOT_ID" "$RIOT" "$HENRIK_API_KEY" "$VALORANT_RIOT_ID" "$VALORANT" >> secrets/collector.env)
+   unset RIOT VALORANT RIOT_LOL_API_KEY RIOT_TFT_API_KEY HENRIK_API_KEY RIOT_ID VALORANT_RIOT_ID
+   ls -l secrets/collector.env   # -rw-------
+   sudo docker compose up -d collector
+   ```
+
+   Il faut les quatre variables `RIOT_*` ensemble, et les trois de VALORANT ensemble : un seul manquant, ou un Riot ID sans `#`, empêche le collecteur de démarrer, les autres connecteurs compris. Facultatifs : `RIOT_INTERVAL_SECONDS` et `VALORANT_INTERVAL_SECONDS` (900), `VALORANT_REGION` (`eu`). Aucun `record.cancel` : les connecteurs n'annulent rien.
+
+4. **Le premier passage** reprend deux ans d'historique chez Riot (≈ 624 parties de LoL et 293 de TFT : ≈ 930 appels, une vingtaine de minutes à 1,25 s par appel) et les ≈ 36 parties que HenrikDev garde de VALORANT. Un 429 envoie ce qui a été lu, et le passage suivant reprend. Ensuite, un passage tous les quarts d'heure ne lit que les nouvelles parties.
+
+   ```sh
+   sudo docker compose logs collector | grep -E "(riot|valorant) pass completed" | tail -4   # calls/pages, matches, accepted, skipped
+   sudo docker compose ps collector                                                       # healthy
+   sudo docker compose exec -T db psql -U postgres -d tracker -Atc "select name, status from core.sources where name in ('riot', 'valorant')" </dev/null   # ok, last_collected_at
+   ```
+
+   « clé Riot refusée » (avec `game`, `lol` ou `tft`) ou « clé HenrikDev refusée » : la clé est mauvaise, régénérée ou révoquée ; la carte d'état le dit (`key_rejected`). Une clé de jeu refusée n'empêche pas l'autre jeu d'entrer. `rate_limited` : le passage reprend après le délai demandé. Les logs ne donnent que des nombres : jamais une clé, le Riot ID, un champion, un agent ni une carte.
+
+5. Vérifier les critères du chantier Riot dans [les chantiers](chantiers.md) : le premier passage complet, une soirée de jeu dans la carte du jour, le calendrier et le MCP (`cumulative_duration` sur `game.play`, `occurrences` et `top` sur `game.match`) ; puis la relance et le rejeu :
+
+   ```sh
+   sudo docker compose restart collector   # puis « accepted: 0 » au passage suivant
+   sudo docker compose run --rm -T admin coverage game.match </dev/null
+   sudo docker compose run --rm -T admin rebuild </dev/null   # 0 différence
+   ```
+
+6. **Remplacer une clé** : la régénérer sur developer.riotgames.com ou chez HenrikDev, remplacer sa ligne de `secrets/collector.env` (en root, éditeur sans sauvegarde, ou `sed -i` avec la clé lue par `read -rs`), puis `sudo docker compose up -d collector`.
+
+**Perdre `riot-state.json` ou `valorant-state.json`** ne crée aucun doublon (chaque partie a pour clé son identifiant) : le passage suivant relit tout l'historique, et l'ingestion écarte ce qu'elle a déjà.
+
+**Retour arrière.** Couper l'un ou l'autre : retirer ses lignes (`RIOT_*`, ou `HENRIK_API_KEY` et `VALORANT_*`) de `secrets/collector.env`, puis `sudo docker compose up -d collector`. Le journal garde ce qui est entré ; `admin revoke-source riot` (ou `valorant`) coupe le token de la source. Revenir à une image d'avant : la migration ajoute des registres que l'ancienne version ignore, rien n'est perdu.
+
 ## Vérifier les critères « Terminé quand »
 
 **Un café saisi depuis l'iPhone, par la web app comme par le raccourci, apparaît.**

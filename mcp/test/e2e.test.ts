@@ -18,6 +18,8 @@ const twitchToken = process.env.LT_MCP_TEST_TWITCH_TOKEN ?? '';
 const steamToken = process.env.LT_MCP_TEST_STEAM_TOKEN ?? '';
 const githubToken = process.env.LT_MCP_TEST_GITHUB_TOKEN ?? '';
 const iphoneToken = process.env.LT_MCP_TEST_IPHONE_TOKEN ?? '';
+const riotToken = process.env.LT_MCP_TEST_RIOT_TOKEN ?? '';
+const valorantToken = process.env.LT_MCP_TEST_VALORANT_TOKEN ?? '';
 const skip = backendUrl === undefined ? 'sans backend : lancer mcp/test.sh' : false;
 
 const EXPECTED_TOOLS = [
@@ -142,6 +144,42 @@ const GITHUB = [
   githubCommit('d4'.repeat(20), ORG, '2026-10-20T11:00:00+02:00', 7, 0),
   githubPullRequest('opened', '2026-10-19T16:00:00+02:00'),
   githubPullRequest('merged', '2026-10-20T10:00:00+02:00', { additions: 51, deletions: 7 }),
+];
+
+// Riot et VALORANT, tels que les envoient les collecteurs : le 24 sept. (UTC+2), trois parties de LoL
+// (30 et 25 min, puis une remake de 4 min), une de TFT (mon temps jusqu'à mon élimination : 20 min) et
+// une de VALORANT (40 min). Hors d'octobre, où les autres cas comptent les jeux de Steam. Champion,
+// agent et carte fictifs ; la carte n'est jamais montrée au MCP (`shared_details`).
+const lolMatch = (id: number, at: string, durationS: number, champion: string, win: boolean, remake = false) => ({
+  key: `lol:EUW1_${id}`,
+  kind: 'riot.lol_match',
+  schema_version: 1,
+  occurred_at: at,
+  payload: { match_id: `EUW1_${id}`, started_at: at, ended_at: null, duration_s: durationS, queue_id: 420, game_mode: 'CLASSIC', end_of_game_result: 'GameComplete', champion, win, position: 'MIDDLE', remake },
+});
+const RIOT = [
+  lolMatch(1, '2026-09-24T20:00:00+02:00', 1800, 'Champion Fictif', true),
+  lolMatch(2, '2026-09-24T20:35:00+02:00', 1500, 'Champion Fictif', false),
+  lolMatch(3, '2026-09-24T21:05:00+02:00', 240, 'Autre Champion', false, true),
+  {
+    key: 'tft:EUW1_9',
+    kind: 'riot.tft_match',
+    schema_version: 1,
+    occurred_at: '2026-09-24T18:00:00+02:00',
+    payload: { match_id: 'EUW1_9', started_at: '2026-09-24T18:00:00+02:00', ended_at: null, game_length_s: 2100, eliminated_s: 1200, queue_id: 1100, game_type: 'standard', set_number: 15, placement: 3, partner_group_id: null },
+  },
+];
+const VALORANT = [
+  {
+    key: 'valorant:0f0f0f0f-0000-4000-8000-000000000001',
+    kind: 'valorant.match',
+    schema_version: 1,
+    occurred_at: '2026-09-24T22:00:00+02:00',
+    payload: {
+      match_id: '0f0f0f0f-0000-4000-8000-000000000001', started_at: '2026-09-24T22:00:00+02:00', duration_ms: 2_400_000, queue_id: 'competitive',
+      queue_name: 'Competitive', map: 'Carte Fictive', agent: 'Agent Fictif', team: 'Red', won: true, rounds_won: 13, rounds_lost: 8,
+    },
+  },
 ];
 
 // Overland (iOS), tel qu'il envoie à sa route d'adaptation : le 18 oct. (UTC+2), un point, un lieu dans
@@ -629,6 +667,72 @@ describe('de bout en bout, contre le vrai backend', { skip }, () => {
     const all = outputs.join('');
     assert.match(all, /Ville Fictive/);
     for (const forbidden of ['43.212345', '43.21234', '43.21235', '5.432109', '"points"']) {
+      assert.ok(!all.includes(forbidden), `${forbidden} visible par le MCP`);
+    }
+  });
+  test('Riot et VALORANT : heures de LoL, personnages les plus joués, parties et victoires, sans la carte', async () => {
+    await ingest(riotToken, RIOT);
+    await ingest(valorantToken, VALORANT);
+    // Le worker est asynchrone : attend les cinq parties.
+    for (let i = 0; i < 300; i += 1) {
+      const inventory = await call('inventory');
+      const matches = (inventory.metrics as { metric: string; events: number }[]).find((m) => m.metric === 'game.match');
+      if (matches?.events === 5) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const outputs: string[] = [];
+    const tool = async (name: string, args: Record<string, unknown>) => {
+      const result = (await client.callTool({ name, arguments: args })) as ToolResult;
+      outputs.push(result.content[0]?.text ?? '');
+      return parse(result);
+    };
+
+    // Combien de temps de LoL ce jour-là ? Toute la partie, remake comprise : 30 + 25 + 4 min.
+    const lol = await tool('cumulative_duration', { metric: 'game.play', from: '2026-09-24', to: '2026-09-24', level: 'game', key: 'riot:lol' });
+    assert.equal(lol.total_minutes, 59);
+    // TFT : mon temps jusqu'à mon élimination, pas la durée de la partie.
+    const tftTime = await tool('cumulative_duration', { metric: 'game.play', from: '2026-09-24', to: '2026-09-24', level: 'game', key: 'riot:tft' });
+    assert.equal(tftTime.total_minutes, 20);
+
+    // Quels champions et agents le plus joués ?
+    const top = await tool('top', { metric: 'game.match', level: 'character', from: '2026-09-01', to: '2026-09-30' });
+    type Ranked = { key: string; name: string; occurrences: number };
+    const ranked = (top.items as Ranked[]).map((i) => [i.key, i.name, i.occurrences]);
+    assert.deepEqual(ranked[0], ['lol:Champion Fictif', 'Champion Fictif', 2]);
+    assert.equal(ranked.length, 3);
+    assert.deepEqual(ranked.map((r) => r[0]).sort(), ['lol:Autre Champion', 'lol:Champion Fictif', 'valorant:agent fictif']);
+
+    // Combien de parties, et lesquelles gagnées ? Les détails partagés seulement : ni la carte ni l'identifiant.
+    const daily = await tool('occurrences', { metric: 'game.match', from: '2026-09-24', to: '2026-09-24', form: 'daily' });
+    assert.equal(daily.total, 5);
+    const list = await tool('occurrences', { metric: 'game.match', from: '2026-09-24', to: '2026-09-24' });
+    type Occurrence = { local: string; items: Record<string, string>; details: Record<string, unknown> };
+    const occurrences = list.occurrences as Occurrence[];
+    assert.deepEqual(
+      occurrences.map((o) => [o.local, o.details.game, o.details.result ?? null, o.details.placement ?? null]),
+      [
+        ['2026-09-24 18:00', 'tft', null, 3],
+        ['2026-09-24 20:00', 'lol', 'win', null],
+        ['2026-09-24 20:35', 'lol', 'loss', null],
+        ['2026-09-24 21:05', 'lol', 'remake', null],
+        ['2026-09-24 22:00', 'valorant', 'win', null],
+      ],
+    );
+    assert.equal(occurrences[1]?.details.queue, 'Classée solo/duo');
+    const lolWins = await tool('occurrences', { metric: 'game.match', from: '2026-09-24', to: '2026-09-24', level: 'game', key: 'riot:lol' });
+    assert.equal((lolWins.occurrences as Occurrence[]).filter((o) => o.details.result === 'win').length, 1);
+
+    // Joué bien avant le suivi : jamais une découverte, et la réponse reste courte malgré une marque par partie.
+    const known = await tool('discovery', { metric: 'game.play', level: 'game', key: 'riot:lol' });
+    assert.equal(known.discovered_at, null);
+    const already = known.already_known as { first_marked_at: string; marks: number };
+    assert.equal(already.marks, 3);
+    assert.match(already.first_marked_at, /^2026-09-24T18:00:00/, 'la première partie de LoL, en UTC');
+    const found = await tool('discoveries', { metric: 'game.play', level: 'game', from: '2026-09-01', to: '2026-09-30' });
+    assert.deepEqual(found.items, []);
+
+    const all = outputs.join('');
+    for (const forbidden of ['Carte Fictive', 'EUW1_', 'match_id', 'played_ms', 'rounds_won']) {
       assert.ok(!all.includes(forbidden), `${forbidden} visible par le MCP`);
     }
   });
