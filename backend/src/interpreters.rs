@@ -235,6 +235,24 @@ pub static INTERPRETERS: &[Interpreter] = &[
         schema_version: 1,
         interpret: overland_visit,
     },
+    Interpreter {
+        kind: "riot.lol_match",
+        version: 1,
+        schema_version: 1,
+        interpret: riot_lol_match,
+    },
+    Interpreter {
+        kind: "riot.tft_match",
+        version: 1,
+        schema_version: 1,
+        interpret: riot_tft_match,
+    },
+    Interpreter {
+        kind: "valorant.match",
+        version: 1,
+        schema_version: 1,
+        interpret: valorant_match,
+    },
 ];
 
 /// Un café : un événement à l'heure de l'enveloppe. La charge utile, attendue vide, est ignorée.
@@ -1428,6 +1446,333 @@ fn overland_visit(record: &Record) -> Result<Vec<Output>, InterpretError> {
         }),
         ..Event::at_envelope(record, "place.visit")
     })])
+}
+
+// ─── Riot : League of Legends, Teamfight Tactics, VALORANT ───────────────────
+//
+// Une partie par enregistrement, à son début, réduite par le connecteur à ma ligne. Chacune donne son
+// temps de jeu (`game.play`, des tranches d'une heure au plus depuis le début, comme Steam), la
+// déclaration « déjà connu » de son jeu (`game.known` : ces jeux sont joués depuis bien avant le
+// suivi, jamais des découvertes) et la partie elle-même (`game.match`, comptée). Le nom d'une file vient
+// d'une table figée ici, jamais de l'heure ni d'un appel : une file inconnue s'affiche `File <id>`, et
+// une nouvelle version de l'interprète, suivie d'un rebuild, la nomme plus tard.
+
+/// Un jeu de Riot : la clé de son élément `game` et son nom affiché.
+#[derive(Clone, Copy)]
+enum RiotGame {
+    Lol,
+    Tft,
+    Valorant,
+}
+
+impl RiotGame {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Lol => "lol",
+            Self::Tft => "tft",
+            Self::Valorant => "valorant",
+        }
+    }
+
+    /// Le préfixe `riot:` sépare ces clés des appids de Steam, des entiers.
+    fn item(self) -> Item {
+        let (key, name) = match self {
+            Self::Lol => ("riot:lol", "League of Legends"),
+            Self::Tft => ("riot:tft", "Teamfight Tactics"),
+            Self::Valorant => ("riot:valorant", "VALORANT"),
+        };
+        Item::single("game", key.to_owned(), name)
+    }
+}
+
+/// Un identifiant de partie : `EUW1_7234567890` chez Riot, un UUID chez HenrikDev.
+const MAX_MATCH_ID_BYTES: usize = 64;
+/// Un nom court (champion, agent, carte, mode, file, poste) : largement de quoi tenir.
+const MAX_RIOT_NAME_BYTES: usize = 64;
+/// Au-delà, une durée de partie est absurde : six heures.
+const MAX_MATCH_MS: i64 = 6 * 3_600_000;
+
+/// Les files de League of Legends, par `queueId` : celles de mon historique (relevé le 12 nov. 2026 :
+/// 420, 440, 450, 400, 900, 1700, 1750) et les plus courantes de la liste de Riot. 1750 n'y figure pas :
+/// une variante d'Arena (`gameMode` `CHERRY`).
+fn lol_queue(id: i64) -> Option<&'static str> {
+    Some(match id {
+        400 => "Normale (draft)",
+        420 => "Classée solo/duo",
+        430 => "Normale (aveugle)",
+        440 => "Classée flexible",
+        450 => "ARAM",
+        480 => "Partie rapide (Swiftplay)",
+        490 => "Partie rapide",
+        700 => "Clash",
+        900 => "URF",
+        1700 | 1710 | 1750 => "Arena",
+        1900 => "Pick URF",
+        830 | 840 | 850 | 870 | 880 | 890 => "Contre l'IA",
+        _ => return None,
+    })
+}
+
+/// Les files de Teamfight Tactics, par `queue_id` : celles de mon historique (1100, 1160, 6130, 1130,
+/// 1090) et les modes événement nommés par Data Dragon.
+fn tft_queue(id: i64) -> Option<&'static str> {
+    Some(match id {
+        1090 => "Normale",
+        1100 => "Classée",
+        1130 => "Hyper Roll",
+        1160 => "Double Up",
+        1170 => "Fortune's Favor",
+        1210 => "Choncc's Classic Treasure",
+        1220 => "Tocker's Trials",
+        6000 => "Revival: Festival of Beasts",
+        6100 => "Choncc's K.O. Coliseum",
+        6120 => "Pengu's Party",
+        6130 => "Ao Shin's Ascent",
+        _ => return None,
+    })
+}
+
+fn queue_name(id: i64, table: fn(i64) -> Option<&'static str>) -> String {
+    table(id).map_or_else(|| format!("File {id}"), str::to_owned)
+}
+
+/// Une file de LoL inconnue de la table se nomme par son mode quand il est sans ambiguïté (`CHERRY`
+/// est l'Arena, `ARAM` l'ARAM), sinon `File <id>`.
+fn lol_queue_name(id: i64, mode: Option<&str>) -> String {
+    match (lol_queue(id), mode) {
+        (Some(name), _) => name.to_owned(),
+        (None, Some("CHERRY")) => "Arena".to_owned(),
+        (None, Some("ARAM")) => "ARAM".to_owned(),
+        (None, _) => format!("File {id}"),
+    }
+}
+
+fn match_id<'a>(payload: &'a Value, error: &'static str) -> Result<&'a str, InterpretError> {
+    payload
+        .get("match_id")
+        .and_then(Value::as_str)
+        .filter(|id| {
+            (1..=MAX_MATCH_ID_BYTES).contains(&id.len())
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        })
+        .ok_or(InterpretError(error))
+}
+
+/// Un nom facultatif : absent, `null` ou vide, rien ; autre chose qu'un texte court, une erreur.
+fn riot_name<'a>(
+    payload: &'a Value,
+    field: &str,
+    error: &'static str,
+) -> Result<Option<&'a str>, InterpretError> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text))
+            if text.trim().len() <= MAX_RIOT_NAME_BYTES && !text.chars().any(char::is_control) =>
+        {
+            Ok(Some(text.trim()).filter(|t| !t.is_empty()))
+        }
+        Some(_) => Err(InterpretError(error)),
+    }
+}
+
+/// Un entier facultatif dans des bornes.
+fn riot_integer(
+    payload: &Value,
+    field: &str,
+    range: std::ops::RangeInclusive<i64>,
+    error: &'static str,
+) -> Result<Option<i64>, InterpretError> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_i64()
+            .filter(|n| range.contains(n))
+            .map(Some)
+            .ok_or(InterpretError(error)),
+    }
+}
+
+/// Un booléen exigé.
+fn riot_flag(payload: &Value, field: &str, error: &'static str) -> Result<bool, InterpretError> {
+    payload
+        .get(field)
+        .and_then(Value::as_bool)
+        .ok_or(InterpretError(error))
+}
+
+/// Les sorties communes d'une partie : son temps de jeu en tranches d'une heure au plus depuis son
+/// début, la déclaration « déjà connu » de son jeu, et la partie, avec son personnage s'il y en a un.
+fn match_outputs(
+    record: &Record,
+    game: RiotGame,
+    played_ms: i64,
+    character: Option<Item>,
+    details: Value,
+) -> Vec<Output> {
+    let mut outputs = Vec::new();
+    let mut start = record.occurred_at;
+    let mut remaining = played_ms;
+    while remaining > 0 {
+        let played = remaining.min(MAX_MEASURED_MS);
+        outputs.push(Output::Event(Event {
+            details: json!({ "played_ms": played }),
+            items: vec![game.item()],
+            occurred_at: start,
+            ..Event::at_envelope(record, "game.play")
+        }));
+        start += chrono::TimeDelta::milliseconds(played);
+        remaining -= played;
+    }
+    outputs.push(Output::Event(Event {
+        items: vec![game.item()],
+        ..Event::at_envelope(record, "game.known")
+    }));
+    let mut items = vec![game.item()];
+    items.extend(character);
+    outputs.push(Output::Event(Event {
+        details,
+        items,
+        ..Event::at_envelope(record, "game.match")
+    }));
+    outputs
+}
+
+/// `{match_id, started_at, ended_at, duration_s, queue_id, game_mode, end_of_game_result, champion,
+/// win, position, remake}` : une partie de League of Legends, à son début (l'enveloppe). Temps de jeu :
+/// `duration_s`, toute la partie (un remake compte aussi). Résultat : `remake` si la partie a fini en
+/// reddition anticipée, sinon `win` ou `loss`. Élément `character` : le champion, sous `lol:<nom>`.
+fn riot_lol_match(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    const ERROR: &str = "riot.lol_match: invalid match";
+    let payload = &record.payload;
+    let id = match_id(payload, "riot.lol_match: invalid match_id")?;
+    let duration = riot_integer(payload, "duration_s", 1..=MAX_MATCH_MS / 1000, ERROR)?
+        .ok_or(InterpretError(ERROR))?;
+    let queue_id = riot_integer(payload, "queue_id", 0..=i64::from(i32::MAX), ERROR)?
+        .ok_or(InterpretError(ERROR))?;
+    let mode = riot_name(payload, "game_mode", ERROR)?;
+    let champion = riot_name(payload, "champion", ERROR)?;
+    let position = riot_name(payload, "position", ERROR)?;
+    let win = riot_flag(payload, "win", ERROR)?;
+    let remake = riot_flag(payload, "remake", ERROR)?;
+    let result = if remake {
+        "remake"
+    } else if win {
+        "win"
+    } else {
+        "loss"
+    };
+    let played_ms = duration * 1000;
+    let character = champion.map(|name| Item::single("character", format!("lol:{name}"), name));
+    Ok(match_outputs(
+        record,
+        RiotGame::Lol,
+        played_ms,
+        character,
+        json!({
+            "game": RiotGame::Lol.code(),
+            "match_id": id,
+            "queue": lol_queue_name(queue_id, mode),
+            "queue_id": queue_id,
+            "mode": mode,
+            "result": result,
+            "character": champion,
+            "position": position,
+            "played_ms": played_ms,
+        }),
+    ))
+}
+
+/// `{match_id, started_at, ended_at, game_length_s, eliminated_s, queue_id, game_type, set_number,
+/// placement, partner_group_id}` : une partie de Teamfight Tactics, à son début (`gameCreation`, dans
+/// l'enveloppe ; `game_datetime` en est la fin). Mon temps de jeu est `eliminated_s`, jusqu'à mon
+/// élimination, jamais la durée de la partie. Pas de résultat : la place (1 à 8) en tient lieu.
+fn riot_tft_match(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    const ERROR: &str = "riot.tft_match: invalid match";
+    let payload = &record.payload;
+    let id = match_id(payload, "riot.tft_match: invalid match_id")?;
+    let played_ms = payload
+        .get("eliminated_s")
+        .and_then(Value::as_f64)
+        .map(|s| (s * 1000.0).round())
+        .filter(|ms| *ms >= 1.0 && *ms <= MAX_MATCH_MS as f64)
+        .ok_or(InterpretError(ERROR))? as i64;
+    let queue_id = riot_integer(payload, "queue_id", 0..=i64::from(i32::MAX), ERROR)?
+        .ok_or(InterpretError(ERROR))?;
+    let mode = riot_name(payload, "game_type", ERROR)?;
+    let placement =
+        riot_integer(payload, "placement", 1..=8, ERROR)?.ok_or(InterpretError(ERROR))?;
+    Ok(match_outputs(
+        record,
+        RiotGame::Tft,
+        played_ms,
+        None,
+        json!({
+            "game": RiotGame::Tft.code(),
+            "match_id": id,
+            "queue": queue_name(queue_id, tft_queue),
+            "queue_id": queue_id,
+            "mode": mode,
+            "result": null,
+            "placement": placement,
+            "played_ms": played_ms,
+        }),
+    ))
+}
+
+/// `{match_id, started_at, duration_ms, queue_id, queue_name, map, agent, team, won, rounds_won,
+/// rounds_lost}` : une partie terminée de VALORANT, à son début. Temps de jeu : `duration_ms`. File :
+/// le nom donné par HenrikDev, tel quel. Résultat : `win` si mon équipe a gagné ; sinon `draw` à rounds
+/// égaux, `loss` autrement ; rien sans équipe (deathmatch). Élément `character` : l'agent, sous
+/// `valorant:<nom en minuscules>`.
+fn valorant_match(record: &Record) -> Result<Vec<Output>, InterpretError> {
+    const ERROR: &str = "valorant.match: invalid match";
+    let payload = &record.payload;
+    let id = match_id(payload, "valorant.match: invalid match_id")?;
+    let played_ms = riot_integer(payload, "duration_ms", 1..=MAX_MATCH_MS, ERROR)?
+        .ok_or(InterpretError(ERROR))?;
+    let queue = riot_name(payload, "queue_name", ERROR)?.or(riot_name(payload, "queue_id", ERROR)?);
+    let map = riot_name(payload, "map", ERROR)?;
+    let agent = riot_name(payload, "agent", ERROR)?;
+    let won = match payload.get("won") {
+        None | Some(Value::Null) => None,
+        Some(Value::Bool(won)) => Some(*won),
+        Some(_) => return Err(InterpretError(ERROR)),
+    };
+    let rounds_won = riot_integer(payload, "rounds_won", 0..=1000, ERROR)?;
+    let rounds_lost = riot_integer(payload, "rounds_lost", 0..=1000, ERROR)?;
+    let result = match won {
+        None => None,
+        Some(true) => Some("win"),
+        Some(false) if rounds_won.is_some() && rounds_won == rounds_lost => Some("draw"),
+        Some(false) => Some("loss"),
+    };
+    let character = agent.map(|name| {
+        Item::single(
+            "character",
+            format!("valorant:{}", name.to_lowercase()),
+            name,
+        )
+    });
+    Ok(match_outputs(
+        record,
+        RiotGame::Valorant,
+        played_ms,
+        character,
+        json!({
+            "game": RiotGame::Valorant.code(),
+            "match_id": id,
+            "queue": queue,
+            "mode": null,
+            "result": result,
+            "character": agent,
+            "map": map,
+            "rounds_won": rounds_won,
+            "rounds_lost": rounds_lost,
+            "played_ms": played_ms,
+        }),
+    ))
 }
 
 #[cfg(test)]
@@ -2670,5 +3015,163 @@ mod tests {
             let err = github_comment(&record(payload.clone())).unwrap_err();
             assert!(err.0.starts_with("github.comment: invalid"), "{payload}");
         }
+    }
+
+    // ── Riot ────────────────────────────────────────────────────────────────
+
+    fn events_of(outputs: Vec<Output>) -> Vec<Event> {
+        outputs
+            .into_iter()
+            .map(|o| match o {
+                Output::Event(e) => e,
+                other => panic!("{other:?}"),
+            })
+            .collect()
+    }
+
+    fn lol_payload() -> Value {
+        json!({
+            "match_id": "EUW1_1000000001", "started_at": "2026-10-13T07:42:10.000Z",
+            "ended_at": "2026-10-13T08:12:10.000Z", "duration_s": 1800, "queue_id": 420,
+            "game_mode": "CLASSIC", "end_of_game_result": "GameComplete", "champion": "Ahri",
+            "win": true, "position": "MIDDLE", "remake": false,
+        })
+    }
+
+    #[test]
+    fn a_lol_match_gives_its_time_its_game_known_and_the_match() {
+        let events = events_of(riot_lol_match(&record(lol_payload())).unwrap());
+        let metrics: Vec<&str> = events.iter().map(|e| e.metric).collect();
+        assert_eq!(metrics, ["game.play", "game.known", "game.match"]);
+        assert_eq!(events[0].details, json!({"played_ms": 1_800_000}));
+        assert_eq!(events[0].items[0].item_key, "riot:lol");
+        assert_eq!(events[0].items[0].display, "League of Legends");
+        let played = &events[2];
+        assert_eq!(played.value, None);
+        assert_eq!(
+            played.details,
+            json!({"game": "lol", "match_id": "EUW1_1000000001", "queue": "Classée solo/duo",
+                   "queue_id": 420, "mode": "CLASSIC", "result": "win", "character": "Ahri",
+                   "position": "MIDDLE", "played_ms": 1_800_000})
+        );
+        assert_eq!(played.items[1].level, "character");
+        assert_eq!(played.items[1].item_key, "lol:Ahri");
+
+        // Un remake, une défaite, une file inconnue, une partie de plus d'une heure.
+        let mut payload = lol_payload();
+        payload["remake"] = json!(true);
+        payload["win"] = json!(false);
+        payload["queue_id"] = json!(3333);
+        payload["duration_s"] = json!(5400);
+        let events = events_of(riot_lol_match(&record(payload)).unwrap());
+        let plays: Vec<_> = events
+            .iter()
+            .filter(|e| e.metric == "game.play")
+            .map(|e| (e.occurred_at, e.details["played_ms"].as_i64().unwrap()))
+            .collect();
+        let start: DateTime<Utc> = "2026-10-13T07:42:10Z".parse().unwrap();
+        assert_eq!(
+            plays,
+            [
+                (start, 3_600_000),
+                (start + chrono::TimeDelta::hours(1), 1_800_000)
+            ]
+        );
+        let played = events.last().unwrap();
+        assert_eq!(played.details["result"], "remake");
+        assert_eq!(played.details["queue"], "File 3333");
+        let mut payload = lol_payload();
+        payload["win"] = json!(false);
+        let events = events_of(riot_lol_match(&record(payload)).unwrap());
+        assert_eq!(events.last().unwrap().details["result"], "loss");
+        for (queue, mode, name) in [
+            (1750, "CHERRY", "Arena"),
+            (4444, "CHERRY", "Arena"),
+            (4444, "ARAM", "ARAM"),
+            (900, "URF", "URF"),
+        ] {
+            let mut payload = lol_payload();
+            payload["queue_id"] = json!(queue);
+            payload["game_mode"] = json!(mode);
+            let events = events_of(riot_lol_match(&record(payload)).unwrap());
+            assert_eq!(events.last().unwrap().details["queue"], name, "{queue}");
+        }
+    }
+
+    #[test]
+    fn a_tft_match_counts_my_time_until_my_elimination() {
+        let events = events_of(
+            riot_tft_match(&record(json!({
+                "match_id": "EUW1_2000000001", "started_at": "2026-10-13T07:42:10.000Z",
+                "ended_at": "2026-10-13T08:20:00.000Z", "game_length_s": 2270.4,
+                "eliminated_s": 1500.6, "queue_id": 1160, "game_type": "pairs",
+                "set_number": 15, "placement": 3, "partner_group_id": 2,
+            })))
+            .unwrap(),
+        );
+        assert_eq!(events[0].details["played_ms"], 1_500_600);
+        let played = events.last().unwrap();
+        assert_eq!(played.items.len(), 1, "pas de personnage en TFT");
+        assert_eq!(played.details["queue"], "Double Up");
+        assert_eq!(played.details["placement"], 3);
+        assert_eq!(played.details["result"], Value::Null);
+        assert_eq!(played.details["mode"], "pairs");
+    }
+
+    #[test]
+    fn a_valorant_match_has_its_agent_and_a_result_from_its_rounds() {
+        let payload = |won: Value, rounds_won: i64, rounds_lost: i64| {
+            json!({
+                "match_id": "0d3c6a4e-0000-4000-8000-000000000001",
+                "started_at": "2026-10-13T07:42:10.000Z", "duration_ms": 2_100_000,
+                "queue_id": "competitive", "queue_name": "Competitive", "map": "Ascent",
+                "agent": "Jett", "team": "Red", "won": won,
+                "rounds_won": rounds_won, "rounds_lost": rounds_lost,
+            })
+        };
+        let result = |p: Value| {
+            events_of(valorant_match(&record(p)).unwrap())
+                .last()
+                .unwrap()
+                .details["result"]
+                .clone()
+        };
+        assert_eq!(result(payload(json!(true), 13, 7)), "win");
+        assert_eq!(result(payload(json!(false), 7, 13)), "loss");
+        assert_eq!(result(payload(json!(false), 12, 12)), "draw");
+        assert_eq!(result(payload(Value::Null, 0, 0)), Value::Null);
+        let events = events_of(valorant_match(&record(payload(json!(true), 13, 7))).unwrap());
+        let played = events.last().unwrap();
+        assert_eq!(played.details["queue"], "Competitive");
+        assert_eq!(played.details["map"], "Ascent");
+        assert_eq!(played.items[1].item_key, "valorant:jett");
+        assert_eq!(played.items[0].item_key, "riot:valorant");
+    }
+
+    #[test]
+    fn an_unusable_riot_match_is_an_error_that_cites_nothing() {
+        for (field, value) in [
+            ("match_id", json!("EUW1 1")),
+            ("match_id", Value::Null),
+            ("duration_s", json!(0)),
+            ("duration_s", json!(100_000)),
+            ("queue_id", Value::Null),
+            ("win", Value::Null),
+            ("remake", json!("non")),
+            ("champion", json!("x".repeat(100))),
+        ] {
+            let mut payload = lol_payload();
+            payload[field] = value;
+            let err = riot_lol_match(&record(payload)).unwrap_err();
+            assert!(err.0.starts_with("riot.lol_match: invalid"), "{field}");
+        }
+        let tft =
+            json!({"match_id": "EUW1_1", "eliminated_s": 0, "queue_id": 1100, "placement": 1});
+        assert!(riot_tft_match(&record(tft)).is_err());
+        let tft =
+            json!({"match_id": "EUW1_1", "eliminated_s": 60, "queue_id": 1100, "placement": 9});
+        assert!(riot_tft_match(&record(tft)).is_err());
+        let valorant = json!({"match_id": "x", "duration_ms": 1000, "won": "oui"});
+        assert!(valorant_match(&record(valorant)).is_err());
     }
 }

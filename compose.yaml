@@ -93,10 +93,14 @@ services:
     security_opt: ["no-new-privileges:true"]
     logging: *logging
 
-  # Interroge Last.fm, Garmin, YouTube, Steam et GitHub, chacun si sa clé est dans le fichier de
-  # secrets, et écrit par l'API d'ingestion. Seul à sortir vers Internet : ni la base, ni le web. YouTube
-  # joint oauth2.googleapis.com, dataportability.googleapis.com, storage.googleapis.com et
-  # www.googleapis.com ; Steam, api.steampowered.com ; GitHub, api.github.com.
+  # Interroge Last.fm, Garmin, YouTube, Steam, GitHub, Riot et VALORANT, chacun si sa clé est dans le
+  # fichier de secrets, et écrit par l'API d'ingestion. Seul à sortir vers Internet : ni la base, ni le
+  # web. YouTube joint oauth2.googleapis.com, dataportability.googleapis.com, storage.googleapis.com et
+  # www.googleapis.com ; Steam, api.steampowered.com ; GitHub, api.github.com ; Riot,
+  # europe.api.riotgames.com ; VALORANT, api.henrikdev.xyz (HenrikDev, non officiel).
+  # Variables, toutes dans secrets/collector.env (jamais ici) : Riot, RIOT_LOL_API_KEY,
+  # RIOT_TFT_API_KEY, RIOT_ID et RIOT_TOKEN ; VALORANT, HENRIK_API_KEY, VALORANT_RIOT_ID et
+  # VALORANT_TOKEN (facultatifs : RIOT_INTERVAL_SECONDS, VALORANT_INTERVAL_SECONDS, VALORANT_REGION).
   collector:
     image: ${TRACKER_IMAGE_PREFIX:?}/backend:${TRACKER_TAG:?}
     command: ["collect"]
@@ -111,11 +115,12 @@ services:
       - collector-state:/var/lib/life-tracker
     healthcheck:
       # L'état de chaque connecteur configuré est réécrit à chaque passage réussi : Last.fm et YouTube
-      # toutes les 5 min, Garmin, Steam et GitHub tous les quarts d'heure (GitHub aussi après chaque page
-      # de son premier passage). « unhealthy » sans redémarrage : le collecteur réessaie déjà seul, et la
-      # page d'état signale le silence de la source (une clé Garmin, Steam ou GitHub refusée, un accord
+      # toutes les 5 min, Garmin, Steam, GitHub, Riot et VALORANT tous les quarts d'heure (GitHub aussi
+      # après chaque page de son premier passage, Riot après chaque lot de parties du sien).
+      # « unhealthy » sans redémarrage : le collecteur réessaie déjà seul, et la page d'état signale le
+      # silence de la source (une clé Garmin, Steam, GitHub, Riot ou HenrikDev refusée, un accord
       # YouTube à donner aussi).
-      test: ["CMD-SHELL", "fresh() { test -n \"$$(find /var/lib/life-tracker/$$1 -mmin -360)\"; }; { test -z \"$$LASTFM_API_KEY\" || fresh state.json; } && { test -z \"$$GARMIN_API_KEY\" || fresh garmin-state.json; } && { test -z \"$$YOUTUBE_CLIENT_ID\" || fresh youtube-state.json; } && { test -z \"$$STEAM_API_KEY\" || fresh steam-state.json; } && { test -z \"$$GITHUB_API_TOKEN\" || fresh github-state.json; }"]
+      test: ["CMD-SHELL", "fresh() { test -n \"$$(find /var/lib/life-tracker/$$1 -mmin -360)\"; }; { test -z \"$$LASTFM_API_KEY\" || fresh state.json; } && { test -z \"$$GARMIN_API_KEY\" || fresh garmin-state.json; } && { test -z \"$$YOUTUBE_CLIENT_ID\" || fresh youtube-state.json; } && { test -z \"$$STEAM_API_KEY\" || fresh steam-state.json; } && { test -z \"$$GITHUB_API_TOKEN\" || fresh github-state.json; } && { test -z \"$$RIOT_LOL_API_KEY\" || fresh riot-state.json; } && { test -z \"$$HENRIK_API_KEY\" || fresh valorant-state.json; }"]
       interval: 5m
       timeout: 5s
       retries: 1

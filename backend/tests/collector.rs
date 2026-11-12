@@ -931,9 +931,23 @@ fn collect_never_receives_a_database_url_and_requires_a_connector() {
             && none.contains("GARMIN_API_KEY")
             && none.contains("YOUTUBE_CLIENT_ID")
             && none.contains("STEAM_API_KEY")
-            && none.contains("GITHUB_API_TOKEN"),
+            && none.contains("GITHUB_API_TOKEN")
+            && none.contains("RIOT_LOL_API_KEY")
+            && none.contains("HENRIK_API_KEY"),
         "{none}"
     );
+    let half = run(&[("RIOT_LOL_API_KEY", "cle-fictive"), ("RIOT_ID", "Nom#TAG")]);
+    assert!(
+        half.contains("RIOT_TFT_API_KEY") && half.contains("RIOT_TOKEN"),
+        "{half}"
+    );
+    assert!(
+        !half.contains("cle-fictive") && !half.contains("Nom#TAG"),
+        "{half}"
+    );
+    let half = run(&[("HENRIK_API_KEY", "cle-fictive")]);
+    assert!(half.contains("VALORANT_TOKEN"), "{half}");
+    assert!(!half.contains("cle-fictive"), "{half}");
     let half = run(&[("GARMIN_API_KEY", "cle-fictive")]);
     assert!(half.contains("GARMIN_TOKEN"), "{half}");
     assert!(!half.contains("cle-fictive"), "{half}");

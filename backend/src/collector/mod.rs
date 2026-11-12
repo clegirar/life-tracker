@@ -1,5 +1,5 @@
-//! Le collecteur : un processus, un connecteur par service (Last.fm ici, Garmin, YouTube, Steam et
-//! GitHub dans leurs modules). Chacun a sa planification, son état, ses nouveaux essais, son signal de vie et son
+//! Le collecteur : un processus, un connecteur par service (Last.fm ici, Garmin, YouTube, Steam,
+//! GitHub, Riot et VALORANT dans leurs modules). Chacun a sa planification, son état, ses nouveaux essais, son signal de vie et son
 //! token, et passe par l'API d'ingestion comme n'importe quelle source : il ne connaît pas la base. La panne de l'un
 //! n'arrête jamais l'autre. Tourne à part de `serve` : lui seul a une sortie réseau et les secrets.
 //!
@@ -11,7 +11,9 @@
 pub mod garmin;
 pub mod github;
 pub mod lastfm;
+pub mod riot;
 pub mod steam;
+pub mod valorant;
 pub mod youtube;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};

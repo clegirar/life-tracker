@@ -20,6 +20,9 @@ const YOUTUBE_CONSENT_POLL: Duration = Duration::from_secs(60);
 /// Steam n'annonce pas de limite par seconde (100 000 appels par jour) : une seconde entre deux
 /// demandes de succès, le premier passage reste de quelques minutes.
 const STEAM_PAUSE: Duration = Duration::from_secs(1);
+/// Une clé personnelle de Riot a droit à 100 appels par 2 min : un appel toutes les 1,25 s y reste.
+/// Le premier passage (≈ 930 appels) dure ainsi une vingtaine de minutes.
+const RIOT_PAUSE: Duration = Duration::from_millis(1250);
 
 #[derive(Parser)]
 #[command(
@@ -134,6 +137,37 @@ enum Command {
         /// L'échéance du token d'accès personnel, `AAAA-MM-JJ`, telle que GitHub l'affiche à sa création
         #[arg(long, env = "GITHUB_TOKEN_EXPIRES_ON")]
         github_token_expires_on: Option<String>,
+        /// La clé de l'API de Riot du produit League of Legends
+        #[arg(long, env = "RIOT_LOL_API_KEY", hide_env_values = true)]
+        riot_lol_api_key: Option<String>,
+        /// La clé de l'API de Riot du produit Teamfight Tactics
+        #[arg(long, env = "RIOT_TFT_API_KEY", hide_env_values = true)]
+        riot_tft_api_key: Option<String>,
+        /// Le Riot ID, `nom#tag`
+        #[arg(long, env = "RIOT_ID", hide_env_values = true)]
+        riot_id: Option<String>,
+        /// Le token de la source Riot
+        #[arg(long, env = "RIOT_TOKEN", hide_env_values = true)]
+        riot_token: Option<String>,
+        #[arg(long, env = "RIOT_API_URL", default_value = collector::riot::DEFAULT_RIOT_URL)]
+        riot_url: String,
+        #[arg(long, env = "RIOT_INTERVAL_SECONDS", default_value_t = 900)]
+        riot_interval_seconds: u64,
+        /// La clé de l'API non officielle HenrikDev (VALORANT)
+        #[arg(long, env = "HENRIK_API_KEY", hide_env_values = true)]
+        henrik_api_key: Option<String>,
+        /// Le Riot ID du compte VALORANT, `nom#tag`
+        #[arg(long, env = "VALORANT_RIOT_ID", hide_env_values = true)]
+        valorant_riot_id: Option<String>,
+        /// Le token de la source VALORANT
+        #[arg(long, env = "VALORANT_TOKEN", hide_env_values = true)]
+        valorant_token: Option<String>,
+        #[arg(long, env = "VALORANT_REGION", default_value = "eu")]
+        valorant_region: String,
+        #[arg(long, env = "VALORANT_INTERVAL_SECONDS", default_value_t = 900)]
+        valorant_interval_seconds: u64,
+        #[arg(long, env = "HENRIK_API_URL", default_value = collector::valorant::DEFAULT_HENRIK_URL)]
+        henrik_url: String,
         #[arg(long, env = "INGEST_URL")]
         ingest_url: String,
         /// Où garder l'état de chaque connecteur ; le perdre ne coûte qu'un rattrapage
@@ -265,6 +299,18 @@ async fn main() -> Result<()> {
             github_url,
             github_interval_seconds,
             github_token_expires_on,
+            riot_lol_api_key,
+            riot_tft_api_key,
+            riot_id,
+            riot_token,
+            riot_url,
+            riot_interval_seconds,
+            henrik_api_key,
+            valorant_riot_id,
+            valorant_token,
+            valorant_region,
+            valorant_interval_seconds,
+            henrik_url,
             ingest_url,
             state_dir,
         } => {
@@ -367,6 +413,50 @@ async fn main() -> Result<()> {
                     )
                 })
                 .transpose()?;
+            let riot = match (
+                set(riot_lol_api_key),
+                set(riot_tft_api_key),
+                set(riot_id),
+                set(riot_token),
+            ) {
+                (None, None, None, None) => None,
+                (Some(lol_api_key), Some(tft_api_key), Some(riot_id), Some(token)) => {
+                    Some(collector::riot::Config {
+                        api_url: riot_url,
+                        lol_api_key,
+                        tft_api_key,
+                        riot_id,
+                        ingest_url: ingest_url.clone(),
+                        token,
+                        state_dir: state_dir.clone(),
+                        interval: Duration::from_secs(riot_interval_seconds),
+                        pause: RIOT_PAUSE,
+                    })
+                }
+                _ => bail!(
+                    "Riot demande RIOT_LOL_API_KEY, RIOT_TFT_API_KEY, RIOT_ID et RIOT_TOKEN ensemble"
+                ),
+            };
+            let valorant = match (
+                set(henrik_api_key),
+                set(valorant_riot_id),
+                set(valorant_token),
+            ) {
+                (None, None, None) => None,
+                (Some(api_key), Some(riot_id), Some(token)) => Some(collector::valorant::Config {
+                    api_url: henrik_url,
+                    api_key,
+                    riot_id,
+                    region: valorant_region,
+                    ingest_url: ingest_url.clone(),
+                    token,
+                    state_dir: state_dir.clone(),
+                    interval: Duration::from_secs(valorant_interval_seconds),
+                }),
+                _ => bail!(
+                    "VALORANT demande HENRIK_API_KEY, VALORANT_RIOT_ID et VALORANT_TOKEN ensemble"
+                ),
+            };
             let github = match (set(github_api_token), set(github_token)) {
                 (None, None) => None,
                 (Some(api_token), Some(token)) => Some(collector::github::Config {
@@ -385,14 +475,16 @@ async fn main() -> Result<()> {
                 && youtube.is_none()
                 && steam.is_none()
                 && github.is_none()
+                && riot.is_none()
+                && valorant.is_none()
             {
                 bail!(
                     "aucun connecteur : LASTFM_API_KEY (Last.fm), GARMIN_API_KEY (Garmin), \
-                     YOUTUBE_CLIENT_ID (YouTube), STEAM_API_KEY (Steam) ou GITHUB_API_TOKEN \
-                     (GitHub) est requis"
+                     YOUTUBE_CLIENT_ID (YouTube), STEAM_API_KEY (Steam), GITHUB_API_TOKEN \
+                     (GitHub), RIOT_LOL_API_KEY (Riot) ou HENRIK_API_KEY (VALORANT) est requis"
                 );
             }
-            collect(lastfm, garmin, youtube, steam, github).await
+            collect(lastfm, garmin, youtube, steam, github, riot, valorant).await
         }
         Command::ImportApple {
             archive,
@@ -419,6 +511,8 @@ async fn collect(
     youtube: Option<collector::youtube::Config>,
     steam: Option<collector::steam::Config>,
     github: Option<collector::github::Config>,
+    riot: Option<collector::riot::Config>,
+    valorant: Option<collector::valorant::Config>,
 ) -> Result<()> {
     let filter = [
         "reqwest=off",
@@ -456,6 +550,14 @@ async fn collect(
     }
     if let Some(config) = github {
         let connector = collector::github::Collector::new(config)?;
+        workers.push(tokio::spawn(connector.run(stopped.clone())));
+    }
+    if let Some(config) = riot {
+        let connector = collector::riot::Collector::new(config)?;
+        workers.push(tokio::spawn(connector.run(stopped.clone())));
+    }
+    if let Some(config) = valorant {
+        let connector = collector::valorant::Collector::new(config)?;
         workers.push(tokio::spawn(connector.run(stopped.clone())));
     }
     shutdown_signal().await;
