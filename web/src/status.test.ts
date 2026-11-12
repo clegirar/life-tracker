@@ -183,6 +183,66 @@ describe('le collecteur Steam', () => {
   })
 })
 
+describe('les collecteurs Riot et VALORANT', () => {
+  const riot = (name: string, overrides: Partial<SourceStatus> = {}) =>
+    source({
+      name,
+      label: name === 'riot' ? 'Riot Games (LoL, TFT)' : 'Valorant (HenrikDev)',
+      silence_threshold_seconds: 2 * 86_400,
+      status: { state: 'ok', reason: null, expires_at: null, next_run_at: iso(10 * MIN), last_collected_at: iso(-5 * MIN) },
+      metrics: [
+        { metric: 'game.play', label: 'Jeux', last_at: iso(-90 * MIN) },
+        { metric: 'game.match', label: 'Parties', last_at: iso(-2 * HOUR) },
+      ],
+      ...overrides,
+    })
+  const failed = (name: string, state: 'action_required' | 'error', reason: 'key_rejected' | 'rate_limited' | 'service_unavailable') =>
+    sourceCard(riot(name, { status: { state, reason, expires_at: null, next_run_at: null } }), NOW)
+
+  it('disent la dernière partie une seule fois, à son début, sans échéance de clé', () => {
+    const card = sourceCard(riot('riot'), NOW)
+    expect(card.state).toBe('ok')
+    expect(card.lines.filter((line) => line.label === 'Dernière partie')).toEqual([{ label: 'Dernière partie', value: `il y a 2${NBSP}h` }])
+    expect(card.lines.map((line) => line.label)).not.toContain('Échéance')
+  })
+
+  it('une clé Riot refusée renvoie vers developer.riotgames.com et les deux variables', () => {
+    const card = failed('riot', 'action_required', 'key_rejected')
+    expect(card.state).toBe('todo')
+    expect(card.guidance?.title).toMatch(/^Riot refuse une clé/)
+    const steps = card.guidance?.steps.join(' ')
+    expect(steps).toContain('developer.riotgames.com')
+    expect(steps).toContain('`RIOT_LOL_API_KEY`')
+    expect(steps).toContain('`RIOT_TFT_API_KEY`')
+    expect(card.guidance?.note).toMatch(/^Rien n'est perdu/)
+  })
+
+  it('une clé HenrikDev refusée : la redemander sur leur Discord', () => {
+    const card = failed('valorant', 'action_required', 'key_rejected')
+    expect(card.guidance?.title).toMatch(/^HenrikDev refuse la clé/)
+    expect(card.guidance?.steps.join(' ')).toContain('Discord de HenrikDev')
+    expect(card.guidance?.steps.join(' ')).toContain('`HENRIK_API_KEY`')
+    expect(card.guidance?.note).toContain('36 dernières parties')
+  })
+
+  it('limités, disent la limite de chaque service', () => {
+    expect(failed('riot', 'error', 'rate_limited').guidance?.title).toContain('100 par 2 min')
+    expect(failed('valorant', 'error', 'rate_limited').guidance?.title).toContain('30 unités par minute')
+  })
+
+  it('HenrikDev en panne : rappelle que l’API est non officielle', () => {
+    const card = failed('valorant', 'error', 'service_unavailable')
+    expect(card.state).toBe('broken')
+    expect(card.guidance?.steps.join(' ')).toContain('non officielle')
+    expect(failed('riot', 'error', 'service_unavailable').guidance?.title).toBe('Riot ne répond pas, ou refuse la demande.')
+  })
+
+  it('silencieux, nomment le service', () => {
+    const card = sourceCard(riot('valorant', { silent: true, last_seen_at: iso(-3 * DAY) }), NOW)
+    expect(card.guidance?.title).toBe(`Aucun contact réussi avec HenrikDev depuis plus de 2${NBSP}jours : des données peuvent manquer.`)
+  })
+})
+
 describe('le collecteur GitHub', () => {
   const github = (overrides: Partial<SourceStatus> = {}) =>
     source({

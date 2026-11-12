@@ -110,6 +110,35 @@ export const TRACKERS: TrackerSheet[] = [
     keys: [{ name: "Clé d'API Web Steam (`STEAM_API_KEY`)", expiry: NO_EXPIRY }, sourceToken('steam')],
   },
   {
+    id: 'riot',
+    title: 'Riot Games (LoL, TFT)',
+    source: /^riot\b/,
+    arrival:
+      "Le collecteur du NAS interroge l'API officielle de Riot tous les quarts d'heure pour le compte de `RIOT_ID` : la liste des parties de League of Legends et de Teamfight Tactics, puis le détail de chaque nouvelle partie, réduit à ma ligne (jamais les autres joueurs). Le premier passage reprend les deux ans d'historique que Riot garde, en respectant ses limites.",
+    keys: [
+      {
+        name: 'Clé personnelle Riot, produit League of Legends (`RIOT_LOL_API_KEY`)',
+        expiry: "Sans échéance tant que le produit personnel reste approuvé. Une clé régénérée sur developer.riotgames.com remplace l'ancienne.",
+      },
+      {
+        name: 'Clé personnelle Riot, produit Teamfight Tactics (`RIOT_TFT_API_KEY`)',
+        expiry: "Sans échéance tant que le produit personnel reste approuvé. Riot exige un produit par jeu.",
+      },
+      { ...sourceToken('riot'), name: 'Token de la source `riot` (`RIOT_TOKEN`)' },
+    ],
+  },
+  {
+    id: 'valorant',
+    title: 'Valorant (HenrikDev)',
+    source: /^valorant\b/,
+    arrival:
+      "Le collecteur du NAS interroge HenrikDev, une API non officielle (Riot ne donne pas l'historique de VALORANT à une clé personnelle), tous les quarts d'heure pour le compte de `VALORANT_RIOT_ID` : les parties terminées, réduites à ma ligne. HenrikDev ne garde que les 36 dernières parties environ : seule une panne plus longue en perdrait.",
+    keys: [
+      { name: 'Clé HenrikDev « VALORANT Basic » (`HENRIK_API_KEY`)', expiry: `${NO_KNOWN_EXPIRY} Elle se redemande sur le Discord de HenrikDev.` },
+      { ...sourceToken('valorant'), name: 'Token de la source `valorant` (`VALORANT_TOKEN`)' },
+    ],
+  },
+  {
     id: 'github',
     title: 'GitHub',
     source: /^github\b/,

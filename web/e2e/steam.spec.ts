@@ -136,57 +136,62 @@ test('la carte du jour : temps, jeux, heures, total, succès et minuit', async (
   await heartbeat(request)
   await login(page)
   await page.goto(`/jour/${DATE}`)
-  const steam = page.getByTestId('steam')
-  await expect(steam.getByRole('heading', { name: 'Steam' })).toBeVisible()
+  const games = page.getByTestId('games')
+  // Une seule carte « Jeux », en deux sections : Steam ici, Riot absente ce jour-là (riot.spec.ts).
+  await expect(games.getByRole('heading', { level: 2, name: 'Jeux' })).toBeVisible()
+  const steam = games.getByTestId('games-steam')
+  await expect(steam.getByRole('heading', { level: 3, name: 'Steam' })).toBeVisible()
+  await expect(games.getByTestId('games-riot')).toHaveCount(0)
+  await expect(games).not.toContainText('Riot')
   // 40 min de Jeu Fictif, et le quart d'heure d'avant minuit de l'autre.
-  await expect(steam.getByTestId('steam-minutes')).toHaveText('55 min')
-  await expect(steam.getByTestId('steam-achievement-count')).toHaveText('2')
+  await expect(games.getByTestId('games-minutes')).toHaveText('55 min')
+  await expect(games.getByTestId('games-achievement-count')).toHaveText('2')
+  await expect(games.getByTestId('games-match-count')).toHaveCount(0)
 
-  const rows = steam.getByTestId('steam-game')
+  const rows = steam.getByTestId('game')
   await expect(rows).toHaveCount(3)
   // Par temps, puis le jeu qui n'a qu'un succès.
   await expect(rows.nth(0)).toContainText(GAME)
   await expect(rows.nth(0)).toContainText('21:15 – 21:55 · 151 h au total')
   await expect(rows.nth(0)).toContainText('40 min')
-  await expect(rows.nth(0).getByTestId('steam-achievement')).toHaveText(['Succès fictif21:50'])
+  await expect(rows.nth(0).getByTestId('game-achievement')).toHaveText(['Succès fictif21:50'])
   // Finie le lendemain : ses vraies heures, et le total relevé à la fin de ce jour.
   await expect(rows.nth(1)).toContainText(OTHER)
   await expect(rows.nth(1)).toContainText('23:45 – 00:15 · 1 h 40 au total')
   await expect(rows.nth(1)).toContainText('15 min')
-  await expect(rows.nth(1).getByTestId('steam-achievement')).toHaveCount(0)
+  await expect(rows.nth(1).getByTestId('game-achievement')).toHaveCount(0)
   await expect(rows.nth(2)).toContainText(SILENT)
   await expect(rows.nth(2).locator('.row-count')).toHaveCount(0)
-  await expect(rows.nth(2).getByTestId('steam-achievement')).toHaveText(['Succès hors ligne fictif08:02'])
+  await expect(rows.nth(2).getByTestId('game-achievement')).toHaveText(['Succès hors ligne fictif08:02'])
 
   const link = rows.nth(0).getByRole('link')
   await expect(link).toHaveAttribute('href', 'https://store.steampowered.com/app/4242/')
   await expect(link).toHaveAttribute('target', '_blank')
   await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
-  await expect(steam.locator('img')).toHaveCount(0)
+  await expect(games.locator('img')).toHaveCount(0)
   await checkLayout(page)
 
-  // Des jeux déjà joués avant le suivi : aucune découverte, et pas de section du tout.
-  await expect(steam.getByTestId('steam-discoveries')).toHaveCount(0)
-  await expect(steam).not.toContainText('Découvertes')
-  await expect(steam).not.toContainText(/aucune découverte/i)
+  // Des jeux déjà joués avant le suivi : aucune découverte, aucune étiquette.
+  await expect(games.getByTestId('game-discovery')).toHaveCount(0)
+  await expect(games).not.toContainText(/découverte/i)
 
   // Le lendemain : le jeu acheté entre-temps, une découverte ; le quart d'heure d'après minuit, et le nouveau total.
   await page.goto(`/jour/${NEXT}`)
-  await expect(page.getByTestId('steam-minutes')).toHaveText('35 min')
-  await expect(page.getByTestId('steam-achievement-count')).toHaveCount(0)
-  await expect(page.getByTestId('steam-game')).toHaveText([/10:00 – 10:20 · 20 min au total/, /23:45 – 00:15 · 2 h 10 au total/])
-  const found = page.getByTestId('steam-discoveries')
-  await expect(found.getByRole('heading', { name: /Découvertes/ })).toContainText('1')
-  await expect(found.getByTestId('steam-discovery')).toHaveText([NEW])
+  await expect(page.getByTestId('games-minutes')).toHaveText('35 min')
+  await expect(page.getByTestId('games-achievement-count')).toHaveCount(0)
+  await expect(page.getByTestId('game')).toHaveText([/10:00 – 10:20 · 20 min au total/, /23:45 – 00:15 · 2 h 10 au total/])
+  // Le jeu acheté entre-temps porte l'étiquette « Découverte », sur sa ligne.
+  const found = page.getByTestId('game').filter({ has: page.getByTestId('game-discovery') })
+  await expect(found.locator('.row-name')).toHaveText(`${NEW}Découverte`)
   await expect(found.getByRole('link')).toHaveAttribute('href', 'https://store.steampowered.com/app/555/')
   await checkLayout(page)
 
   // Avant le premier relevé : pas de données, pas « pas de jeu ».
   await page.goto(`/jour/${addDays(BEFORE, -1)}`)
-  await expect(page.getByTestId('steam')).toContainText('Pas de données Steam à cette date.')
+  await expect(page.getByTestId('games')).toContainText('Pas de données de jeu à cette date.')
   // Entre deux parties, le collecteur ayant donné signe de vie depuis : pas de jeu.
   await page.goto(`/jour/${addDays(DATE, -1)}`)
-  await expect(page.getByTestId('steam')).toContainText('Pas de jeu ce jour-là.')
+  await expect(page.getByTestId('games')).toContainText('Pas de jeu ce jour-là.')
 })
 
 test('la case du mois : le temps du jour, dans la couleur de Steam', async ({ page }) => {
@@ -203,10 +208,10 @@ test("un collecteur muet : l'alerte du jour, l'attente, et la carte d'état sile
   silence()
   await login(page)
   await page.goto(`/jour/${DATE}`)
-  await expect(page.getByTestId('steam-alert')).toContainText('Le collecteur Steam ne donne plus signe de vie.')
+  await expect(page.getByTestId('games-alert')).toContainText('Le collecteur Steam ne donne plus signe de vie.')
   await page.goto(`/jour/${parisToday()}`)
   // Le dernier contact date de 8 h : aujourd'hui ou hier, on ne sait pas encore pour aujourd'hui s'il était hier.
-  await expect(page.getByTestId('steam')).toContainText(/Pas encore de données pour ce jour|Pas de jeu aujourd'hui\./)
+  await expect(page.getByTestId('games')).toContainText(/Pas encore de données pour ce jour|Pas de jeu aujourd'hui\./)
 
   await openStatus(page)
   const steam = card(page)
@@ -271,12 +276,12 @@ for (const colorScheme of ['light', 'dark'] as const) {
           await login(page)
           await onlySteam(page)
           await page.goto(`/jour/${DATE}`)
-          await expect(page.getByTestId('steam-minutes')).toHaveText('55 min')
+          await expect(page.getByTestId('games-minutes')).toHaveText('55 min')
           await checkLayout(page)
           await shot('steam-jour')
 
           await page.goto(`/jour/${NEXT}`)
-          await expect(page.getByTestId('steam-discovery')).toHaveText([NEW])
+          await expect(page.getByTestId('game-discovery')).toHaveCount(1)
           await checkLayout(page)
           await shot('steam-jour-decouverte')
 

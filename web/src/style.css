@@ -2519,20 +2519,129 @@ button:disabled {
   outline-color: var(--twitch);
 }
 
-/* ─── La carte Steam ─────────────────────────────────────────────────────── */
+/* ─── La carte des jeux (Steam, Riot) ────────────────────────────────────── */
 
-/* Les lignes des jeux reprennent celles des chaînes Twitch (lien pleine largeur, flèche), dans sa couleur. */
-.card-title-steam,
-.card-steam .more {
+/* Les lignes des jeux reprennent celles des chaînes Twitch (lien pleine largeur, flèche), dans la couleur de « Jeux ». */
+.card-title-games,
+.card-games .more {
   color: var(--steam);
 }
 
-.card-steam .video-link:focus-visible {
+.card-games .video-link:focus-visible {
   outline-color: var(--steam);
 }
 
-.subsection-count-steam {
+/*
+ * Les sections « Steam » et « Riot », pliables : l'intertitre est le bouton, toute sa largeur une cible
+ * de doigt. Le contenu se replie en hauteur par `grid-template-rows` (de 1fr à 0fr) : une transition,
+ * donc reprise d'où elle en est si l'on rappuie en route, sans mesurer le contenu. Pliée, l'intertitre
+ * garde son résumé à droite.
+ */
+.games-section-title {
+  display: block;
+}
+
+.games-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 44px;
+  margin: -10px 0 -6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: opacity 120ms var(--ease-out);
+}
+
+.games-section-toggle:active {
+  opacity: 0.5;
+}
+
+.games-section-toggle:focus-visible {
+  outline: 2px solid var(--steam);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+.games-section-chevron {
+  flex-shrink: 0;
   color: var(--steam);
+  transition: transform 220ms var(--ease-out);
+}
+
+.games-section[data-folded="true"] .games-section-chevron {
+  transform: rotate(-90deg);
+}
+
+.games-section-summary {
+  margin-left: auto;
+  font-size: 15px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+  transition: opacity 220ms var(--ease-out);
+}
+
+/* Il n'existe que pliée : il arrive en fondu, pendant que la liste se replie. */
+@starting-style {
+  .games-section-summary {
+    opacity: 0;
+  }
+}
+
+.games-section-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows 220ms var(--ease-out),
+    opacity 220ms var(--ease-out);
+}
+
+.games-section[data-folded="true"] .games-section-body {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.games-section-inner {
+  min-height: 0;
+  overflow: hidden;
+  /* Le contour du clavier d'une ligne n'est pas rogné, là où le navigateur le permet. */
+  overflow: clip;
+  overflow-clip-margin: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Ni hauteur ni rotation : la section apparaît et s'efface en fondu. */
+  .games-section-body {
+    transition: opacity 150ms ease;
+  }
+
+  .games-section-chevron {
+    transition: none;
+  }
+}
+
+/* « Découverte » : une étiquette douce après le nom, dans la couleur de la carte, sans couper le nom. */
+.game-discovery {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  vertical-align: 2px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--steam);
+  background: color-mix(in srgb, var(--steam) var(--chip-tint), transparent);
 }
 
 /* Les succès du jour, sous le jeu : une ligne chacun, le nom puis l'heure, alignés sur le texte. */
@@ -2565,6 +2674,101 @@ button:disabled {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
+}
+
+/*
+ * Les parties d'un jeu, sous son nom, comme un historique de matchs : l'heure, le résultat en couleur,
+ * ce que j'ai joué avec la file dessous, la durée. Serrées comme les succès : un soir de dix parties
+ * tient sans noyer la carte.
+ */
+.game-matches {
+  margin: -6px 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.game-match {
+  display: grid;
+  grid-template-columns: auto 4.6em minmax(0, 1fr) auto;
+  column-gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* Une partie sans résultat (un deathmatch) garde ses colonnes. */
+.game-match-time {
+  grid-column: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.game-match-result {
+  grid-column: 2;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.game-match-win {
+  color: var(--state-ok);
+}
+
+.game-match-loss {
+  color: var(--state-error);
+}
+
+.game-match-text {
+  grid-column: 3;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.game-match-title {
+  overflow-wrap: anywhere;
+}
+
+.game-match-detail {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.game-match-minutes {
+  grid-column: 4;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* « 7 autres parties » : un lien discret, dans la couleur de la carte, sous la liste ; une cible de doigt entière. */
+.game-matches-more {
+  display: block;
+  min-width: 44px;
+  min-height: 44px;
+  margin: -12px 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--steam);
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: opacity 120ms var(--ease-out);
+}
+
+.game-matches-more:active {
+  opacity: 0.5;
+}
+
+.game-matches-more:focus-visible {
+  outline: 2px solid var(--steam);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
 /* ─── La carte GitHub ────────────────────────────────────────────────────── */
