@@ -1015,7 +1015,7 @@ async fn the_day_card_gives_each_game_its_minutes_its_total_and_its_achievements
         card,
         json!({
             "date": "2026-11-06", "minutes": 40, "segments": 1, "achievements": 1,
-            "discoveries": [],
+            "discoveries": [], "matches": [],
             "games": [{
                 "key": "4242", "name": "Jeu Fictif", "minutes": 40,
                 "first_time": "21:15", "last_time": "21:55", "total_minutes": 160,
@@ -1030,7 +1030,7 @@ async fn the_day_card_gives_each_game_its_minutes_its_total_and_its_achievements
         card,
         json!({
             "date": "2026-11-03", "minutes": 0, "segments": 0, "achievements": 1,
-            "discoveries": [],
+            "discoveries": [], "matches": [],
             "games": [{
                 "key": "777", "name": "Autre Jeu", "minutes": 0,
                 "first_time": null, "last_time": null, "total_minutes": 300,
