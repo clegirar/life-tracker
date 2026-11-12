@@ -339,8 +339,10 @@ export function buildServer(backend: Backend): McpServer {
           first_occurrence: info.first_local,
           occurrences: info.occurrences,
           discovered_at: known || !info.discovery ? null : info.first_local,
+          // Un jeu de Riot reçoit une marque à chaque partie (des centaines) : la première et leur
+          // nombre suffisent, la liste noierait la réponse.
           already_known: known
-            ? { known_before: info.launch_date ?? 'the start of tracking', marked_at: info.known_marks.map((mark) => mark.at) }
+            ? { known_before: info.launch_date ?? 'the start of tracking', first_marked_at: info.known_marks[0]?.at, marks: info.known_marks.length }
             : null,
         };
       }),

@@ -76,10 +76,15 @@ LT_MCP_TEST_GITHUB_TOKEN="$(admin create-source github --silence-threshold "6 ho
 for kind in github.commit github.pull_request github.review github.issue github.comment; do
   admin grant-kind github "$kind"
 done
+LT_MCP_TEST_RIOT_TOKEN="$(admin create-source riot --silence-threshold "2 days" --label "Riot Games (LoL, TFT)")"
+admin grant-kind riot riot.lol_match
+admin grant-kind riot riot.tft_match
+LT_MCP_TEST_VALORANT_TOKEN="$(admin create-source valorant --silence-threshold "2 days" --label "Valorant (HenrikDev)")"
+admin grant-kind valorant valorant.match
 LT_MCP_TEST_IPHONE_TOKEN="$(admin create-source iphone --silence-threshold "2 days" --label "Position (iPhone)")"
 admin grant-kind iphone overland.location
 admin grant-kind iphone overland.visit
-export LT_MCP_TEST_SERVICE_TOKEN LT_MCP_TEST_IOS_TOKEN LT_MCP_TEST_LASTFM_TOKEN LT_MCP_TEST_GARMIN_TOKEN LT_MCP_TEST_TWITCH_TOKEN LT_MCP_TEST_STEAM_TOKEN LT_MCP_TEST_GITHUB_TOKEN LT_MCP_TEST_IPHONE_TOKEN
+export LT_MCP_TEST_SERVICE_TOKEN LT_MCP_TEST_IOS_TOKEN LT_MCP_TEST_LASTFM_TOKEN LT_MCP_TEST_GARMIN_TOKEN LT_MCP_TEST_TWITCH_TOKEN LT_MCP_TEST_STEAM_TOKEN LT_MCP_TEST_GITHUB_TOKEN LT_MCP_TEST_IPHONE_TOKEN LT_MCP_TEST_RIOT_TOKEN LT_MCP_TEST_VALORANT_TOKEN
 
 API_PORT="$(free_port)"
 # Une zone de confidentialité fictive, centrée sur le départ de la séance du jeu de données (et sur
@@ -104,14 +109,14 @@ rm -f "$OUT"
 [ "$status" = 0 ] || exit "$status"
 [ "$none_skipped" = 1 ] || { echo "ÉCHEC : des tests ont été sautés" >&2; exit 1; }
 
-echo "▶ Aucun appel MCP n'a écrit : le journal ne contient que le jeu de données (4 cafés, 6 Last.fm, 4 Garmin, 5 Twitch, 3 Steam, 6 GitHub, 3 Overland)"
+echo "▶ Aucun appel MCP n'a écrit : le journal ne contient que le jeu de données (4 cafés, 6 Last.fm, 4 Garmin, 5 Twitch, 3 Steam, 6 GitHub, 3 Overland, 4 Riot, 1 VALORANT)"
 records="$(docker exec "$C" psql -U postgres -d tracker -Atc 'select count(*) from core.records')"
-[ "$records" = 31 ] || { echo "ÉCHEC : $records enregistrements au journal" >&2; exit 1; }
+[ "$records" = 36 ] || { echo "ÉCHEC : $records enregistrements au journal" >&2; exit 1; }
 
 echo "▶ Les logs du backend ne contiennent aucun jeton"
 # Les heures des logs (« 21:27:55.432… ») contiennent parfois les chiffres des coordonnées
 # cherchées (« 5.432 ») : on les retire avant de chercher.
-if sed -E 's/[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?//g' "$LOG" | grep -qF -e "$LT_MCP_TEST_SERVICE_TOKEN" -e "$LT_MCP_TEST_IOS_TOKEN" -e "$LT_MCP_TEST_LASTFM_TOKEN" -e "$LT_MCP_TEST_GARMIN_TOKEN" -e "$LT_MCP_TEST_TWITCH_TOKEN" -e "$LT_MCP_TEST_STEAM_TOKEN" -e "$LT_MCP_TEST_GITHUB_TOKEN" -e "$LT_MCP_TEST_IPHONE_TOKEN" -e "depot-fictif" -e "Commit secret fictif" -e "Jeu Fictif" -e "Succès fictif" -e "Veridis" -e "Ville Fictive" -e "43.21" -e "5.432"; then
+if sed -E 's/[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?//g' "$LOG" | grep -qF -e "$LT_MCP_TEST_SERVICE_TOKEN" -e "$LT_MCP_TEST_IOS_TOKEN" -e "$LT_MCP_TEST_LASTFM_TOKEN" -e "$LT_MCP_TEST_GARMIN_TOKEN" -e "$LT_MCP_TEST_TWITCH_TOKEN" -e "$LT_MCP_TEST_STEAM_TOKEN" -e "$LT_MCP_TEST_GITHUB_TOKEN" -e "$LT_MCP_TEST_IPHONE_TOKEN" -e "$LT_MCP_TEST_RIOT_TOKEN" -e "$LT_MCP_TEST_VALORANT_TOKEN" -e "Champion Fictif" -e "Agent Fictif" -e "Carte Fictive" -e "depot-fictif" -e "Commit secret fictif" -e "Jeu Fictif" -e "Succès fictif" -e "Veridis" -e "Ville Fictive" -e "43.21" -e "5.432"; then
   echo "ÉCHEC : secret ou donnée dans les logs" >&2
   exit 1
 fi
